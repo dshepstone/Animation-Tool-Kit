@@ -126,7 +126,7 @@ _TOOL_ICONS = [
 ]
 
 # The icon to use for the ATK shelf button itself
-_ATK_SHELF_ICON_SRC = None   # we'll use the inbetweener icon as placeholder
+_ATK_SHELF_ICON = "ATK_icon.png"
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +186,12 @@ def install(source_dir=None):
         else:
             print("  Skipped (already present): {}".format(basename))
 
+    # Copy the ATK shelf icon from the atk_toolbar/icons/ directory
+    print("\nCopying ATK shelf icon:")
+    atk_icon_src = os.path.join(source_dir, "atk_toolbar", "icons", _ATK_SHELF_ICON)
+    atk_icon_dst = os.path.join(bitmaps_dir, _ATK_SHELF_ICON)
+    _copy_file(atk_icon_src, atk_icon_dst)
+
     # -- 3. sys.path ------------------------------------------------------
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
@@ -197,8 +203,7 @@ def install(source_dir=None):
         current_shelf = cmds.tabLayout(shelf_top, query=True, selectTab=True)
         _remove_existing_atk_buttons(current_shelf)
 
-        # Try to use the inbetweener icon for the shelf button
-        atk_icon_path = os.path.join(bitmaps_dir, "inbetweener.png")
+        atk_icon_path = os.path.join(bitmaps_dir, _ATK_SHELF_ICON)
         _create_shelf_button(current_shelf, atk_icon_path)
     except Exception as exc:
         cmds.warning("ATK Installer: could not create shelf button: {}".format(exc))
