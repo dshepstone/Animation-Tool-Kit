@@ -107,6 +107,104 @@ def _maya_main_window():
     return wrapInstance(int(ptr), QtWidgets.QWidget)
 
 
+def _calc_content_height():
+    """Return the pixel height needed to display all visible buttons with no dead space.
+
+    Mirrors the layout logic in ATKToolbarWidget._build() so the window can be
+    pre-sized before the widget is constructed.
+    """
+    icon_sz  = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
+    show_sep = bool(atk_settings._get_pref_int(_OPT_SHOW_SEPARATORS, 1))
+    btn_sz   = icon_sz + 8   # QToolButton fixed size
+    spacing  = 2             # QVBoxLayout/QHBoxLayout spacing
+    margins  = 4             # 2px top + 2px bottom
+
+    visible   = atk_loader.get_visible_tools()
+    n_buttons = len(visible) + 1   # +1 for the settings button
+
+    # Count separators: always one right after the settings button, then one
+    # more each time the tool group changes.
+    n_seps = 0
+    if show_sep:
+        n_seps = 1
+        prev_group = None
+        for tool in visible:
+            if prev_group and tool["group"] != prev_group:
+                n_seps += 1
+            prev_group = tool["group"]
+
+    n_items  = n_buttons + n_seps
+    # sum of item heights + spacing between consecutive items + outer margins
+    return (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+
+
+def _get_chrome_height():
+    """Return an estimate of the OS title-bar height in pixels."""
+    try:
+        app = QtWidgets.QApplication.instance()
+        return app.style().pixelMetric(QtWidgets.QStyle.PM_TitleBarHeight) + 6
+    except Exception:
+        return 32
+
+
+def _resize_to_fit():
+    """Resize the floating workspaceControl to exactly fit its content.
+
+    Ignored when the control is docked (the dock handles sizing).
+    """
+    if not cmds.workspaceControl(WORKSPACE_NAME, exists=True):
+        return
+    try:
+        floating = cmds.workspaceControl(WORKSPACE_NAME, q=True, floating=True)
+    except Exception:
+        return
+    if not floating:
+        return
+
+    icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
+    btn_sz  = icon_sz + 8
+    orient  = (cmds.optionVar(q=_OPT_ORIENTATION)
+               if cmds.optionVar(exists=_OPT_ORIENTATION) else "horizontal")
+    chrome  = _get_chrome_height()
+
+    try:
+        if orient == "vertical":
+            cmds.workspaceControl(WORKSPACE_NAME, edit=True,
+                                  width=btn_sz + 8,
+                                  height=_calc_content_height() + chrome)
+        else:
+            cmds.workspaceControl(WORKSPACE_NAME, edit=True,
+                                  height=btn_sz + chrome)
+    except Exception:
+        pass
+
+
+def _remove_min_max_buttons():
+    """Strip the minimize and maximize buttons from the floating toolbar window.
+
+    Called via QTimer.singleShot so Maya has finished constructing the panel
+    before we walk the widget hierarchy.
+    """
+    try:
+        ptr = omui.MQtUtil.findControl(WORKSPACE_NAME)
+        if ptr is None:
+            return
+        content  = wrapInstance(int(ptr), QtWidgets.QWidget)
+        win      = content.window()
+        maya_win = _maya_main_window()
+        # Only modify the window when it is its own floating top-level,
+        # not when it is docked inside Maya's main window.
+        if win is None or win is maya_win:
+            return
+        flags = win.windowFlags()
+        flags &= ~QtCore.Qt.WindowMinimizeButtonHint
+        flags &= ~QtCore.Qt.WindowMaximizeButtonHint
+        win.setWindowFlags(flags)
+        win.show()
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Toolbar Qt widget
 # ---------------------------------------------------------------------------
@@ -297,6 +395,8 @@ class ATKToolbarWidget(QtWidgets.QWidget):
     def rebuild(self):
         """Re-build the button strip (called after settings change)."""
         self._build()
+        _resize_to_fit()
+        QtCore.QTimer.singleShot(50, _remove_min_max_buttons)
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +440,9 @@ def _rebuild_ui():
     layout.addWidget(_toolbar_widget)
     _toolbar_widget.show()
 
+    _resize_to_fit()
+    QtCore.QTimer.singleShot(50, _remove_min_max_buttons)
+
 
 def show():
     """Create or restore the ATK toolbar workspaceControl.
@@ -352,17 +455,23 @@ def show():
     if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
         cmds.deleteUI(WORKSPACE_NAME)
 
-    # Size the initial window to match the stored orientation preference
+    # Size the initial window to match orientation + exact button count
     orient = "horizontal"
     if cmds.optionVar(exists=_OPT_ORIENTATION):
         val = cmds.optionVar(q=_OPT_ORIENTATION)
         if val in ("horizontal", "vertical"):
             orient = val
 
+    icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
+    btn_sz  = icon_sz + 8
+    chrome  = _get_chrome_height()
+
     if orient == "vertical":
-        init_w, init_h = 52, 460
+        init_w = btn_sz + 8
+        init_h = _calc_content_height() + chrome
     else:
-        init_w, init_h = 460, 52
+        init_w = 460
+        init_h = btn_sz + chrome
 
     cmds.workspaceControl(
         WORKSPACE_NAME,
