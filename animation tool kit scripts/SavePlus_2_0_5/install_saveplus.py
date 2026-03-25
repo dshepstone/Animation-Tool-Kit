@@ -42,7 +42,12 @@ def _onMayaDropped():
 
         # Get Maya icons directory via Maya's own variable so the path is always
         # correct regardless of drive letter, Documents location, or Maya version.
-        prefsDir = maya.cmds.internalVar(userPrefsDir=True)
+        # Fall back to deriving from scriptsDir if userPrefsDir returns empty
+        # (observed in some Maya 2026 environments).
+        prefsDir = maya.cmds.internalVar(userPrefsDir=True) or ""
+        if not os.path.isabs(prefsDir):
+            # scriptsDir is <maya_user>/<version>/scripts/ – sibling is prefs/
+            prefsDir = os.path.join(os.path.dirname(scriptsDir.rstrip("/\\")), "prefs")
         iconsDir = os.path.join(prefsDir, "icons")
         
         # Create icons directory if it doesn't exist
