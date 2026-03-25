@@ -1,0 +1,116 @@
+/*
+  Reset All Tool Installer
+  Drag and drop this file into Maya's viewport to install.
+  Compatible with Maya 2020+
+
+  Place these files in the SAME folder before dragging:
+    - install_reset.mel          (this file)
+    - transform_reset_tool.py
+    - reset_icon.png             (optional — shelf button works without it)
+*/
+
+global proc resetToolInstall()
+{
+    // ---- Locate this MEL file on disk ----
+    string $whatIs  = `whatIs resetToolInstall`;
+    string $melPath = `substitute "^.*found in: " $whatIs ""`;
+    $melPath = `strip $melPath`;
+
+    // ---- Derive the source directory ----
+    string $sourceDir = `substitute "[^/\\\\]*$" $melPath ""`;
+
+    // ---- Run everything from Python for maximum reliability ----
+    string $py = "";
+    $py += "import os, sys, shutil\n";
+    $py += "import maya.cmds as cmds\n";
+    $py += "import maya.mel as mel\n";
+    $py += "\n";
+    $py += "source_dir = r'" + $sourceDir + "'\n";
+    $py += "\n";
+    $py += "# --- Resolve target directories ---\n";
+    $py += "scripts_dir = cmds.internalVar(usd=True)\n";
+    $py += "prefs_dir   = cmds.internalVar(upd=True)\n";
+    $py += "icons_dir   = os.path.join(prefs_dir, 'icons')\n";
+    $py += "\n";
+    $py += "if not os.path.isdir(icons_dir):\n";
+    $py += "    os.makedirs(icons_dir)\n";
+    $py += "\n";
+    $py += "# --- Source files ---\n";
+    $py += "src_script = os.path.join(source_dir, 'transform_reset_tool.py')\n";
+    $py += "src_icon   = os.path.join(source_dir, 'reset_icon.png')\n";
+    $py += "\n";
+    $py += "# --- Validate main script exists ---\n";
+    $py += "if not os.path.isfile(src_script):\n";
+    $py += "    cmds.confirmDialog(\n";
+    $py += "        title='Reset All Tool — Install Failed',\n";
+    $py += "        message='Missing file: transform_reset_tool.py\\nPlace it in the same folder as install_reset.mel',\n";
+    $py += "        button=['OK'])\n";
+    $py += "    raise RuntimeError('Missing transform_reset_tool.py')\n";
+    $py += "\n";
+    $py += "# --- Copy script to Maya scripts directory ---\n";
+    $py += "dst_script = os.path.join(scripts_dir, 'transform_reset_tool.py')\n";
+    $py += "shutil.copy2(src_script, dst_script)\n";
+    $py += "print('Installed script:', dst_script)\n";
+    $py += "\n";
+    $py += "# --- Copy icon (optional) ---\n";
+    $py += "has_icon = os.path.isfile(src_icon)\n";
+    $py += "if has_icon:\n";
+    $py += "    dst_icon = os.path.join(icons_dir, 'reset_icon.png')\n";
+    $py += "    shutil.copy2(src_icon, dst_icon)\n";
+    $py += "    print('Installed icon:', dst_icon)\n";
+    $py += "\n";
+    $py += "# --- Ensure scripts dir is on sys.path ---\n";
+    $py += "if scripts_dir not in sys.path:\n";
+    $py += "    sys.path.insert(0, scripts_dir)\n";
+    $py += "\n";
+    $py += "# --- Locate the active shelf ---\n";
+    $py += "shelf_top    = mel.eval('$__tmp = $gShelfTopLevel')\n";
+    $py += "current_shelf = cmds.tabLayout(shelf_top, q=True, selectTab=True)\n";
+    $py += "\n";
+    $py += "# --- Remove any existing Reset All button to avoid duplicates ---\n";
+    $py += "existing = cmds.shelfLayout(current_shelf, q=True, childArray=True) or []\n";
+    $py += "for btn in existing:\n";
+    $py += "    try:\n";
+    $py += "        if cmds.shelfButton(btn, q=True, label=True) == 'Reset All':\n";
+    $py += "            cmds.deleteUI(btn)\n";
+    $py += "    except Exception:\n";
+    $py += "        pass\n";
+    $py += "\n";
+    $py += "# --- Build the shelf button launch command ---\n";
+    $py += "launch_cmd = (\n";
+    $py += "    'import importlib, transform_reset_tool\\n'\n";
+    $py += "    'importlib.reload(transform_reset_tool)\\n'\n";
+    $py += "    'transform_reset_tool.show()'\n";
+    $py += ")\n";
+    $py += "\n";
+    $py += "icon_name = 'reset_icon.png' if has_icon else 'commandButton.png'\n";
+    $py += "\n";
+    $py += "# --- Create the shelf button ---\n";
+    $py += "cmds.shelfButton(\n";
+    $py += "    parent=current_shelf,\n";
+    $py += "    label='Reset All',\n";
+    $py += "    annotation='Reset All Tool — Reset translate/rotate/scale on selected objects',\n";
+    $py += "    image=icon_name,\n";
+    $py += "    imageOverlayLabel='',\n";
+    $py += "    command=launch_cmd,\n";
+    $py += "    sourceType='python',\n";
+    $py += ")\n";
+    $py += "\n";
+    $py += "# --- Done ---\n";
+    $py += "cmds.confirmDialog(\n";
+    $py += "    title='Reset All Tool — Installed',\n";
+    $py += "    message=(\n";
+    $py += "        'Reset All Tool installed successfully!\\n\\n'\n";
+    $py += "        'Script installed to:\\n' + dst_script + '\\n\\n'\n";
+    $py += "        'Shelf button \\'Reset All\\' added to: ' + current_shelf + '\\n\\n'\n";
+    $py += "        'Use Options > Setup Hotkeys in the tool to assign keyboard shortcuts.'\n";
+    $py += "    ),\n";
+    $py += "    button=['OK'])\n";
+    $py += "cmds.inViewMessage(\n";
+    $py += "    amg='<hl>Reset All Tool</hl> installed! Click the shelf button to launch.',\n";
+    $py += "    pos='midCenter', fade=True)\n";
+
+    python($py);
+}
+
+resetToolInstall();
