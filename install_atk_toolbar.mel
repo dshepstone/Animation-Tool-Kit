@@ -1,184 +1,335 @@
-// ============================================================================
-// Animation Tool Kit Toolbar — Maya Installer
-// ============================================================================
+// =============================================================================
+// install_atk_toolbar.mel
 //
-// Drag and drop this file into Maya's viewport to install the ATK Toolbar.
+// DRAG AND DROP INSTALLER — Animation Tool Kit Toolbar for Maya
 //
-// Requirements
-// ------------
-//   • Maya 2020 or later (PySide6 / PySide2 + workspaceControl)
-//   • The following files/folders must be in the SAME directory as this .mel:
-//       install_atk_toolbar.mel   (this file)
-//       install_atk_toolbar.py    (Python installer)
-//       atk_toolbar/              (toolbar package folder)
-//       Temp_Pivot_Tool_1_0_5/   (source icon: temp-pivot.png)
-//       inbetweener_2_0_1/        (source icon: inbetweener.png)
-//       Add-Remove-Inbetweens_1_0_1/ (source icon: add-remove.png)
-//       noise_generator_1_0_0/    (source icon: noise_generator_icon.png)
-//       onion-skin-tool_2_1_0/    (source icon: onionSkinIcon.png)
-//       WireShape_Tool_1_0_0/     (source icon: Shape_Icon.png)
-//       Reset_Tool_2_0_1/         (source icon: reset_icon.png)
-//       SavePlus_2_0_4/           (source icon: saveplus.png)
+// How to use:
+//   Drag this .mel file from Windows Explorer / Finder onto the Maya viewport.
+//   Maya will automatically run the installer.
 //
-// The individual tool scripts (temp_pivot_tool.py, vertex_tweener.py, etc.)
-// must already be installed separately.  The toolbar will display a warning
-// indicator for any tool that is not yet installed.
-//
-// Author: Animation Tool Kit
-// Version: 1.0.0
-// ============================================================================
+// Files required in the SAME folder as this .mel:
+//   - install_atk_toolbar.mel  (this file)
+//   - atk_toolbar/             (toolbar package folder)
+//       __init__.py
+//       atk_toolbar.py
+//       atk_loader.py
+//       atk_icons.py
+//       atk_settings.py
+//       icons/ATK_icon.png
+// =============================================================================
 
-global string $atkToolbarVersion = "1.0.0";
-
-// ----------------------------------------------------------------------------
-// Get the directory containing this installer script
-// ----------------------------------------------------------------------------
-global proc string atkToolbar_GetInstallDir()
+// -----------------------------------------------------------------------------
+// Utility: normalize backslashes to forward slashes
+// -----------------------------------------------------------------------------
+global proc string atk__normPath(string $p)
 {
-    string $info = `whatIs "atkToolbar_GetInstallDir"`;
-    string $path = "";
-
-    if (`gmatch $info "Mel procedure found in: *"`)
-    {
-        $path = substituteAllString($info, "Mel procedure found in: ", "");
-    }
-    else if (`gmatch $info "Script found in: *"`)
-    {
-        $path = substituteAllString($info, "Script found in: ", "");
-    }
-
-    $path = substituteAllString($path, "\\", "/");
-    $path = strip($path);
-
-    if ($path == "")
-    {
-        error "ATK Toolbar installer: unable to determine installer location.";
-    }
-
-    return dirname($path);
+    $p = substituteAllString($p, "\\", "/");
+    return $p;
 }
 
-// ----------------------------------------------------------------------------
-// Main installer — delegates to the Python installer script
-// ----------------------------------------------------------------------------
-global proc atkToolbar_Install()
+// -----------------------------------------------------------------------------
+// Utility: find last occurrence of $needle in $p, return 1-based index or -1
+// -----------------------------------------------------------------------------
+global proc int atk__rindex(string $p, string $needle)
 {
-    global string $atkToolbarVersion;
-
-    print "\n";
-    print "============================================================\n";
-    print ("  Animation Tool Kit Toolbar Installer v" + $atkToolbarVersion + "\n");
-    print "============================================================\n";
-    print "\n";
-
-    string $sourceDir = atkToolbar_GetInstallDir();
-    $sourceDir = substituteAllString($sourceDir, "\\", "/");
-    print ("Source directory: " + $sourceDir + "\n\n");
-
-    // Verify the Python installer exists next to this MEL file
-    string $pyInstaller = ($sourceDir + "/install_atk_toolbar.py");
-    if (!`filetest -f $pyInstaller`)
+    int $n = size($needle);
+    int $i;
+    if ($n < 1) return -1;
+    for ($i = size($p) - $n + 1; $i >= 1; $i--)
     {
-        confirmDialog
-            -title "ATK Install Failed"
-            -message ("Cannot find install_atk_toolbar.py in:\n" + $sourceDir + "\n\nMake sure all files were extracted together.")
-            -button "OK";
-        error "ATK Toolbar installer: missing install_atk_toolbar.py";
+        if (substring($p, $i, $i + $n - 1) == $needle)
+            return $i;
+    }
+    return -1;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: return directory portion of a path (with trailing slash)
+// -----------------------------------------------------------------------------
+global proc string atk__dirname(string $p)
+{
+    $p = atk__normPath($p);
+    int $idx = atk__rindex($p, "/");
+    if ($idx < 0) return "";
+    return substring($p, 1, $idx);
+}
+
+// -----------------------------------------------------------------------------
+// Utility: locate the folder this MEL file lives in by querying Maya
+// -----------------------------------------------------------------------------
+global proc string atk__getInstallerDir(string $procName)
+{
+    string $w = `whatIs $procName`;
+    if (`gmatch $w "*:*"` || `gmatch $w "*/*"`)
+    {
+        int $pos = atk__rindex($w, ": ");
+        if ($pos >= 0)
+        {
+            string $full = `substring $w ($pos + 2) (size($w))`;
+            $full = atk__normPath($full);
+            if (`filetest -f $full`)
+                return atk__dirname($full);
+        }
+        // Fallback: grab last space-delimited token
+        string $tokens[];
+        tokenize $w " " $tokens;
+        if (size($tokens) > 0)
+        {
+            string $maybe = $tokens[(size($tokens) - 1)];
+            $maybe = atk__normPath($maybe);
+            if (`filetest -f $maybe`)
+                return atk__dirname($maybe);
+        }
+    }
+    return "";
+}
+
+// -----------------------------------------------------------------------------
+// Utility: check a file exists
+// -----------------------------------------------------------------------------
+global proc int atk__fileExists(string $p)
+{
+    return `filetest -f (atk__normPath($p))`;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: ensure directory exists (uses Python for reliability)
+// -----------------------------------------------------------------------------
+global proc atk__ensureDir(string $dir)
+{
+    $dir = atk__normPath($dir);
+    if (!`filetest -d $dir`)
+    {
+        string $py = "";
+        $py += "import os\n";
+        $py += "os.makedirs(r\"" + $dir + "\", exist_ok=True)\n";
+        python($py);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Utility: copy a single file using Python shutil (reliable cross-platform)
+// -----------------------------------------------------------------------------
+global proc atk__copyFile(string $src, string $dstDir)
+{
+    $src    = atk__normPath($src);
+    $dstDir = atk__normPath($dstDir);
+    atk__ensureDir($dstDir);
+
+    string $py = "";
+    $py += "import os, shutil\n";
+    $py += "src     = r\"" + $src    + "\"\n";
+    $py += "dst_dir = r\"" + $dstDir + "\"\n";
+    $py += "dst     = os.path.join(dst_dir, os.path.basename(src))\n";
+    $py += "shutil.copy2(src, dst)\n";
+    $py += "print('  Copied:', os.path.basename(src))\n";
+    python($py);
+}
+
+// -----------------------------------------------------------------------------
+// Utility: recursively copy all .py files from a source dir to a dest dir
+// -----------------------------------------------------------------------------
+global proc atk__copyPyDir(string $srcDir, string $dstDir)
+{
+    $srcDir = atk__normPath($srcDir);
+    $dstDir = atk__normPath($dstDir);
+    atk__ensureDir($dstDir);
+
+    string $py = "";
+    $py += "import os, shutil\n";
+    $py += "src_dir = r\"" + $srcDir + "\"\n";
+    $py += "dst_dir = r\"" + $dstDir + "\"\n";
+    $py += "for f in os.listdir(src_dir):\n";
+    $py += "    if f.endswith('.py'):\n";
+    $py += "        shutil.copy2(os.path.join(src_dir, f), os.path.join(dst_dir, f))\n";
+    $py += "        print('  Copied:', f)\n";
+    python($py);
+}
+
+// -----------------------------------------------------------------------------
+// Utility: add or replace a shelf button (no duplicates)
+// -----------------------------------------------------------------------------
+global proc atk__replaceShelfButton(
+    string $shelf,
+    string $label,
+    string $annotation,
+    string $icon,
+    string $pyCmd)
+{
+    if ($shelf == "" || !`shelfLayout -ex $shelf`)
+    {
+        warning("ATK Toolbar: could not find shelf '" + $shelf + "' — skipping shelf button.");
         return;
     }
 
-    // Verify the atk_toolbar package folder exists
-    string $pkgDir = ($sourceDir + "/atk_toolbar");
-    if (!`filetest -d $pkgDir`)
+    // Remove existing buttons with the same annotation tag to avoid duplicates
+    string $kids[] = `shelfLayout -q -ca $shelf`;
+    for ($k in $kids)
+    {
+        if (`control -ex $k`)
+        {
+            string $kAnn = "";
+            catchQuiet($kAnn = `shelfButton -q -annotation $k`);
+            if (`gmatch $kAnn "*ATK_TOOLBAR_SHELF_BUTTON*"`)
+                catchQuiet(`deleteUI $k`);
+        }
+    }
+
+    shelfButton
+        -parent     $shelf
+        -label      $label
+        -annotation $annotation
+        -image      $icon
+        -sourceType "python"
+        -command    $pyCmd;
+
+    refresh -f;
+}
+
+// -----------------------------------------------------------------------------
+// Main installer
+// -----------------------------------------------------------------------------
+global proc atk__install()
+{
+    // ---- Config ----------------------------------------------------------------
+    string $toolName    = "Animation Tool Kit Toolbar";
+    string $pkgFolder   = "atk_toolbar";
+    string $iconFile    = "ATK_icon.png";
+    string $shelfLabel  = "ATK";
+    string $annotation  = "ATK_TOOLBAR_SHELF_BUTTON — Open the Animation Tool Kit Toolbar";
+
+    string $pyCmd = "";
+    $pyCmd += "import sys, importlib\n";
+    $pyCmd += "import maya.cmds as cmds\n";
+    $pyCmd += "scripts_dir = cmds.internalVar(userScriptDir=True)\n";
+    $pyCmd += "if scripts_dir not in sys.path:\n";
+    $pyCmd += "    sys.path.insert(0, scripts_dir)\n";
+    $pyCmd += "import atk_toolbar\n";
+    $pyCmd += "importlib.reload(atk_toolbar)\n";
+    $pyCmd += "atk_toolbar.show()\n";
+
+    // ---- Locate installer directory --------------------------------------------
+    string $installDir = atk__getInstallerDir("atk__install");
+    if ($installDir == "")
     {
         confirmDialog
-            -title "ATK Install Failed"
-            -message ("Cannot find the 'atk_toolbar' folder in:\n" + $sourceDir + "\n\nMake sure all files were extracted together.")
-            -button "OK";
-        error "ATK Toolbar installer: missing atk_toolbar/ package folder";
+            -title   ($toolName + " — Install Failed")
+            -message  "Could not locate the installer folder.\n\nInstallation cancelled."
+            -button  "OK";
         return;
     }
 
-    // Run the Python installer, passing the source directory
-    string $cmd = "";
-    $cmd += "import sys\n";
-    $cmd += "import importlib\n";
-    $cmd += "import maya.cmds as cmds\n";
-    $cmd += "\n";
-    $cmd += "source_dir = r'" + $sourceDir + "'\n";
-    $cmd += "\n";
-    $cmd += "# Add source dir to path so we can exec the installer\n";
-    $cmd += "if source_dir not in sys.path:\n";
-    $cmd += "    sys.path.insert(0, source_dir)\n";
-    $cmd += "\n";
-    $cmd += "# Reload installer module if previously imported\n";
-    $cmd += "if 'install_atk_toolbar' in sys.modules:\n";
-    $cmd += "    importlib.reload(sys.modules['install_atk_toolbar'])\n";
-    $cmd += "\n";
-    $cmd += "import install_atk_toolbar\n";
-    $cmd += "install_atk_toolbar.install(source_dir=source_dir)\n";
+    // ---- Validate the atk_toolbar package folder exists ------------------------
+    string $srcPkgDir = $installDir + $pkgFolder;
+    if (!`filetest -d $srcPkgDir`)
+    {
+        confirmDialog
+            -title   ($toolName + " — Missing Folder")
+            -message ("Could not find:\n\n" + $srcPkgDir
+                      + "\n\nMake sure the atk_toolbar/ folder is in the same directory as this .mel file.")
+            -button  "OK";
+        return;
+    }
 
-    python($cmd);
+    // ---- Resolve Maya user destinations ----------------------------------------
+    string $scriptsDir = atk__normPath(`internalVar -userScriptDir`);
+    string $prefDir    = atk__normPath(`internalVar -userPrefDir`);
+    string $iconsDir   = $prefDir + "icons/";
 
-    print "\nATK Toolbar installation complete.\n\n";
-}
+    // ---- 1. Copy atk_toolbar package (.py files) → userScriptDir/atk_toolbar/ --
+    print "// Copying toolbar package files:\n";
+    string $dstPkgDir = $scriptsDir + $pkgFolder + "/";
+    atk__copyPyDir($srcPkgDir, $dstPkgDir);
+    print ("// Package -> " + $dstPkgDir + "\n");
 
-// ----------------------------------------------------------------------------
-// Uninstall procedure (run manually from Script Editor if needed)
-// ----------------------------------------------------------------------------
-global proc atkToolbar_Uninstall()
-{
+    // ---- 2. Copy ATK_icon.png to Maya icons dir --------------------------------
+    print "// Copying toolbar icon:\n";
+    string $srcIcon = $srcPkgDir + "/icons/" + $iconFile;
+    string $iconToUse = "commandButton.png";
+    if (atk__fileExists($srcIcon))
+    {
+        atk__copyFile($srcIcon, $iconsDir);
+        $iconToUse = $iconFile;
+        print ("// Icon    -> " + $iconsDir + $iconFile + "\n");
+    }
+    else
+    {
+        warning("ATK Toolbar: " + $iconFile + " not found — shelf button will use default icon.");
+    }
+
+    // ---- 3. Copy tool icons (from sibling tool folders) if present -------------
+    print "// Copying tool icons:\n";
+    string $toolIcons[] = {
+        "Temp_Pivot_Tool_1_0_5/temp-pivot.png",
+        "inbetweener_2_0_1/inbetweener.png",
+        "inbetweener_2_0_1/defaultPose.png",
+        "Add-Remove-Inbetweens_1_0_1/add-remove.png",
+        "noise_generator_1_0_0/noise_generator_icon.png",
+        "onion-skin-tool_2_1_0/onionSkinIcon.png",
+        "WireShape_Tool_1_0_0/Shape_Icon.png",
+        "Reset_Tool_2_0_1/reset_icon.png",
+        "SavePlus_2_0_5/icons/saveplus.png"
+    };
+    for ($relPath in $toolIcons)
+    {
+        string $fullSrc = $installDir + $relPath;
+        if (atk__fileExists($fullSrc))
+        {
+            atk__copyFile($fullSrc, $iconsDir);
+        }
+    }
+
+    // ---- 4. Add sys.path entry -------------------------------------------------
+    string $pathPy = "";
+    $pathPy += "import sys\n";
+    $pathPy += "scripts_dir = r\"" + $scriptsDir + "\"\n";
+    $pathPy += "if scripts_dir not in sys.path:\n";
+    $pathPy += "    sys.path.insert(0, scripts_dir)\n";
+    python($pathPy);
+
+    // ---- 5. Add shelf button to the currently active shelf ---------------------
     global string $gShelfTopLevel;
+    string $currentShelf = "";
+    if (`shelfTabLayout -ex $gShelfTopLevel`)
+        catchQuiet($currentShelf = `shelfTabLayout -q -st $gShelfTopLevel`);
 
-    print "\nUninstalling ATK Toolbar...\n";
-
-    string $scriptsDir = substituteAllString(`internalVar -userScriptDir`, "\\", "/");
-    string $pkgDir = ($scriptsDir + "atk_toolbar");
-
-    // Close toolbar if open
-    python("import maya.cmds as cmds\nif cmds.workspaceControl('ATKToolbar', exists=True): cmds.deleteUI('ATKToolbar')");
-
-    // Remove package files
-    if (`filetest -d $pkgDir`)
+    if ($currentShelf == "")
     {
-        string $pyFiles[] = { "__init__", "atk_toolbar", "atk_loader", "atk_icons", "atk_settings" };
-        for ($f in $pyFiles)
-        {
-            string $fp = ($pkgDir + "/" + $f + ".py");
-            if (`filetest -f $fp`)
-            {
-                sysFile -delete $fp;
-                print ("  Removed: " + $f + ".py\n");
-            }
-        }
+        $currentShelf = "Custom";
+        if (!`shelfLayout -ex $currentShelf`)
+            addNewShelf $currentShelf;
     }
 
-    // Remove shelf buttons across all shelves
-    if (`tabLayout -exists $gShelfTopLevel`)
-    {
-        string $shelves[] = `tabLayout -q -childArray $gShelfTopLevel`;
-        for ($shelf in $shelves)
-        {
-            string $buttons[] = `shelfLayout -q -childArray $shelf`;
-            for ($btn in $buttons)
-            {
-                if (`shelfButton -q -exists $btn`)
-                {
-                    string $ann = `shelfButton -q -annotation $btn`;
-                    if (`gmatch $ann "*ATK_TOOLBAR_SHELF_BUTTON*"`)
-                    {
-                        deleteUI $btn;
-                        print ("  Removed ATK shelf button from: " + $shelf + "\n");
-                    }
-                }
-            }
-        }
-    }
+    atk__replaceShelfButton($currentShelf, $shelfLabel, $annotation, $iconToUse, $pyCmd);
 
-    print "\nATK Toolbar uninstalled.\n\n";
+    // ---- 6. Launch the toolbar immediately -------------------------------------
+    print "// Launching toolbar...\n";
+    string $launchPy = "";
+    $launchPy += "import sys, maya.cmds as cmds\n";
+    $launchPy += "scripts_dir = cmds.internalVar(userScriptDir=True)\n";
+    $launchPy += "if scripts_dir not in sys.path:\n";
+    $launchPy += "    sys.path.insert(0, scripts_dir)\n";
+    $launchPy += "import atk_toolbar\n";
+    $launchPy += "atk_toolbar.show()\n";
+    python($launchPy);
+
+    // ---- Done -----------------------------------------------------------------
+    print ("// ============================================================\n");
+    print ("// Animation Tool Kit Toolbar — Installation Complete\n");
+    print ("// Package -> " + $dstPkgDir + "\n");
+    print ("// Icon    -> " + $iconsDir + $iconFile + "\n");
+    print ("// Shelf   -> " + $currentShelf + "\n");
+    print ("// ============================================================\n");
+
+    confirmDialog
+        -title   ($toolName + " — Installed!")
+        -message ("Installation complete!\n\n"
+                  + "Package copied to:\n" + $dstPkgDir + "\n\n"
+                  + "Icon copied to:\n" + $iconsDir + "\n\n"
+                  + "Shelf button added to the \"" + $currentShelf + "\" shelf.\n\n"
+                  + "Click the ATK shelf button to open the toolbar.")
+        -button  "OK";
 }
 
-// ----------------------------------------------------------------------------
-// Run the installer when this file is dragged into the viewport
-// ----------------------------------------------------------------------------
-atkToolbar_Install();
+// Run immediately on drag-and-drop
+atk__install();

@@ -46,7 +46,6 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-TAB_LABEL      = "ATK"
 VERSION        = "1.0.0"
 
 # optionVar key that the settings dialog reads for icon size
@@ -359,7 +358,6 @@ def show():
     cmds.workspaceControl(
         WORKSPACE_NAME,
         label=TOOLBAR_LABEL,
-        tabLabel=TAB_LABEL,
         floating=True,
         retain=True,
         initialWidth=460,
