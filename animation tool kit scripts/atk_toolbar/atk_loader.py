@@ -7,6 +7,7 @@ that drives toolbar button creation and tool launching.
 import os
 import sys
 import importlib
+import importlib.util
 import maya.cmds as cmds
 
 # ---------------------------------------------------------------------------
@@ -209,21 +210,34 @@ def launch_tool(tool_id):
         fn()
 
     except ImportError as exc:
-        cmds.warning(
-            "ATK Toolbar: could not import '{}'. "
-            "Make sure the tool is installed.\n{}".format(module_name, exc)
-        )
+        exc_str = str(exc)
+        if "PySide6" in exc_str or "shiboken6" in exc_str:
+            # Reset Tool has a hard PySide6 import — only works on Maya 2025+
+            cmds.confirmDialog(
+                title="{} — Not Available".format(tool["label"]),
+                message=(
+                    "{} requires Maya 2025+ (PySide6).\n\n"
+                    "Your Maya version ships PySide2 and is not supported "
+                    "by this tool."
+                ).format(tool["label"]),
+                button=["OK"],
+            )
+        else:
+            cmds.warning(
+                "ATK Toolbar: could not import '{}'. "
+                "Make sure the tool is installed.\n{}".format(module_name, exc)
+            )
     except Exception as exc:
         cmds.warning("ATK Toolbar: error launching '{}': {}".format(tool_id, exc))
 
 
 def is_tool_installed(tool_id):
-    """Return True if the tool module can be imported (i.e. is on sys.path)."""
+    """Return True if the tool module can be found on sys.path."""
     tool = _tool_by_id(tool_id)
     if tool is None:
         return False
     try:
-        importlib.util.find_spec(tool["module"])
-        return True
-    except (ImportError, ValueError):
+        spec = importlib.util.find_spec(tool["module"])
+        return spec is not None
+    except (ImportError, ValueError, ModuleNotFoundError):
         return False
