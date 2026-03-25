@@ -48,10 +48,11 @@ WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
 VERSION        = "1.0.0"
 
-# optionVar key that the settings dialog reads for icon size
+# optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
 _OPT_SHOW_TOOLTIPS   = atk_settings.OPT_SHOW_TOOLTIPS
 _OPT_SHOW_SEPARATORS = atk_settings.OPT_SHOW_SEPARATORS
+_OPT_ORIENTATION     = atk_settings.OPT_ORIENTATION
 
 _BTN_STYLE_NORMAL = (
     "QToolButton {"
@@ -230,15 +231,11 @@ class ATKToolbarWidget(QtWidgets.QWidget):
     # ── Orientation detection ────────────────────────────────────────────────
 
     def _detect_orientation(self):
-        """Vertical when the control is taller than it is wide."""
-        if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
-            try:
-                w = cmds.workspaceControl(WORKSPACE_NAME, q=True, width=True) or 0
-                h = cmds.workspaceControl(WORKSPACE_NAME, q=True, height=True) or 0
-                if h > 0 and w > 0:
-                    return "vertical" if h > w else "horizontal"
-            except Exception:
-                pass
+        """Return orientation from the saved preference."""
+        if cmds.optionVar(exists=_OPT_ORIENTATION):
+            val = cmds.optionVar(q=_OPT_ORIENTATION)
+            if val in ("horizontal", "vertical"):
+                return val
         return "horizontal"
 
     # ── Context menus ────────────────────────────────────────────────────────
@@ -355,13 +352,25 @@ def show():
     if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
         cmds.deleteUI(WORKSPACE_NAME)
 
+    # Size the initial window to match the stored orientation preference
+    orient = "horizontal"
+    if cmds.optionVar(exists=_OPT_ORIENTATION):
+        val = cmds.optionVar(q=_OPT_ORIENTATION)
+        if val in ("horizontal", "vertical"):
+            orient = val
+
+    if orient == "vertical":
+        init_w, init_h = 52, 460
+    else:
+        init_w, init_h = 460, 52
+
     cmds.workspaceControl(
         WORKSPACE_NAME,
         label=TOOLBAR_LABEL,
         floating=True,
         retain=True,
-        initialWidth=460,
-        initialHeight=52,
+        initialWidth=init_w,
+        initialHeight=init_h,
         minimumWidth=52,
         minimumHeight=52,
         uiScript="import sys, maya.cmds as cmds; "

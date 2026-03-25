@@ -33,6 +33,7 @@ WINDOW_TITLE       = "Animation Tool Kit — Settings"
 OPT_ICON_SIZE        = "atk_toolbar_icon_size"        # int: 24, 32, 48
 OPT_SHOW_TOOLTIPS    = "atk_toolbar_show_tooltips"    # int 0/1
 OPT_SHOW_SEPARATORS  = "atk_toolbar_show_separators"  # int 0/1
+OPT_ORIENTATION      = "atk_toolbar_orientation"      # str: "horizontal" | "vertical"
 
 ICON_SIZES = [("Small  (24 px)", 24), ("Medium  (32 px)", 32), ("Large  (48 px)", 48)]
 
@@ -271,6 +272,16 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
 
+        # Orientation
+        orient_group = QtWidgets.QGroupBox("Orientation")
+        orient_layout = QtWidgets.QHBoxLayout(orient_group)
+        self._rb_horizontal = QtWidgets.QRadioButton("Horizontal")
+        self._rb_vertical   = QtWidgets.QRadioButton("Vertical")
+        orient_layout.addWidget(self._rb_horizontal)
+        orient_layout.addWidget(self._rb_vertical)
+        orient_layout.addStretch()
+        layout.addWidget(orient_group)
+
         # Icon size
         size_group = QtWidgets.QGroupBox("Icon Size")
         size_layout = QtWidgets.QVBoxLayout(size_group)
@@ -389,6 +400,11 @@ class ATKSettingsDialog(QtWidgets.QDialog):
     # ── Preference read/write ────────────────────────────────────────────────
 
     def _load_prefs(self):
+        # Orientation
+        orient = cmds.optionVar(q=OPT_ORIENTATION) if cmds.optionVar(exists=OPT_ORIENTATION) else "horizontal"
+        self._rb_vertical.setChecked(orient == "vertical")
+        self._rb_horizontal.setChecked(orient != "vertical")
+
         # Icon size
         current_size = _get_pref_int(OPT_ICON_SIZE, 32)
         for rb, px in self._size_radios:
@@ -405,6 +421,10 @@ class ATKSettingsDialog(QtWidgets.QDialog):
             cb.setChecked(atk_loader.is_tool_visible(tool_id))
 
     def _apply(self):
+        # Orientation
+        orient = "vertical" if self._rb_vertical.isChecked() else "horizontal"
+        cmds.optionVar(sv=(OPT_ORIENTATION, orient))
+
         # Icon size
         for rb, px in self._size_radios:
             if rb.isChecked():
@@ -424,6 +444,7 @@ class ATKSettingsDialog(QtWidgets.QDialog):
             self.rebuild_callback()
 
     def _reset_defaults(self):
+        cmds.optionVar(sv=(OPT_ORIENTATION, "horizontal"))
         _set_pref_int(OPT_ICON_SIZE, 32)
         _set_pref_int(OPT_SHOW_TOOLTIPS, 1)
         _set_pref_int(OPT_SHOW_SEPARATORS, 1)

@@ -257,7 +257,49 @@ global proc atk__install()
         warning("ATK Toolbar: " + $iconFile + " not found — shelf button will use default icon.");
     }
 
-    // ---- 3. Copy tool icons (from sibling tool folders) if present -------------
+    // Tool folders live under "animation tool kit scripts/" next to this installer
+    string $toolsBase = $installDir + "animation tool kit scripts/";
+
+    // ---- 3. Copy individual tool scripts → userScriptDir ----------------------
+    print "// Copying tool scripts:\n";
+
+    // Single-file tools: copy the main .py to scriptsDir
+    string $toolScripts[] = {
+        "Temp_Pivot_Tool_1_0_5/temp_pivot_tool.py",
+        "inbetweener_2_0_1/vertex_tweener.py",
+        "Add-Remove-Inbetweens_1_0_1/insert_remove_frames_tool.py",
+        "noise_generator_1_0_0/noise_generator_1_0_0.py",
+        "onion-skin-tool_2_1_0/onion_skin_2_1_0.py",
+        "WireShape_Tool_1_0_0/wire_shape_tool.py",
+        "Reset_Tool_2_0_1/transform_reset_tool.py"
+    };
+    for ($relScript in $toolScripts)
+    {
+        string $fullSrc = $toolsBase + $relScript;
+        if (atk__fileExists($fullSrc))
+            atk__copyFile($fullSrc, $scriptsDir);
+        else
+            warning("ATK Installer: tool script not found (skipped): " + $fullSrc);
+    }
+
+    // SavePlus is a multi-file package — copy all its .py files
+    string $savePlusFiles[] = {
+        "SavePlus_2_0_5/savePlus_launcher.py",
+        "SavePlus_2_0_5/savePlus_core.py",
+        "SavePlus_2_0_5/savePlus_main.py",
+        "SavePlus_2_0_5/savePlus_maya.py",
+        "SavePlus_2_0_5/savePlus_ui_components.py"
+    };
+    for ($relScript in $savePlusFiles)
+    {
+        string $fullSrc = $toolsBase + $relScript;
+        if (atk__fileExists($fullSrc))
+            atk__copyFile($fullSrc, $scriptsDir);
+        else
+            warning("ATK Installer: SavePlus file not found (skipped): " + $fullSrc);
+    }
+
+    // ---- 4. Copy tool icons → userBitmapsDir ----------------------------------
     print "// Copying tool icons:\n";
     string $toolIcons[] = {
         "Temp_Pivot_Tool_1_0_5/temp-pivot.png",
@@ -272,14 +314,12 @@ global proc atk__install()
     };
     for ($relPath in $toolIcons)
     {
-        string $fullSrc = $installDir + $relPath;
+        string $fullSrc = $toolsBase + $relPath;
         if (atk__fileExists($fullSrc))
-        {
             atk__copyFile($fullSrc, $iconsDir);
-        }
     }
 
-    // ---- 4. Add sys.path entry -------------------------------------------------
+    // ---- 5. Add sys.path entry -------------------------------------------------
     string $pathPy = "";
     $pathPy += "import sys\n";
     $pathPy += "scripts_dir = r\"" + $scriptsDir + "\"\n";
@@ -287,7 +327,7 @@ global proc atk__install()
     $pathPy += "    sys.path.insert(0, scripts_dir)\n";
     python($pathPy);
 
-    // ---- 5. Add shelf button to the currently active shelf ---------------------
+    // ---- 6. Add shelf button to the currently active shelf ---------------------
     global string $gShelfTopLevel;
     string $currentShelf = "";
     if (`shelfTabLayout -ex $gShelfTopLevel`)
@@ -302,7 +342,7 @@ global proc atk__install()
 
     atk__replaceShelfButton($currentShelf, $shelfLabel, $annotation, $iconToUse, $pyCmd);
 
-    // ---- 6. Launch the toolbar immediately -------------------------------------
+    // ---- 7. Launch the toolbar immediately -------------------------------------
     print "// Launching toolbar...\n";
     string $launchPy = "";
     $launchPy += "import sys, maya.cmds as cmds\n";
@@ -316,16 +356,17 @@ global proc atk__install()
     // ---- Done -----------------------------------------------------------------
     print ("// ============================================================\n");
     print ("// Animation Tool Kit Toolbar — Installation Complete\n");
-    print ("// Package -> " + $dstPkgDir + "\n");
-    print ("// Icon    -> " + $iconsDir + $iconFile + "\n");
-    print ("// Shelf   -> " + $currentShelf + "\n");
+    print ("// Package  -> " + $dstPkgDir + "\n");
+    print ("// Scripts  -> " + $scriptsDir + "\n");
+    print ("// Icons    -> " + $iconsDir + "\n");
+    print ("// Shelf    -> " + $currentShelf + "\n");
     print ("// ============================================================\n");
 
     confirmDialog
         -title   ($toolName + " — Installed!")
         -message ("Installation complete!\n\n"
-                  + "Package copied to:\n" + $dstPkgDir + "\n\n"
-                  + "Icon copied to:\n" + $iconsDir + "\n\n"
+                  + "Toolbar package:\n" + $dstPkgDir + "\n\n"
+                  + "Tool scripts + icons copied to Maya prefs.\n\n"
                   + "Shelf button added to the \"" + $currentShelf + "\" shelf.\n\n"
                   + "Click the ATK shelf button to open the toolbar.")
         -button  "OK";
