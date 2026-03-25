@@ -184,6 +184,12 @@ def _remove_min_max_buttons():
 
     Called via QTimer.singleShot so Maya has finished constructing the panel
     before we walk the widget hierarchy.
+
+    Key points:
+    - Explicitly keep WindowCloseButtonHint so the X stays active and not greyed.
+    - Call raise_() + activateWindow() so the OS draws the chrome as "active"
+      (without this Windows draws the title bar in its inactive/greyed state).
+    - Skip silently when the panel is docked (content.window() == Maya main window).
     """
     try:
         ptr = omui.MQtUtil.findControl(WORKSPACE_NAME)
@@ -192,17 +198,28 @@ def _remove_min_max_buttons():
         content  = wrapInstance(int(ptr), QtWidgets.QWidget)
         win      = content.window()
         maya_win = _maya_main_window()
-        # Only modify the window when it is its own floating top-level,
-        # not when it is docked inside Maya's main window.
         if win is None or win is maya_win:
-            return
+            return   # docked — title bar belongs to Maya, don't touch it
         flags = win.windowFlags()
         flags &= ~QtCore.Qt.WindowMinimizeButtonHint
         flags &= ~QtCore.Qt.WindowMaximizeButtonHint
+        flags |=  QtCore.Qt.WindowCloseButtonHint   # keep X active
         win.setWindowFlags(flags)
         win.show()
+        win.raise_()
+        win.activateWindow()
     except Exception:
         pass
+
+
+def _on_floating_change():
+    """Called by Maya's floatingChangeCommand whenever the panel is docked or undocked.
+
+    Uses a short timer so the new window hierarchy is fully constructed before
+    we try to read it.
+    """
+    QtCore.QTimer.singleShot(150, _remove_min_max_buttons)
+    QtCore.QTimer.singleShot(150, _resize_to_fit)
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +490,15 @@ def show():
         init_w = 460
         init_h = btn_sz + chrome
 
+    # floatingChangeCommand fires every time the panel is docked or undocked,
+    # letting us re-strip min/max buttons and re-fit the size after each transition.
+    float_cmd = (
+        "import sys, maya.cmds as cmds; "
+        "scripts_dir = cmds.internalVar(userScriptDir=True); "
+        "sys.path.insert(0, scripts_dir) if scripts_dir not in sys.path else None; "
+        "import atk_toolbar.atk_toolbar as _atk; _atk._on_floating_change()"
+    )
+
     cmds.workspaceControl(
         WORKSPACE_NAME,
         label=TOOLBAR_LABEL,
@@ -486,10 +512,16 @@ def show():
                  "scripts_dir = cmds.internalVar(userScriptDir=True); "
                  "sys.path.insert(0, scripts_dir) if scripts_dir not in sys.path else None; "
                  "import atk_toolbar.atk_toolbar as _atk; _atk._rebuild_ui()",
+        floatingChangeCommand=float_cmd,
     )
 
     cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=True)
     _rebuild_ui()
+
+    # Force dimensions after a short delay — this overrides any size that
+    # retain=True may have restored from a previous session.
+    QtCore.QTimer.singleShot(100, _resize_to_fit)
+    QtCore.QTimer.singleShot(150, _remove_min_max_buttons)
 
 
 def close():
