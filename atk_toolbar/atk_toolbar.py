@@ -206,8 +206,12 @@ def _remove_min_max_buttons():
         flags |=  QtCore.Qt.WindowCloseButtonHint   # keep X active
         win.setWindowFlags(flags)
         win.show()
-        win.raise_()
-        win.activateWindow()
+        # Schedule activation at 0 / 100 / 250 ms — at least one fires AFTER
+        # the OS finishes its show-event processing so the title bar chrome is
+        # drawn in "active" (not greyed) state.
+        for _ms in (0, 100, 250):
+            QtCore.QTimer.singleShot(_ms, win.raise_)
+            QtCore.QTimer.singleShot(_ms, win.activateWindow)
     except Exception:
         pass
 
@@ -441,8 +445,13 @@ def _rebuild_ui():
 
     parent_widget = wrapInstance(int(ptr), QtWidgets.QWidget)
 
-    # Clear any existing ATKToolbarWidget children
+    # Remove any existing ATKToolbarWidget immediately (setParent(None) detaches
+    # from the layout right now; deleteLater() cleans up memory later).
+    # This makes _rebuild_ui() safe to call multiple times without double icons,
+    # which matters because uiScript fires synchronously on workspaceControl
+    # creation AND show() calls _rebuild_ui() explicitly.
     for child in parent_widget.findChildren(ATKToolbarWidget):
+        child.setParent(None)
         child.deleteLater()
 
     _toolbar_widget = ATKToolbarWidget(parent=parent_widget)
@@ -499,29 +508,50 @@ def show():
         "import atk_toolbar.atk_toolbar as _atk; _atk._on_floating_change()"
     )
 
-    cmds.workspaceControl(
-        WORKSPACE_NAME,
-        label=TOOLBAR_LABEL,
-        floating=True,
-        retain=True,
-        initialWidth=init_w,
-        initialHeight=init_h,
-        minimumWidth=52,
-        minimumHeight=52,
-        uiScript="import sys, maya.cmds as cmds; "
-                 "scripts_dir = cmds.internalVar(userScriptDir=True); "
-                 "sys.path.insert(0, scripts_dir) if scripts_dir not in sys.path else None; "
-                 "import atk_toolbar.atk_toolbar as _atk; _atk._rebuild_ui()",
-        floatingChangeCommand=float_cmd,
+    ui_script = (
+        "import sys, maya.cmds as cmds; "
+        "scripts_dir = cmds.internalVar(userScriptDir=True); "
+        "sys.path.insert(0, scripts_dir) if scripts_dir not in sys.path else None; "
+        "import atk_toolbar.atk_toolbar as _atk; _atk._rebuild_ui()"
     )
+
+    # Dock below the Channel Box on first open; user can undock/move freely.
+    # dockToControl places ATK as a separate panel directly below ChannelBoxLayerEditor.
+    # Fall back to the right edge of the main window if that panel is absent.
+    if cmds.workspaceControl("ChannelBoxLayerEditor", exists=True):
+        cmds.workspaceControl(
+            WORKSPACE_NAME,
+            label=TOOLBAR_LABEL,
+            retain=True,
+            initialWidth=init_w,
+            initialHeight=init_h,
+            minimumWidth=52,
+            minimumHeight=52,
+            dockToControl=["ChannelBoxLayerEditor", "bottom"],
+            uiScript=ui_script,
+            floatingChangeCommand=float_cmd,
+        )
+    else:
+        cmds.workspaceControl(
+            WORKSPACE_NAME,
+            label=TOOLBAR_LABEL,
+            retain=True,
+            initialWidth=init_w,
+            initialHeight=init_h,
+            minimumWidth=52,
+            minimumHeight=52,
+            dockToMainWindow=["right", False],
+            uiScript=ui_script,
+            floatingChangeCommand=float_cmd,
+        )
 
     cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=True)
     _rebuild_ui()
 
-    # Force dimensions after a short delay — this overrides any size that
-    # retain=True may have restored from a previous session.
+    # Force exact size after a short delay — overrides any retained state from
+    # a previous session, and runs after the dock layout has settled.
     QtCore.QTimer.singleShot(100, _resize_to_fit)
-    QtCore.QTimer.singleShot(150, _remove_min_max_buttons)
+    QtCore.QTimer.singleShot(200, _remove_min_max_buttons)
 
 
 def close():
