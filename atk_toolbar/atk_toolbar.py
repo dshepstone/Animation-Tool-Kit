@@ -167,6 +167,8 @@ def _resize_to_fit():
     """Resize the floating workspaceControl to exactly fit its content.
 
     Ignored when the control is docked (the dock handles sizing).
+    Uses both the Maya workspaceControl API and direct Qt window resize
+    to ensure the window shrinks in both dimensions on orientation change.
     """
     if not cmds.workspaceControl(WORKSPACE_NAME, exists=True):
         return
@@ -183,15 +185,29 @@ def _resize_to_fit():
                if cmds.optionVar(exists=_OPT_ORIENTATION) else "horizontal")
     chrome  = _get_chrome_height()
 
+    if orient == "vertical":
+        new_w = btn_sz + 8
+        new_h = _calc_content_height() + chrome
+    else:
+        new_w = _calc_content_width() + 8
+        new_h = btn_sz + chrome
+
     try:
-        if orient == "vertical":
-            cmds.workspaceControl(WORKSPACE_NAME, edit=True,
-                                  width=btn_sz + 8,
-                                  height=_calc_content_height() + chrome)
-        else:
-            cmds.workspaceControl(WORKSPACE_NAME, edit=True,
-                                  width=_calc_content_width() + 8,
-                                  height=btn_sz + chrome)
+        cmds.workspaceControl(WORKSPACE_NAME, edit=True,
+                              width=new_w, height=new_h)
+    except Exception:
+        pass
+
+    # The workspaceControl edit often only sets minimums and won't shrink
+    # the window in the non-primary axis.  Force the Qt window directly.
+    try:
+        ptr = omui.MQtUtil.findControl(WORKSPACE_NAME)
+        if ptr is not None:
+            content  = wrapInstance(int(ptr), QtWidgets.QWidget)
+            win      = content.window()
+            maya_win = _maya_main_window()
+            if win is not None and win is not maya_win:
+                win.resize(new_w, new_h)
     except Exception:
         pass
 
