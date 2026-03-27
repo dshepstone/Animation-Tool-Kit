@@ -16,6 +16,7 @@
 //       atk_icons.py
 //       atk_settings.py
 //       icons/ATK_icon.png
+//       icons/gearIcon.png
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -255,6 +256,14 @@ global proc atk__install()
     else
     {
         warning("ATK Toolbar: " + $iconFile + " not found — shelf button will use default icon.");
+    }
+
+    // Copy gearIcon.png (settings button icon) to icons dir
+    string $gearIcon = $srcPkgDir + "/icons/gearIcon.png";
+    if (atk__fileExists($gearIcon))
+    {
+        atk__copyFile($gearIcon, $iconsDir);
+        print ("// Icon    -> " + $iconsDir + "gearIcon.png\n");
     }
 
     // Tool folders live under "animation tool kit scripts/" next to this installer
