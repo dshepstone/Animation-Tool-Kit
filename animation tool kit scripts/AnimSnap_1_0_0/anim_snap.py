@@ -88,6 +88,11 @@ def create_ui():
     cmds.showWindow(window_name)
 
 
+def launch():
+    """Launch the AnimSnap UI — called by the ATK Toolbar."""
+    create_ui()
+
+
 def add_shelf_button():
     """Add an AnimSnap button to the current shelf."""
     current_shelf = cmds.tabLayout("ShelfLayout", query=True, selectTab=True)

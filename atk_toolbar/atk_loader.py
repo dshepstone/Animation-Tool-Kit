@@ -81,6 +81,17 @@ TOOL_REGISTRY = [
         "version":   "2.1.0",
     },
     {
+        "id":        "anim_snap",
+        "label":     "AnimSnap",
+        "tooltip":   "Snap one object to another using world-space transforms",
+        "module":    "anim_snap",
+        "launch_fn": "launch",
+        "icon_file": "animSnap.png",
+        "icon_key":  "snap",
+        "group":     "viewport",
+        "version":   "1.0.0",
+    },
+    {
         "id":        "wire_shape",
         "label":     "Wire Shape Tool",
         "tooltip":   "Create curve-based rig control shapes",

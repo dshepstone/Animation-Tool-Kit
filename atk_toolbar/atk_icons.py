@@ -132,6 +132,7 @@ def _draw_symbol(painter, icon_key, accent, size):
         "noise":   _draw_noise,
         "pivot":   _draw_pivot,
         "onion":   _draw_onion,
+        "snap":    _draw_snap,
         "wire":    _draw_wire,
         "reset":   _draw_reset,
         "save":    _draw_save,
@@ -285,6 +286,41 @@ def _draw_onion(painter, accent, s, m):
         painter.setPen(_pen(col, s * 0.055))
         painter.setBrush(QtCore.Qt.NoBrush)
         painter.drawEllipse(QtCore.QPointF(cx + dx, cy), r, r)
+
+
+def _draw_snap(painter, accent, s, m):
+    """Two overlapping circles with an arrow — snap/align symbol."""
+    cx, cy = s / 2, s / 2
+    r = s * 0.18
+    offset = s * 0.16
+
+    # Source circle (left)
+    painter.setPen(_pen(accent.darker(160), s * 0.055))
+    painter.setBrush(QtCore.Qt.NoBrush)
+    painter.drawEllipse(QtCore.QPointF(cx - offset, cy), r, r)
+
+    # Target circle (right)
+    painter.setPen(_pen(accent, s * 0.055))
+    painter.drawEllipse(QtCore.QPointF(cx + offset, cy), r, r)
+
+    # Arrow from source to target
+    arrow_y = cy
+    arrow_x0 = cx - offset + r + s * 0.04
+    arrow_x1 = cx + offset - r - s * 0.04
+    painter.setPen(_pen(accent, s * 0.06))
+    painter.drawLine(QtCore.QPointF(arrow_x0, arrow_y),
+                     QtCore.QPointF(arrow_x1, arrow_y))
+
+    # Arrowhead
+    ah = s * 0.08
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtGui.QBrush(accent))
+    arrow_head = QtGui.QPolygonF([
+        QtCore.QPointF(arrow_x1, arrow_y),
+        QtCore.QPointF(arrow_x1 - ah, arrow_y - ah * 0.7),
+        QtCore.QPointF(arrow_x1 - ah, arrow_y + ah * 0.7),
+    ])
+    painter.drawPolygon(arrow_head)
 
 
 def _draw_wire(painter, accent, s, m):

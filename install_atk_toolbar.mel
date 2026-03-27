@@ -271,7 +271,8 @@ global proc atk__install()
         "noise_generator_1_0_0/noise_generator_1_0_0.py",
         "onion-skin-tool_2_1_0/onion_skin_2_1_0.py",
         "WireShape_Tool_1_0_0/wire_shape_tool.py",
-        "Reset_Tool_2_0_1/transform_reset_tool.py"
+        "Reset_Tool_2_0_1/transform_reset_tool.py",
+        "AnimSnap_1_0_0/anim_snap.py"
     };
     for ($relScript in $toolScripts)
     {
@@ -310,7 +311,8 @@ global proc atk__install()
         "onion-skin-tool_2_1_0/onionSkinIcon.png",
         "WireShape_Tool_1_0_0/Shape_Icon.png",
         "Reset_Tool_2_0_1/reset_icon.png",
-        "SavePlus_2_0_5/icons/saveplus.png"
+        "SavePlus_2_0_5/icons/saveplus.png",
+        "AnimSnap_1_0_0/animSnap.png"
     };
     for ($relPath in $toolIcons)
     {
