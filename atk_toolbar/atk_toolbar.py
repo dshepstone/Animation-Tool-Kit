@@ -402,7 +402,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             val = cmds.optionVar(q=_OPT_ORIENTATION)
             if val in ("horizontal", "vertical"):
                 return val
-        return "horizontal"
+        return "vertical"
 
     # ── Context menus ────────────────────────────────────────────────────────
 
@@ -538,7 +538,7 @@ def show():
         cmds.deleteUI(WORKSPACE_NAME)
 
     # Size the initial window to match orientation + exact button count
-    orient = "horizontal"
+    orient = "vertical"
     if cmds.optionVar(exists=_OPT_ORIENTATION):
         val = cmds.optionVar(q=_OPT_ORIENTATION)
         if val in ("horizontal", "vertical"):
@@ -589,7 +589,7 @@ def show():
     )
 
     if cmds.workspaceControl("ChannelBoxLayerEditor", exists=True):
-        dock_kw["dockToControl"] = ["ChannelBoxLayerEditor", "bottom"]
+        dock_kw["dockToControl"] = ["ChannelBoxLayerEditor", "right"]
     else:
         dock_kw["dockToMainWindow"] = ["right", False]
 

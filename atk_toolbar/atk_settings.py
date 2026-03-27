@@ -401,7 +401,7 @@ class ATKSettingsDialog(QtWidgets.QDialog):
 
     def _load_prefs(self):
         # Orientation
-        orient = cmds.optionVar(q=OPT_ORIENTATION) if cmds.optionVar(exists=OPT_ORIENTATION) else "horizontal"
+        orient = cmds.optionVar(q=OPT_ORIENTATION) if cmds.optionVar(exists=OPT_ORIENTATION) else "vertical"
         self._rb_vertical.setChecked(orient == "vertical")
         self._rb_horizontal.setChecked(orient != "vertical")
 
@@ -444,7 +444,7 @@ class ATKSettingsDialog(QtWidgets.QDialog):
             self.rebuild_callback()
 
     def _reset_defaults(self):
-        cmds.optionVar(sv=(OPT_ORIENTATION, "horizontal"))
+        cmds.optionVar(sv=(OPT_ORIENTATION, "vertical"))
         _set_pref_int(OPT_ICON_SIZE, 32)
         _set_pref_int(OPT_SHOW_TOOLTIPS, 1)
         _set_pref_int(OPT_SHOW_SEPARATORS, 1)
