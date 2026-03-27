@@ -107,23 +107,12 @@ def _maya_main_window():
     return wrapInstance(int(ptr), QtWidgets.QWidget)
 
 
-def _calc_content_height():
-    """Return the pixel height needed to display all visible buttons with no dead space.
-
-    Mirrors the layout logic in ATKToolbarWidget._build() so the window can be
-    pre-sized before the widget is constructed.
-    """
-    icon_sz  = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
+def _count_layout_items():
+    """Return (n_buttons, n_seps) for the current visible tools and settings."""
     show_sep = bool(atk_settings._get_pref_int(_OPT_SHOW_SEPARATORS, 1))
-    btn_sz   = icon_sz + 8   # QToolButton fixed size
-    spacing  = 2             # QVBoxLayout/QHBoxLayout spacing
-    margins  = 4             # 2px top + 2px bottom
-
-    visible   = atk_loader.get_visible_tools()
+    visible  = atk_loader.get_visible_tools()
     n_buttons = len(visible) + 1   # +1 for the settings button
 
-    # Count separators: always one right after the settings button, then one
-    # more each time the tool group changes.
     n_seps = 0
     if show_sep:
         n_seps = 1
@@ -133,8 +122,35 @@ def _calc_content_height():
                 n_seps += 1
             prev_group = tool["group"]
 
+    return n_buttons, n_seps
+
+
+def _calc_content_height():
+    """Return the pixel height needed to display all visible buttons with no dead space.
+
+    Mirrors the layout logic in ATKToolbarWidget._build() so the window can be
+    pre-sized before the widget is constructed.
+    """
+    icon_sz  = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
+    btn_sz   = icon_sz + 8   # QToolButton fixed size
+    spacing  = 2             # QVBoxLayout/QHBoxLayout spacing
+    margins  = 4             # 2px top + 2px bottom
+
+    n_buttons, n_seps = _count_layout_items()
     n_items  = n_buttons + n_seps
     # sum of item heights + spacing between consecutive items + outer margins
+    return (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+
+
+def _calc_content_width():
+    """Return the pixel width needed to display all visible buttons horizontally."""
+    icon_sz  = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
+    btn_sz   = icon_sz + 8
+    spacing  = 2
+    margins  = 4             # 2px left + 2px right
+
+    n_buttons, n_seps = _count_layout_items()
+    n_items  = n_buttons + n_seps
     return (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
 
 
@@ -174,6 +190,7 @@ def _resize_to_fit():
                                   height=_calc_content_height() + chrome)
         else:
             cmds.workspaceControl(WORKSPACE_NAME, edit=True,
+                                  width=_calc_content_width() + 8,
                                   height=btn_sz + chrome)
     except Exception:
         pass
@@ -216,6 +233,18 @@ def _remove_min_max_buttons():
         pass
 
 
+def _undock_toolbar():
+    """Float the workspaceControl if it is currently docked."""
+    if not cmds.workspaceControl(WORKSPACE_NAME, exists=True):
+        return
+    try:
+        floating = cmds.workspaceControl(WORKSPACE_NAME, q=True, floating=True)
+    except Exception:
+        return
+    if not floating:
+        cmds.workspaceControl(WORKSPACE_NAME, edit=True, floating=True)
+
+
 def _on_floating_change():
     """Called by Maya's floatingChangeCommand whenever the panel is docked or undocked.
 
@@ -236,6 +265,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super(ATKToolbarWidget, self).__init__(parent)
         self._button_map = {}   # tool_id -> QToolButton
+        self._current_orientation = None
         self._build()
 
     # ── Construction ────────────────────────────────────────────────────────
@@ -251,6 +281,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             QtWidgets.QWidget().setLayout(old_layout)
 
         orientation = self._detect_orientation()
+        self._current_orientation = orientation
         icon_sz = _get_icon_size()
         show_tips = _show_tooltips()
         show_sep = _show_separators()
@@ -415,9 +446,18 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
     def rebuild(self):
         """Re-build the button strip (called after settings change)."""
+        old_orient = self._current_orientation
         self._build()
-        _resize_to_fit()
-        QtCore.QTimer.singleShot(50, _remove_min_max_buttons)
+
+        new_orient = self._current_orientation
+        if old_orient != new_orient:
+            _undock_toolbar()
+            # Give Maya time to process the undock before resizing
+            QtCore.QTimer.singleShot(150, _resize_to_fit)
+            QtCore.QTimer.singleShot(200, _remove_min_max_buttons)
+        else:
+            _resize_to_fit()
+            QtCore.QTimer.singleShot(50, _remove_min_max_buttons)
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +536,7 @@ def show():
         init_w = btn_sz + 8
         init_h = _calc_content_height() + chrome
     else:
-        init_w = 460
+        init_w = _calc_content_width() + 8
         init_h = btn_sz + chrome
 
     # floatingChangeCommand fires every time the panel is docked or undocked,
