@@ -71,6 +71,19 @@ def load_or_generate_icon(icon_file, icon_key, group="settings", size=32):
 
 def make_settings_icon(size=32):
     """Return a gear icon for the Settings button."""
+    # Try to load the gearIcon.png from known locations
+    icon_name = "gearIcon.png"
+    search_paths = [
+        os.path.join(os.path.dirname(__file__), "icons", icon_name),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "icon", icon_name),
+        os.path.join(cmds.internalVar(userBitmapsDir=True), icon_name),
+    ]
+    for path in search_paths:
+        if os.path.isfile(path):
+            icon = QtGui.QIcon(path)
+            if not icon.isNull():
+                return icon
+    # Fall back to generated icon if PNG not found
     return _generate_icon("gear", "settings", size)
 
 
