@@ -518,32 +518,30 @@ def show():
     # Dock below the Channel Box on first open; user can undock/move freely.
     # dockToControl places ATK as a separate panel directly below ChannelBoxLayerEditor.
     # Fall back to the right edge of the main window if that panel is absent.
+    #
+    # floatingChangeCommand is only available in Maya 2024+.  If the flag is
+    # not recognised we fall back without it — the toolbar still works, it just
+    # won't auto-strip min/max buttons or resize after a dock/undock transition.
+    dock_kw = dict(
+        label=TOOLBAR_LABEL,
+        retain=True,
+        initialWidth=init_w,
+        initialHeight=init_h,
+        minimumWidth=52,
+        minimumHeight=52,
+        uiScript=ui_script,
+    )
+
     if cmds.workspaceControl("ChannelBoxLayerEditor", exists=True):
-        cmds.workspaceControl(
-            WORKSPACE_NAME,
-            label=TOOLBAR_LABEL,
-            retain=True,
-            initialWidth=init_w,
-            initialHeight=init_h,
-            minimumWidth=52,
-            minimumHeight=52,
-            dockToControl=["ChannelBoxLayerEditor", "bottom"],
-            uiScript=ui_script,
-            floatingChangeCommand=float_cmd,
-        )
+        dock_kw["dockToControl"] = ["ChannelBoxLayerEditor", "bottom"]
     else:
-        cmds.workspaceControl(
-            WORKSPACE_NAME,
-            label=TOOLBAR_LABEL,
-            retain=True,
-            initialWidth=init_w,
-            initialHeight=init_h,
-            minimumWidth=52,
-            minimumHeight=52,
-            dockToMainWindow=["right", False],
-            uiScript=ui_script,
-            floatingChangeCommand=float_cmd,
-        )
+        dock_kw["dockToMainWindow"] = ["right", False]
+
+    try:
+        cmds.workspaceControl(WORKSPACE_NAME, floatingChangeCommand=float_cmd, **dock_kw)
+    except TypeError:
+        # Maya version does not support floatingChangeCommand — create without it
+        cmds.workspaceControl(WORKSPACE_NAME, **dock_kw)
 
     cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=True)
     _rebuild_ui()
