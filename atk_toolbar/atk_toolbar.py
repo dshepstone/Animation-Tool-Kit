@@ -270,6 +270,16 @@ def _undock_toolbar():
         cmds.workspaceControl(WORKSPACE_NAME, edit=True, floating=True)
 
 
+def _dock_to_bottom():
+    """Recreate the toolbar docked to the bottom of the main Maya window.
+
+    Scheduled via QTimer so the gear context menu finishes closing before the
+    workspaceControl is torn down and rebuilt (avoids deleting the widget while
+    its menu's event handler is still on the call stack).
+    """
+    QtCore.QTimer.singleShot(0, show)
+
+
 def _on_floating_change():
     """Called by Maya's floatingChangeCommand whenever the panel is docked or undocked.
 
@@ -459,6 +469,22 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             "QMenu::item:selected { background:#4FC3F7; color:#000; }"
         )
         menu.addAction("Open Settings", lambda: atk_settings.show(rebuild_callback=self.rebuild))
+        menu.addSeparator()
+
+        # Dock / float toggle — grey out the option that already matches current state
+        try:
+            is_floating = bool(cmds.workspaceControl(WORKSPACE_NAME, q=True, floating=True))
+        except Exception:
+            is_floating = True
+
+        float_act = menu.addAction("Float / Undock Toolbar")
+        float_act.triggered.connect(_undock_toolbar)
+        float_act.setEnabled(not is_floating)
+
+        dock_act = menu.addAction("Dock to Bottom")
+        dock_act.triggered.connect(_dock_to_bottom)
+        dock_act.setEnabled(is_floating)
+
         menu.addSeparator()
         menu.addAction("About Animation Tool Kit", self._show_about)
         menu.exec_(btn.mapToGlobal(pos))
