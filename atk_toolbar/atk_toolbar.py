@@ -53,6 +53,7 @@ _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
 _OPT_SHOW_TOOLTIPS   = atk_settings.OPT_SHOW_TOOLTIPS
 _OPT_SHOW_SEPARATORS = atk_settings.OPT_SHOW_SEPARATORS
 _OPT_ORIENTATION     = atk_settings.OPT_ORIENTATION
+_OPT_ICON_ALIGNMENT  = atk_settings.OPT_ICON_ALIGNMENT
 
 _BTN_STYLE_NORMAL = (
     "QToolButton {"
@@ -98,6 +99,14 @@ def _show_tooltips():
 
 def _show_separators():
     return bool(atk_settings._get_pref_int(_OPT_SHOW_SEPARATORS, 1))
+
+
+def _get_alignment():
+    if cmds.optionVar(exists=_OPT_ICON_ALIGNMENT):
+        val = cmds.optionVar(q=_OPT_ICON_ALIGNMENT)
+        if val in ("left", "center", "right"):
+            return val
+    return "center"
 
 
 def _maya_main_window():
@@ -304,34 +313,67 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
         if orientation == "vertical":
             layout = QtWidgets.QVBoxLayout(self)
-        else:
-            layout = QtWidgets.QHBoxLayout(self)
+            layout.setContentsMargins(2, 2, 2, 2)
+            layout.setSpacing(2)
 
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(2)
-
-        # Settings button (always first)
-        self._add_settings_btn(layout, icon_sz, show_tips, orientation)
-        if show_sep:
-            self._add_sep(layout, orientation)
-
-        # Tool buttons
-        self._button_map = {}
-        prev_group = None
-
-        for tool in atk_loader.TOOL_REGISTRY:
-            if not atk_loader.is_tool_visible(tool["id"]):
-                continue
-
-            if show_sep and prev_group and tool["group"] != prev_group:
+            # Settings gear always at the top
+            self._add_settings_btn(layout, icon_sz, show_tips, orientation)
+            if show_sep:
                 self._add_sep(layout, orientation)
 
-            btn = self._make_tool_btn(tool, icon_sz, show_tips)
-            self._button_map[tool["id"]] = btn
-            layout.addWidget(btn)
-            prev_group = tool["group"]
+            self._button_map = {}
+            prev_group = None
+            for tool in atk_loader.TOOL_REGISTRY:
+                if not atk_loader.is_tool_visible(tool["id"]):
+                    continue
+                if show_sep and prev_group and tool["group"] != prev_group:
+                    self._add_sep(layout, orientation)
+                btn = self._make_tool_btn(tool, icon_sz, show_tips)
+                self._button_map[tool["id"]] = btn
+                layout.addWidget(btn)
+                prev_group = tool["group"]
 
-        layout.addStretch()
+            layout.addStretch()
+
+        else:  # horizontal
+            layout = QtWidgets.QHBoxLayout(self)
+            layout.setContentsMargins(2, 2, 2, 2)
+            layout.setSpacing(2)
+
+            # Settings gear always anchored to the far left
+            self._add_settings_btn(layout, icon_sz, show_tips, orientation)
+            if show_sep:
+                self._add_sep(layout, orientation)
+
+            # Build the ordered list of tool widgets (buttons + group separators)
+            self._button_map = {}
+            tool_widgets = []
+            prev_group = None
+            for tool in atk_loader.TOOL_REGISTRY:
+                if not atk_loader.is_tool_visible(tool["id"]):
+                    continue
+                if show_sep and prev_group and tool["group"] != prev_group:
+                    tool_widgets.append(self._make_sep_widget(orientation))
+                btn = self._make_tool_btn(tool, icon_sz, show_tips)
+                self._button_map[tool["id"]] = btn
+                tool_widgets.append(btn)
+                prev_group = tool["group"]
+
+            # Position tools according to the workspace alignment setting
+            alignment = _get_alignment()
+            if alignment == "center":
+                layout.addStretch()
+                for w in tool_widgets:
+                    layout.addWidget(w)
+                layout.addStretch()
+            elif alignment == "right":
+                layout.addStretch()
+                for w in tool_widgets:
+                    layout.addWidget(w)
+            else:  # left
+                for w in tool_widgets:
+                    layout.addWidget(w)
+                layout.addStretch()
 
     def _add_settings_btn(self, layout, icon_sz, show_tips, orientation):
         btn = QtWidgets.QToolButton()
@@ -383,7 +425,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         return btn
 
     @staticmethod
-    def _add_sep(layout, orientation):
+    def _make_sep_widget(orientation):
         sep = QtWidgets.QFrame()
         if orientation == "vertical":
             sep.setFrameShape(QtWidgets.QFrame.HLine)
@@ -392,7 +434,11 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             sep.setFrameShape(QtWidgets.QFrame.VLine)
             sep.setFixedWidth(1)
         sep.setStyleSheet("background-color: #555555; border: none;")
-        layout.addWidget(sep)
+        return sep
+
+    @staticmethod
+    def _add_sep(layout, orientation):
+        layout.addWidget(ATKToolbarWidget._make_sep_widget(orientation))
 
     # ── Orientation detection ────────────────────────────────────────────────
 
@@ -402,7 +448,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             val = cmds.optionVar(q=_OPT_ORIENTATION)
             if val in ("horizontal", "vertical"):
                 return val
-        return "vertical"
+        return "horizontal"
 
     # ── Context menus ────────────────────────────────────────────────────────
 
@@ -538,7 +584,7 @@ def show():
         cmds.deleteUI(WORKSPACE_NAME)
 
     # Size the initial window to match orientation + exact button count
-    orient = "vertical"
+    orient = "horizontal"
     if cmds.optionVar(exists=_OPT_ORIENTATION):
         val = cmds.optionVar(q=_OPT_ORIENTATION)
         if val in ("horizontal", "vertical"):
@@ -571,9 +617,9 @@ def show():
         "import atk_toolbar.atk_toolbar as _atk; _atk._rebuild_ui()"
     )
 
-    # Dock below the Channel Box on first open; user can undock/move freely.
-    # dockToControl places ATK as a separate panel directly below ChannelBoxLayerEditor.
-    # Fall back to the right edge of the main window if that panel is absent.
+    # Dock to the bottom of the main Maya window on first open so the toolbar
+    # appears as a horizontal strip above the timeline.  The user can undock
+    # or move it freely; all docking transitions are preserved via retain=True.
     #
     # floatingChangeCommand is only available in Maya 2024+.  If the flag is
     # not recognised we fall back without it — the toolbar still works, it just
@@ -586,12 +632,8 @@ def show():
         minimumWidth=52,
         minimumHeight=52,
         uiScript=ui_script,
+        dockToMainWindow=["bottom", False],
     )
-
-    if cmds.workspaceControl("ChannelBoxLayerEditor", exists=True):
-        dock_kw["dockToControl"] = ["ChannelBoxLayerEditor", "right"]
-    else:
-        dock_kw["dockToMainWindow"] = ["right", False]
 
     try:
         cmds.workspaceControl(WORKSPACE_NAME, floatingChangeCommand=float_cmd, **dock_kw)

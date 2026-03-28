@@ -34,6 +34,7 @@ OPT_ICON_SIZE        = "atk_toolbar_icon_size"        # int: 24, 32, 48
 OPT_SHOW_TOOLTIPS    = "atk_toolbar_show_tooltips"    # int 0/1
 OPT_SHOW_SEPARATORS  = "atk_toolbar_show_separators"  # int 0/1
 OPT_ORIENTATION      = "atk_toolbar_orientation"      # str: "horizontal" | "vertical"
+OPT_ICON_ALIGNMENT   = "atk_toolbar_icon_alignment"   # str: "left" | "center" | "right"
 
 ICON_SIZES = [("Small  (24 px)", 24), ("Medium  (32 px)", 32), ("Large  (48 px)", 48)]
 
@@ -243,6 +244,7 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         root.addWidget(self._tabs)
 
         self._build_appearance_tab()
+        self._build_workspace_tab()
         self._build_tools_tab()
         self._build_about_tab()
 
@@ -303,6 +305,35 @@ class ATKSettingsDialog(QtWidgets.QDialog):
 
         layout.addStretch()
         self._tabs.addTab(tab, "Appearance")
+
+    def _build_workspace_tab(self):
+        tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(tab)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
+
+        note = QtWidgets.QLabel(
+            "Controls how tool icons are positioned inside the horizontal bar.\n"
+            "The Settings (gear) icon is always anchored to the far left."
+        )
+        note.setObjectName("lbl_subtitle")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        align_group = QtWidgets.QGroupBox("Icon Alignment  (horizontal bar)")
+        align_layout = QtWidgets.QVBoxLayout(align_group)
+
+        self._rb_align_left   = QtWidgets.QRadioButton("Left  — tools start immediately after the gear")
+        self._rb_align_center = QtWidgets.QRadioButton("Centre  — tools centred in the bar")
+        self._rb_align_right  = QtWidgets.QRadioButton("Right  — tools pushed to the far right")
+
+        align_layout.addWidget(self._rb_align_left)
+        align_layout.addWidget(self._rb_align_center)
+        align_layout.addWidget(self._rb_align_right)
+        layout.addWidget(align_group)
+
+        layout.addStretch()
+        self._tabs.addTab(tab, "Workspace")
 
     def _build_tools_tab(self):
         tab = QtWidgets.QWidget()
@@ -401,9 +432,15 @@ class ATKSettingsDialog(QtWidgets.QDialog):
 
     def _load_prefs(self):
         # Orientation
-        orient = cmds.optionVar(q=OPT_ORIENTATION) if cmds.optionVar(exists=OPT_ORIENTATION) else "vertical"
+        orient = cmds.optionVar(q=OPT_ORIENTATION) if cmds.optionVar(exists=OPT_ORIENTATION) else "horizontal"
         self._rb_vertical.setChecked(orient == "vertical")
         self._rb_horizontal.setChecked(orient != "vertical")
+
+        # Icon alignment
+        align = cmds.optionVar(q=OPT_ICON_ALIGNMENT) if cmds.optionVar(exists=OPT_ICON_ALIGNMENT) else "center"
+        self._rb_align_left.setChecked(align == "left")
+        self._rb_align_right.setChecked(align == "right")
+        self._rb_align_center.setChecked(align not in ("left", "right"))
 
         # Icon size
         current_size = _get_pref_int(OPT_ICON_SIZE, 32)
@@ -425,6 +462,15 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         orient = "vertical" if self._rb_vertical.isChecked() else "horizontal"
         cmds.optionVar(sv=(OPT_ORIENTATION, orient))
 
+        # Icon alignment
+        if self._rb_align_left.isChecked():
+            align = "left"
+        elif self._rb_align_right.isChecked():
+            align = "right"
+        else:
+            align = "center"
+        cmds.optionVar(sv=(OPT_ICON_ALIGNMENT, align))
+
         # Icon size
         for rb, px in self._size_radios:
             if rb.isChecked():
@@ -444,7 +490,8 @@ class ATKSettingsDialog(QtWidgets.QDialog):
             self.rebuild_callback()
 
     def _reset_defaults(self):
-        cmds.optionVar(sv=(OPT_ORIENTATION, "vertical"))
+        cmds.optionVar(sv=(OPT_ORIENTATION, "horizontal"))
+        cmds.optionVar(sv=(OPT_ICON_ALIGNMENT, "center"))
         _set_pref_int(OPT_ICON_SIZE, 32)
         _set_pref_int(OPT_SHOW_TOOLTIPS, 1)
         _set_pref_int(OPT_SHOW_SEPARATORS, 1)
