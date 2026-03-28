@@ -291,6 +291,86 @@ def _on_floating_change():
 
 
 # ---------------------------------------------------------------------------
+# Grip handle widget
+# ---------------------------------------------------------------------------
+
+class _GripHandle(QtWidgets.QWidget):
+    """Dotted grip strip shown at the leading edge of the toolbar.
+
+    Clicking it floats (undocks) the toolbar.  The cursor changes to an
+    open hand on hover to communicate the drag-to-undock affordance.
+
+    In horizontal mode the grip is a narrow vertical strip of dots on the
+    left side of the bar.  In vertical mode it is a short horizontal strip
+    of dots at the top.
+    """
+
+    _DOT_NORMAL = QtGui.QColor("#707070")
+    _DOT_HOVER  = QtGui.QColor("#b8b8b8")
+    _DOT_SIZE   = 2
+    _DOT_GAP    = 4   # centre-to-centre distance between dots
+
+    def __init__(self, orientation="horizontal", parent=None):
+        super(_GripHandle, self).__init__(parent)
+        self._orientation = orientation
+        self._hovered = False
+
+        if orientation == "horizontal":
+            self.setFixedWidth(10)
+            self.setSizePolicy(
+                QtWidgets.QSizePolicy.Fixed,
+                QtWidgets.QSizePolicy.Expanding,
+            )
+        else:
+            self.setFixedHeight(10)
+            self.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding,
+                QtWidgets.QSizePolicy.Fixed,
+            )
+
+        self.setCursor(QtCore.Qt.OpenHandCursor)
+        self.setToolTip("Click to float / undock toolbar")
+        self.setAttribute(QtCore.Qt.WA_Hover, True)
+
+    def event(self, ev):
+        if ev.type() == QtCore.QEvent.HoverEnter:
+            self._hovered = True
+            self.update()
+        elif ev.type() == QtCore.QEvent.HoverLeave:
+            self._hovered = False
+            self.update()
+        return super(_GripHandle, self).event(ev)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        color = self._DOT_HOVER if self._hovered else self._DOT_NORMAL
+        ds  = self._DOT_SIZE
+        gap = self._DOT_GAP
+        w, h = self.width(), self.height()
+
+        if self._orientation == "horizontal":
+            # Two columns of dots running vertically down the strip
+            cx = w // 2
+            y = gap
+            while y + ds <= h - gap:
+                painter.fillRect(cx - 2, y, ds, ds, color)
+                painter.fillRect(cx + 2, y, ds, ds, color)
+                y += gap
+        else:
+            # Two rows of dots running horizontally across the strip
+            cy = h // 2
+            x = gap
+            while x + ds <= w - gap:
+                painter.fillRect(x, cy - 2, ds, ds, color)
+                painter.fillRect(x, cy + 2, ds, ds, color)
+                x += gap
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            _undock_toolbar()
+
+
+# ---------------------------------------------------------------------------
 # Toolbar Qt widget
 # ---------------------------------------------------------------------------
 
@@ -326,6 +406,9 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             layout.setContentsMargins(2, 2, 2, 2)
             layout.setSpacing(2)
 
+            # Grip handle at the very top for tear-off undocking
+            layout.addWidget(_GripHandle("vertical", parent=self))
+
             # Settings gear always at the top
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
             if show_sep:
@@ -349,6 +432,9 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             layout = QtWidgets.QHBoxLayout(self)
             layout.setContentsMargins(2, 2, 2, 2)
             layout.setSpacing(2)
+
+            # Grip handle at the far left for tear-off undocking
+            layout.addWidget(_GripHandle("horizontal", parent=self))
 
             # Settings gear always anchored to the far left
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
