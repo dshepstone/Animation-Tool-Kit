@@ -136,6 +136,17 @@ TOOL_REGISTRY = [
         "version":   "2.0.4",
     },
     {
+        "id":        "diget_mirror",
+        "label":     "Diget Mirror",
+        "tooltip":   "Mirror, swap or flip rig controls across left and right",
+        "module":    "digetMirrorControl_v2_2_5",
+        "launch_fn": "DigetMirrorControl.show_dialog",
+        "icon_file": "mirror.png",
+        "icon_key":  "mirror",
+        "group":     "rigging",
+        "version":   "2.2.5",
+    },
+    {
         "id":        "saveplus",
         "label":     "SavePlus",
         "tooltip":   "Intelligent file versioning and backup for Maya scenes",
@@ -231,7 +242,11 @@ def launch_tool(tool_id):
         else:
             mod = sys.modules[module_name]
 
-        fn = getattr(mod, fn_name, None)
+        fn = mod
+        for attr in fn_name.split("."):
+            fn = getattr(fn, attr, None)
+            if fn is None:
+                break
         if fn is None:
             cmds.warning(
                 "ATK Toolbar: module '{}' has no attribute '{}'.".format(

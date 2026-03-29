@@ -283,7 +283,8 @@ global proc atk__install()
         "Reset_Tool_2_0_1/transform_reset_tool.py",
         "AnimSnap_1_0_0/anim_snap.py",
         "xform_copy_past_2_0_0/xform_copy_paste.py",
-        "selection_set_2_0_4/SmartSelectSets_v2.py"
+        "selection_set_2_0_4/SmartSelectSets_v2.py",
+        "diget_mirror_2_5_5/digetMirrorControl_v2_2_5.py"
     };
     for ($relScript in $toolScripts)
     {
@@ -325,7 +326,8 @@ global proc atk__install()
         "SavePlus_2_0_5/icons/saveplus.png",
         "AnimSnap_1_0_0/animSnap.png",
         "xform_copy_past_2_0_0/xform_copy_paste.png",
-        "selection_set_2_0_4/selectionSet.png"
+        "selection_set_2_0_4/selectionSet.png",
+        "diget_mirror_2_5_5/mirror.png"
     };
     for ($relPath in $toolIcons)
     {

@@ -149,6 +149,7 @@ def _draw_symbol(painter, icon_key, accent, size):
         "snap":    _draw_snap,
         "wire":    _draw_wire,
         "reset":   _draw_reset,
+        "mirror":  _draw_mirror,
         "save":    _draw_save,
         "warning": _draw_warning,
     }
@@ -441,6 +442,39 @@ def _draw_save(painter, accent, s, m):
     painter.setPen(_pen(_BG_COLOR, pw))
     painter.drawLine(QtCore.QPointF(bx - br * 0.6, by), QtCore.QPointF(bx + br * 0.6, by))
     painter.drawLine(QtCore.QPointF(bx, by - br * 0.6), QtCore.QPointF(bx, by + br * 0.6))
+
+
+def _draw_mirror(painter, accent, s, m):
+    """Two mirrored arrows around a vertical center line."""
+    cx = s / 2.0
+
+    painter.setPen(_pen(accent, s * 0.05))
+    painter.setBrush(QtCore.Qt.NoBrush)
+    painter.drawLine(QtCore.QPointF(cx, m), QtCore.QPointF(cx, s - m))
+
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtGui.QBrush(accent))
+
+    left = QtGui.QPolygonF([
+        QtCore.QPointF(cx - s * 0.08, s * 0.30),
+        QtCore.QPointF(cx - s * 0.30, s * 0.30),
+        QtCore.QPointF(cx - s * 0.22, s * 0.20),
+        QtCore.QPointF(cx - s * 0.40, s * 0.38),
+        QtCore.QPointF(cx - s * 0.22, s * 0.56),
+        QtCore.QPointF(cx - s * 0.30, s * 0.46),
+        QtCore.QPointF(cx - s * 0.08, s * 0.46),
+    ])
+    right = QtGui.QPolygonF([
+        QtCore.QPointF(cx + s * 0.08, s * 0.54),
+        QtCore.QPointF(cx + s * 0.30, s * 0.54),
+        QtCore.QPointF(cx + s * 0.22, s * 0.64),
+        QtCore.QPointF(cx + s * 0.40, s * 0.46),
+        QtCore.QPointF(cx + s * 0.22, s * 0.28),
+        QtCore.QPointF(cx + s * 0.30, s * 0.38),
+        QtCore.QPointF(cx + s * 0.08, s * 0.38),
+    ])
+    painter.drawPolygon(left)
+    painter.drawPolygon(right)
 
 
 def _draw_warning(painter, accent, s, m):
