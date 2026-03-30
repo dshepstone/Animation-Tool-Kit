@@ -3473,10 +3473,30 @@ class DigetMirrorControl(QtWidgets.QDialog):
             )
             return
 
+        # Snapshot control keys may be stored as full DAG paths (common when
+        # snapshots are built from long names), while current selection is also
+        # long DAG. Older data may contain short leaf names. Build a lookup so
+        # selected controls can match either representation.
+        snap_key_by_leaf = {}
+        for snap_key in snap.controls.keys():
+            leaf_key = snap_key.split("|")[-1]
+            snap_key_by_leaf.setdefault(leaf_key, snap_key)
+
         flipped = []
         for ctrl in sel:
             leaf = ctrl.split("|")[-1]
-            ctrl_data = snap.controls.get(leaf)
+            ctrl_key = ctrl if ctrl in snap.controls else snap_key_by_leaf.get(leaf)
+            if ctrl_key is None:
+                # Fallback for short/namespace-qualified selections.
+                resolved = _resolve_long(ctrl)
+                resolved_leaf = resolved.split("|")[-1]
+                ctrl_key = (
+                    resolved
+                    if resolved in snap.controls
+                    else snap_key_by_leaf.get(resolved_leaf)
+                )
+
+            ctrl_data = snap.controls.get(ctrl_key) if ctrl_key else None
             if ctrl_data is None:
                 continue
             attrs = ctrl_data.get("attributes", {})
