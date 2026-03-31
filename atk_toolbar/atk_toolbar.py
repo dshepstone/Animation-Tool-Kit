@@ -695,6 +695,14 @@ def show():
     if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
         cmds.deleteUI(WORKSPACE_NAME)
 
+    # Clear retained workspace state so launch position is deterministic:
+    # always docked above the timeline at the bottom of Maya.
+    try:
+        if cmds.workspaceControlState(WORKSPACE_NAME, exists=True):
+            cmds.workspaceControlState(WORKSPACE_NAME, remove=True)
+    except Exception:
+        pass
+
     # Size the initial window to match orientation + exact button count
     orient = "horizontal"
     if cmds.optionVar(exists=_OPT_ORIENTATION):
@@ -739,6 +747,7 @@ def show():
     dock_kw = dict(
         label=TOOLBAR_LABEL,
         retain=True,
+        actLikeMayaUIElement=True,
         initialWidth=init_w,
         initialHeight=init_h,
         minimumWidth=52,
