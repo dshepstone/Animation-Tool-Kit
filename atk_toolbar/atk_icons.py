@@ -152,6 +152,7 @@ def _draw_symbol(painter, icon_key, accent, size):
         "mirror":  _draw_mirror,
         "save":    _draw_save,
         "library": _draw_library,
+        "user_dir": _draw_user_dir,
         "warning": _draw_warning,
     }
 
@@ -515,6 +516,40 @@ def _draw_library(painter, accent, s, m):
             QtCore.QPointF(cx - bw * 0.75, cy + dy),
             QtCore.QPointF(cx - bw * 0.15, cy + dy),
         )
+
+
+def _draw_user_dir(painter, accent, s, m):
+    """User + folder glyph for directory checks."""
+    # Folder base
+    fx = m * 0.75
+    fy = s * 0.47
+    fw = s - (m * 1.5)
+    fh = s * 0.33
+    painter.setPen(_pen(accent, s * 0.05))
+    painter.setBrush(QtGui.QBrush(accent.darker(220)))
+    painter.drawRoundedRect(QtCore.QRectF(fx, fy, fw, fh), s * 0.07, s * 0.07)
+
+    # Folder tab
+    tab = QtGui.QPainterPath()
+    tab.moveTo(fx + fw * 0.05, fy)
+    tab.lineTo(fx + fw * 0.28, fy)
+    tab.lineTo(fx + fw * 0.36, fy - s * 0.10)
+    tab.lineTo(fx + fw * 0.62, fy - s * 0.10)
+    tab.lineTo(fx + fw * 0.72, fy)
+    painter.drawPath(tab)
+
+    # User bust
+    head_r = s * 0.11
+    head_cx = s * 0.30
+    head_cy = s * 0.24
+    painter.setPen(_pen(_FG_COLOR, s * 0.045))
+    painter.setBrush(QtGui.QBrush(_BG_COLOR))
+    painter.drawEllipse(QtCore.QPointF(head_cx, head_cy), head_r, head_r)
+
+    shoulders = QtGui.QPainterPath()
+    shoulders.moveTo(head_cx - s * 0.18, s * 0.44)
+    shoulders.quadTo(head_cx, s * 0.30, head_cx + s * 0.18, s * 0.44)
+    painter.drawPath(shoulders)
 
 
 def _draw_warning(painter, accent, s, m):
