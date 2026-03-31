@@ -151,6 +151,7 @@ def _draw_symbol(painter, icon_key, accent, size):
         "reset":   _draw_reset,
         "mirror":  _draw_mirror,
         "save":    _draw_save,
+        "library": _draw_library,
         "warning": _draw_warning,
     }
 
@@ -475,6 +476,45 @@ def _draw_mirror(painter, accent, s, m):
     ])
     painter.drawPolygon(left)
     painter.drawPolygon(right)
+
+
+def _draw_library(painter, accent, s, m):
+    """Open book — pose/animation library symbol."""
+    cx, cy = s / 2, s / 2
+    bw = s * 0.32  # half-width of book
+    bh = s * 0.30  # half-height of book
+
+    # Left page
+    painter.setPen(_pen(accent, s * 0.055))
+    painter.setBrush(QtGui.QBrush(accent.darker(220)))
+    left = QtGui.QPainterPath()
+    left.moveTo(cx, cy - bh)
+    left.quadTo(cx - bw * 0.5, cy - bh, cx - bw, cy - bh * 0.7)
+    left.lineTo(cx - bw, cy + bh * 0.7)
+    left.quadTo(cx - bw * 0.5, cy + bh, cx, cy + bh)
+    left.closeSubpath()
+    painter.drawPath(left)
+
+    # Right page
+    right = QtGui.QPainterPath()
+    right.moveTo(cx, cy - bh)
+    right.quadTo(cx + bw * 0.5, cy - bh, cx + bw, cy - bh * 0.7)
+    right.lineTo(cx + bw, cy + bh * 0.7)
+    right.quadTo(cx + bw * 0.5, cy + bh, cx, cy + bh)
+    right.closeSubpath()
+    painter.drawPath(right)
+
+    # Spine
+    painter.setPen(_pen(accent, s * 0.06))
+    painter.drawLine(QtCore.QPointF(cx, cy - bh), QtCore.QPointF(cx, cy + bh))
+
+    # Text lines on left page
+    painter.setPen(_pen(accent.lighter(130), s * 0.03))
+    for dy in [-bh * 0.3, 0, bh * 0.3]:
+        painter.drawLine(
+            QtCore.QPointF(cx - bw * 0.75, cy + dy),
+            QtCore.QPointF(cx - bw * 0.15, cy + dy),
+        )
 
 
 def _draw_warning(painter, accent, s, m):

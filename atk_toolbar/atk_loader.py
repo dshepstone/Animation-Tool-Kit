@@ -157,6 +157,17 @@ TOOL_REGISTRY = [
         "group":     "pipeline",
         "version":   "2.0.4",
     },
+    {
+        "id":        "studio_library",
+        "label":     "Studio Library",
+        "tooltip":   "Manage poses and animation clips in a visual library",
+        "module":    "studiolibrary",
+        "launch_fn": "main",
+        "icon_file": "studioLibrary.png",
+        "icon_key":  "library",
+        "group":     "pipeline",
+        "version":   "2.21.1",
+    },
 ]
 
 # Ordered list of groups as they appear left-to-right on the toolbar

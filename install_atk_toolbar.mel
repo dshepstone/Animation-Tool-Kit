@@ -312,6 +312,35 @@ global proc atk__install()
             warning("ATK Installer: SavePlus file not found (skipped): " + $fullSrc);
     }
 
+    // Studio Library is a multi-package tool — copy its src/ packages to scriptsDir
+    string $studioLibSrc = $toolsBase + "studiolibrary-2.21.1/src/";
+    string $studioLibPkgs[] = {
+        "studiolibrary",
+        "studiolibrarymaya",
+        "studioqt",
+        "studiovendor",
+        "mutils"
+    };
+    for ($pkg in $studioLibPkgs)
+    {
+        string $pkgSrc = $studioLibSrc + $pkg;
+        if (`filetest -d $pkgSrc`)
+        {
+            string $pkgDst = $scriptsDir + $pkg + "/";
+            string $copyPy = "";
+            $copyPy += "import os, shutil\n";
+            $copyPy += "src = r\"" + $pkgSrc + "\"\n";
+            $copyPy += "dst = r\"" + $pkgDst + "\"\n";
+            $copyPy += "if os.path.exists(dst):\n";
+            $copyPy += "    shutil.rmtree(dst)\n";
+            $copyPy += "shutil.copytree(src, dst)\n";
+            $copyPy += "print('  Copied package:', os.path.basename(src))\n";
+            python($copyPy);
+        }
+        else
+            warning("ATK Installer: Studio Library package not found (skipped): " + $pkgSrc);
+    }
+
     // ---- 4. Copy tool icons → userBitmapsDir ----------------------------------
     print "// Copying tool icons:\n";
     string $toolIcons[] = {
@@ -334,6 +363,18 @@ global proc atk__install()
         string $fullSrc = $toolsBase + $relPath;
         if (atk__fileExists($fullSrc))
             atk__copyFile($fullSrc, $iconsDir);
+    }
+
+    // Studio Library icon needs renaming from icon.png to studioLibrary.png
+    string $slIconSrc = $toolsBase + "studiolibrary-2.21.1/src/studiolibrary/resource/icons/icon.png";
+    if (atk__fileExists($slIconSrc))
+    {
+        atk__ensureDir($iconsDir);
+        string $renamePy = "";
+        $renamePy += "import shutil, os\n";
+        $renamePy += "shutil.copy2(r\"" + $slIconSrc + "\", os.path.join(r\"" + $iconsDir + "\", \"studioLibrary.png\"))\n";
+        $renamePy += "print('  Copied: studioLibrary.png')\n";
+        python($renamePy);
     }
 
     // ---- 5. Add sys.path entry -------------------------------------------------
