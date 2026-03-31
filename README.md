@@ -20,7 +20,11 @@ Keep these items side-by-side in the same folder before sending to users:
 - `atk_toolbar/`
 - `animation tool kit scripts/`
 
-For **User Directory Check**, the icon is expected at:
+For **User Directory Check**, the installer first looks for:
+
+- `animation tool kit scripts/User-Directory-Check/user_directory_check_icon.png`
+
+If that file is missing, it falls back to:
 
 - `icon/user_directory_check_icon.png`
 

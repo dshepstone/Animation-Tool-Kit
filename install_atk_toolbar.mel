@@ -366,12 +366,15 @@ global proc atk__install()
             atk__copyFile($fullSrc, $iconsDir);
     }
 
-    // User Directory Check icon is distributed in the repo-level icon folder
-    string $udcIconSrc = $installDir + "icon/user_directory_check_icon.png";
+    // User Directory Check icon: prefer the tool install folder, then fallback
+    string $udcIconSrc = $toolsBase + "User-Directory-Check/user_directory_check_icon.png";
+    if (!atk__fileExists($udcIconSrc))
+        $udcIconSrc = $installDir + "icon/user_directory_check_icon.png";
+
     if (atk__fileExists($udcIconSrc))
         atk__copyFile($udcIconSrc, $iconsDir);
     else
-        warning("ATK Installer: User Directory Check icon not found (skipped): " + $udcIconSrc);
+        warning("ATK Installer: User Directory Check icon not found (skipped).");
 
     // Studio Library icon needs renaming from icon.png to studioLibrary.png
     string $slIconSrc = $toolsBase + "studiolibrary-2.21.1/src/studiolibrary/resource/icons/icon.png";
