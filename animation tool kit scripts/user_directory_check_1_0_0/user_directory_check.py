@@ -1,68 +1,280 @@
-"""User Directory Check tool for Maya.
-
-Shows key user-directory paths and indicates whether they exist.
-"""
+# ============================================================
+# UserDirCheckWindow.py — User Directory Check
+# Animation Toolkit | PySide-based UI for Maya
+# ============================================================
 
 import os
+import subprocess
+import sys
 
 import maya.cmds as cmds
 
-_WINDOW_NAME = "ATKUserDirectoryCheckWindow"
+try:
+    from PySide6 import QtWidgets, QtCore, QtGui
+    import shiboken6 as shiboken
+except ImportError:
+    from PySide2 import QtWidgets, QtCore, QtGui
+    import shiboken2 as shiboken
+
+try:
+    from maya import OpenMayaUI as omui
+except ImportError:
+    omui = None
 
 
-def _rows():
-    return [
-        ("User Pref Dir", cmds.internalVar(userPrefDir=True)),
-        ("User Script Dir", cmds.internalVar(userScriptDir=True)),
-        ("User App Dir", cmds.internalVar(userAppDir=True)),
-        ("User Shelf Dir", cmds.internalVar(userShelfDir=True)),
-        ("User Workspace Dir", cmds.internalVar(userWorkspaceDir=True)),
-        ("User Bitmaps Dir", cmds.internalVar(userBitmapsDir=True)),
-    ]
+WINDOW_OBJECT_NAME = "UserDirCheckWindow"
+WINDOW_TITLE = "User Directory Check"
 
 
-def _copy_path(path):
-    try:
-        cmds.clipboard(path)
-    except Exception:
-        cmds.warning("User Directory Check: could not copy path to clipboard")
+def maya_main_window():
+    """Return Maya main window as a Qt QWidget."""
+    if omui is None:
+        return None
+
+    ptr = omui.MQtUtil.mainWindow()
+    if ptr is None:
+        return None
+
+    return shiboken.wrapInstance(int(ptr), QtWidgets.QWidget)
+
+
+class PathRow(QtWidgets.QWidget):
+    """Reusable row widget for a labeled path with copy/open buttons."""
+
+    def __init__(self, label_text, path_text="", copy_icon=None, open_icon=None, parent=None):
+        super(PathRow, self).__init__(parent)
+
+        self.label_text = label_text
+        self.path_text = path_text
+        self.copy_icon = copy_icon
+        self.open_icon = open_icon
+
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(8, 2, 8, 2)
+        layout.setSpacing(8)
+
+        self.label = QtWidgets.QLabel(self.label_text)
+        self.label.setFixedWidth(100)
+        self.label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+
+        label_font = self.label.font()
+        label_font.setBold(True)
+        self.label.setFont(label_font)
+
+        self.path_field = QtWidgets.QLineEdit(self.path_text)
+        self.path_field.setReadOnly(True)
+        self.path_field.setMinimumHeight(26)
+        self.path_field.setFont(QtGui.QFont("Consolas", 9))
+
+        self.copy_button = QtWidgets.QPushButton("Copy")
+        self.copy_button.setFixedSize(78, 26)
+        self.copy_button.setToolTip("Copy path to clipboard")
+        if self.copy_icon is not None:
+            self.copy_button.setIcon(self.copy_icon)
+
+        self.open_button = QtWidgets.QPushButton("Open")
+        self.open_button.setFixedSize(78, 26)
+        self.open_button.setToolTip("Open folder in file explorer")
+        if self.open_icon is not None:
+            self.open_button.setIcon(self.open_icon)
+
+        self.copy_button.clicked.connect(self.copy_path)
+        self.open_button.clicked.connect(self.open_path)
+
+        layout.addWidget(self.label)
+        layout.addWidget(self.path_field, 1)
+        layout.addWidget(self.copy_button)
+        layout.addWidget(self.open_button)
+
+    def copy_path(self):
+        QtWidgets.QApplication.clipboard().setText(self.path_text)
+        try:
+            clean_label = self.label_text.replace(" :", "").replace(":", "")
+            cmds.inViewMessage(
+                amg="{} copied".format(clean_label),
+                pos="topCenter",
+                fade=True,
+            )
+        except Exception:
+            pass
+
+    def open_path(self):
+        if os.path.isdir(self.path_text):
+            if os.name == "nt":
+                os.startfile(self.path_text)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", self.path_text])
+            else:
+                subprocess.Popen(["xdg-open", self.path_text])
+        else:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Path Not Found",
+                "This folder does not exist:\n\n{}".format(self.path_text),
+            )
+
+    def set_path(self, new_path):
+        self.path_text = new_path
+        self.path_field.setText(new_path)
+
+
+class UserDirCheckWindow(QtWidgets.QDialog):
+    """Main window."""
+
+    INSTANCE = None
+
+    def __init__(self, parent=None):
+        super(UserDirCheckWindow, self).__init__(parent or maya_main_window())
+
+        self.setObjectName(WINDOW_OBJECT_NAME)
+        self.setWindowTitle(WINDOW_TITLE)
+        self.setMinimumSize(700, 230)
+        self.resize(760, 250)
+
+        prefs_icons_dir = os.path.join(cmds.internalVar(userPrefDir=True), "icons").replace("\\", "/")
+        self.custom_icon_dir = prefs_icons_dir
+
+        self.copy_icon_path = os.path.join(self.custom_icon_dir, "copy.png")
+        self.open_icon_path = os.path.join(self.custom_icon_dir, "folder_open.png")
+        self.window_icon_path = os.path.join(self.custom_icon_dir, "user_directory_check_icon.png")
+
+        self.copy_icon = self.load_icon(self.copy_icon_path, fallback=QtWidgets.QStyle.SP_FileIcon)
+        self.open_icon = self.load_icon(self.open_icon_path, fallback=QtWidgets.QStyle.SP_DirOpenIcon)
+        self.window_icon = self.load_icon(self.window_icon_path, fallback=QtWidgets.QStyle.SP_ComputerIcon)
+
+        if self.window_icon is not None:
+            self.setWindowIcon(self.window_icon)
+
+        self._build_ui()
+        self.refresh_paths()
+        self.apply_styles()
+
+    def load_icon(self, path, fallback=None):
+        """Load an icon from disk, otherwise use a Qt fallback icon."""
+        if path and os.path.exists(path):
+            return QtGui.QIcon(path)
+
+        if fallback is not None:
+            return self.style().standardIcon(fallback)
+
+        return None
+
+    def _build_ui(self):
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(8)
+
+        header = QtWidgets.QLabel("User Directory Check")
+        header_font = QtGui.QFont()
+        header_font.setPointSize(11)
+        header_font.setBold(True)
+        header.setFont(header_font)
+        header.setAlignment(QtCore.Qt.AlignCenter)
+        header.setMinimumHeight(24)
+
+        self.app_row = PathRow("App Dir :", "", self.copy_icon, self.open_icon)
+        self.script_row = PathRow("Script Dir :", "", self.copy_icon, self.open_icon)
+        self.prefs_row = PathRow("Prefs Dir :", "", self.copy_icon, self.open_icon)
+        self.icons_row = PathRow("Icons Dir :", "", self.copy_icon, self.open_icon)
+
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.setSpacing(10)
+
+        self.refresh_button = QtWidgets.QPushButton("Refresh")
+        self.refresh_button.setMinimumHeight(28)
+
+        self.close_button = QtWidgets.QPushButton("Close")
+        self.close_button.setMinimumHeight(28)
+
+        self.refresh_button.clicked.connect(self.refresh_paths)
+        self.close_button.clicked.connect(self.close)
+
+        button_layout.addWidget(self.refresh_button)
+        button_layout.addWidget(self.close_button)
+
+        main_layout.addSpacing(4)
+        main_layout.addWidget(header)
+        main_layout.addSpacing(4)
+        main_layout.addWidget(self.app_row)
+        main_layout.addWidget(self.script_row)
+        main_layout.addWidget(self.prefs_row)
+        main_layout.addWidget(self.icons_row)
+        main_layout.addSpacing(6)
+        main_layout.addLayout(button_layout)
+
+    def refresh_paths(self):
+        """Re-read Maya user directories."""
+        user_app_dir = cmds.internalVar(userWorkspaceDir=True)
+        user_script_dir = cmds.internalVar(userScriptDir=True)
+        user_prefs_dir = cmds.internalVar(userPrefDir=True)
+        user_icons_dir = os.path.join(user_prefs_dir, "icons").replace("\\", "/")
+
+        self.app_row.set_path(user_app_dir)
+        self.script_row.set_path(user_script_dir)
+        self.prefs_row.set_path(user_prefs_dir)
+        self.icons_row.set_path(user_icons_dir)
+
+    def apply_styles(self):
+        """Dark UI styling."""
+        self.setStyleSheet(
+            """
+            QDialog {
+                background-color: #3c3c3c;
+                color: #e6e6e6;
+            }
+            QLabel {
+                color: #e6e6e6;
+            }
+            QLineEdit {
+                background-color: #2f2f2f;
+                border: 1px solid #4a4a4a;
+                padding: 4px 6px;
+                color: #d8c3a5;
+                border-radius: 2px;
+            }
+            QPushButton {
+                background-color: #5a5a5a;
+                border: 1px solid #6a6a6a;
+                padding: 4px 10px;
+                color: #ffffff;
+            }
+            QPushButton:hover {
+                background-color: #6a6a6a;
+            }
+            QPushButton:pressed {
+                background-color: #4f4f4f;
+            }
+        """
+        )
+
+    @classmethod
+    def show_window(cls):
+        if cls.INSTANCE is not None:
+            try:
+                cls.INSTANCE.close()
+                cls.INSTANCE.deleteLater()
+            except Exception:
+                pass
+
+        cls.INSTANCE = UserDirCheckWindow()
+        cls.INSTANCE.show()
+        cls.INSTANCE.raise_()
+        cls.INSTANCE.activateWindow()
+        return cls.INSTANCE
+
+
+def show_user_dir_check_window():
+    """Launch the window."""
+    return UserDirCheckWindow.show_window()
 
 
 def show():
-    if cmds.window(_WINDOW_NAME, exists=True):
-        cmds.deleteUI(_WINDOW_NAME)
-
-    win = cmds.window(_WINDOW_NAME, title="User Directory Check", sizeable=True, widthHeight=(720, 320))
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
-
-    cmds.text(label="Maya user directories and validation", align="left")
-    cmds.separator(height=8, style="in")
-
-    cols = [(1, 140), (2, 440), (3, 70), (4, 70)]
-    cmds.rowColumnLayout(numberOfColumns=4, columnWidth=cols)
-
-    cmds.text(label="Directory", align="left", font="boldLabelFont")
-    cmds.text(label="Path", align="left", font="boldLabelFont")
-    cmds.text(label="Exists", align="left", font="boldLabelFont")
-    cmds.text(label="Action", align="left", font="boldLabelFont")
-
-    for label, path in _rows():
-        exists = os.path.isdir(path)
-        cmds.text(label=label, align="left")
-        cmds.textField(text=path, editable=False)
-        cmds.text(label="Yes" if exists else "No", align="left")
-        cmds.button(label="Copy", c=lambda _x, p=path: _copy_path(p))
-
-    cmds.setParent("..")
-    cmds.separator(height=10, style="none")
-
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1)
-    cmds.text(label="Tip: if a required folder is missing, create it before installing tools.", align="left")
-    cmds.button(label="Refresh", c=lambda *_: show(), width=90)
-    cmds.setParent("..")
-
-    cmds.showWindow(win)
+    """ATK toolbar entrypoint."""
+    return show_user_dir_check_window()
 
 
 if __name__ == "__main__":
-    show()
+    show_user_dir_check_window()
