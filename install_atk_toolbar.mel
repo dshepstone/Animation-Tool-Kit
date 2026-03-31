@@ -284,7 +284,8 @@ global proc atk__install()
         "AnimSnap_1_0_0/anim_snap.py",
         "xform_copy_past_2_0_0/xform_copy_paste.py",
         "selection_set_2_0_4/SmartSelectSets_v2.py",
-        "diget_mirror_2_5_5/digetMirrorControl_v2_2_5.py"
+        "diget_mirror_2_5_5/digetMirrorControl_v2_2_5.py",
+        "user_directory_check_1_0_0/user_directory_check.py"
     };
     for ($relScript in $toolScripts)
     {
@@ -364,6 +365,13 @@ global proc atk__install()
         if (atk__fileExists($fullSrc))
             atk__copyFile($fullSrc, $iconsDir);
     }
+
+    // User Directory Check icon is distributed in the repo-level icon folder
+    string $udcIconSrc = $installDir + "icon/user_directory_check_icon.png";
+    if (atk__fileExists($udcIconSrc))
+        atk__copyFile($udcIconSrc, $iconsDir);
+    else
+        warning("ATK Installer: User Directory Check icon not found (skipped): " + $udcIconSrc);
 
     // Studio Library icon needs renaming from icon.png to studioLibrary.png
     string $slIconSrc = $toolsBase + "studiolibrary-2.21.1/src/studiolibrary/resource/icons/icon.png";

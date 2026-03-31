@@ -168,6 +168,17 @@ TOOL_REGISTRY = [
         "group":     "pipeline",
         "version":   "2.21.1",
     },
+    {
+        "id":        "user_directory_check",
+        "label":     "User Directory Check",
+        "tooltip":   "Review Maya user directories and verify that key paths exist",
+        "module":    "user_directory_check",
+        "launch_fn": "show",
+        "icon_file": "user_directory_check_icon.png",
+        "icon_key":  "user_dir",
+        "group":     "pipeline",
+        "version":   "1.0.0",
+    },
 ]
 
 # Ordered list of groups as they appear left-to-right on the toolbar
