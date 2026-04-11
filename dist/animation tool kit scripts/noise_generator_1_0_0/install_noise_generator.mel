@@ -1,0 +1,91 @@
+/*
+Noise Generator Installer (v1.0.0)
+Drag and drop this file into Maya's viewport to install Noise Generator.
+Compatible with Maya 2020+
+
+Place these files in the SAME folder before dragging:
+  - install_noise_generator.mel  (this file)
+  - noise_generator_1_0_0.py
+  - noise_generator_icon.png
+*/
+
+global proc noiseGeneratorInstall() {
+
+    // ---- Locate this MEL file on disk ----
+    string $whatIs = `whatIs noiseGeneratorInstall`;
+    string $melPath = `substitute "^.*found in: " $whatIs ""`;
+    $melPath = `strip $melPath`;
+
+    // ---- Derive the source directory ----
+    string $sourceDir = `substitute "[^/\\\\]*$" $melPath ""`;
+
+    // ---- Run Python installer inline ----
+    string $pyCmd = "";
+    $pyCmd += "import os, sys, shutil, maya.cmds as cmds, maya.mel as mel\n";
+    $pyCmd += "source_dir = r'" + $sourceDir + "'\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Resolve target directories ---\n";
+    $pyCmd += "scripts_dir = cmds.internalVar(usd=True)\n";
+    $pyCmd += "prefs_dir   = cmds.internalVar(upd=True)\n";
+    $pyCmd += "icons_dir   = os.path.join(prefs_dir, 'icons')\n";
+    $pyCmd += "\n";
+    $pyCmd += "# Ensure icons directory exists\n";
+    $pyCmd += "if not os.path.isdir(icons_dir):\n";
+    $pyCmd += "    os.makedirs(icons_dir)\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Source files ---\n";
+    $pyCmd += "src_script = os.path.join(source_dir, 'noise_generator_1_0_0.py')\n";
+    $pyCmd += "src_icon   = os.path.join(source_dir, 'noise_generator_icon.png')\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Validate source files exist ---\n";
+    $pyCmd += "missing = []\n";
+    $pyCmd += "if not os.path.isfile(src_script):\n";
+    $pyCmd += "    missing.append('noise_generator_1_0_0.py')\n";
+    $pyCmd += "if not os.path.isfile(src_icon):\n";
+    $pyCmd += "    missing.append('noise_generator_icon.png')\n";
+    $pyCmd += "if missing:\n";
+    $pyCmd += "    cmds.confirmDialog(title='Install Failed', message='Missing files in install folder:\\n' + '\\n'.join(missing), button=['OK'])\n";
+    $pyCmd += "    raise RuntimeError('Missing source files: ' + ', '.join(missing))\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Copy files ---\n";
+    $pyCmd += "dst_script = os.path.join(scripts_dir, 'noise_generator_1_0_0.py')\n";
+    $pyCmd += "dst_icon   = os.path.join(icons_dir,   'noise_generator_icon.png')\n";
+    $pyCmd += "shutil.copy2(src_script, dst_script)\n";
+    $pyCmd += "shutil.copy2(src_icon,   dst_icon)\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Ensure scripts dir is on sys.path ---\n";
+    $pyCmd += "if scripts_dir not in sys.path:\n";
+    $pyCmd += "    sys.path.insert(0, scripts_dir)\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Create shelf button ---\n";
+    $pyCmd += "shelf = mel.eval('$__tmp = $gShelfTopLevel')\n";
+    $pyCmd += "current_shelf = cmds.tabLayout(shelf, q=True, selectTab=True)\n";
+    $pyCmd += "\n";
+    $pyCmd += "# Remove any existing Noise Generator button on this shelf\n";
+    $pyCmd += "existing = cmds.shelfLayout(current_shelf, q=True, childArray=True) or []\n";
+    $pyCmd += "for btn in existing:\n";
+    $pyCmd += "    try:\n";
+    $pyCmd += "        if cmds.shelfButton(btn, q=True, label=True) == 'Noise Generator':\n";
+    $pyCmd += "            cmds.deleteUI(btn)\n";
+    $pyCmd += "    except:\n";
+    $pyCmd += "        pass\n";
+    $pyCmd += "\n";
+    $pyCmd += "launch_cmd = 'import noise_generator_1_0_0\\nimport importlib\\nimportlib.reload(noise_generator_1_0_0)\\nnoise_generator_1_0_0.launch()'\n";
+    $pyCmd += "\n";
+    $pyCmd += "cmds.shelfButton(\n";
+    $pyCmd += "    parent=current_shelf,\n";
+    $pyCmd += "    label='Noise Generator',\n";
+    $pyCmd += "    annotation='Launch Curve Noise Generator',\n";
+    $pyCmd += "    image='noise_generator_icon.png',\n";
+    $pyCmd += "    command=launch_cmd,\n";
+    $pyCmd += "    sourceType='python',\n";
+    $pyCmd += ")\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Done ---\n";
+    $pyCmd += "cmds.confirmDialog(title='Install Complete', message='Noise Generator installed successfully!\\n\\nScript: ' + dst_script + '\\nIcon: ' + dst_icon + '\\n\\nA shelf button has been added to your current shelf.', button=['OK'])\n";
+    $pyCmd += "cmds.inViewMessage(amg='<hl>Noise Generator</hl> installed successfully!', pos='midCenter', fade=True)\n";
+
+    python($pyCmd);
+}
+
+noiseGeneratorInstall();

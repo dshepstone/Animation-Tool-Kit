@@ -1,0 +1,271 @@
+// =============================================================================
+// install_wire_shape_tool.mel
+//
+// DRAG AND DROP INSTALLER — Wire Shape Tool for Maya
+//
+// How to use:
+//   Drag this .mel file from Windows Explorer / Finder onto the Maya viewport.
+//   Maya will automatically run the installer.
+//
+// Files required in the SAME folder as this .mel:
+//   - wire_shape_tool.py
+//   - Shape_Icon.png
+//   - install_wire_shape_tool.mel  (this file)
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// Utility: normalize backslashes to forward slashes
+// -----------------------------------------------------------------------------
+global proc string wst__normPath(string $p)
+{
+    $p = substituteAllString($p, "\\", "/");
+    return $p;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: find last occurrence of $needle in $p, return 1-based index or -1
+// -----------------------------------------------------------------------------
+global proc int wst__rindex(string $p, string $needle)
+{
+    int $n = size($needle);
+    int $i;
+    if ($n < 1) return -1;
+    for ($i = size($p) - $n + 1; $i >= 1; $i--)
+    {
+        if (substring($p, $i, $i + $n - 1) == $needle)
+            return $i;
+    }
+    return -1;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: return directory portion of a path (with trailing slash)
+// -----------------------------------------------------------------------------
+global proc string wst__dirname(string $p)
+{
+    $p = wst__normPath($p);
+    int $idx = wst__rindex($p, "/");
+    if ($idx < 0) return "";
+    return substring($p, 1, $idx);
+}
+
+// -----------------------------------------------------------------------------
+// Utility: locate the folder this MEL file lives in by querying Maya
+// -----------------------------------------------------------------------------
+global proc string wst__getInstallerDir(string $procName)
+{
+    // whatIs returns e.g. "Mel procedure found in: C:/.../install_wire_shape_tool.mel"
+    string $w = `whatIs $procName`;
+
+    if (`gmatch $w "*:*"` || `gmatch $w "*/*"`)
+    {
+        int $pos = wst__rindex($w, ": ");
+        if ($pos >= 0)
+        {
+            string $full = `substring $w ($pos + 2) (size($w))`;
+            $full = wst__normPath($full);
+            if (`filetest -f $full`)
+                return wst__dirname($full);
+        }
+
+        // Fallback: grab last space-delimited token
+        string $tokens[];
+        tokenize $w " " $tokens;
+        if (size($tokens) > 0)
+        {
+            string $maybe = $tokens[(size($tokens) - 1)];
+            $maybe = wst__normPath($maybe);
+            if (`filetest -f $maybe`)
+                return wst__dirname($maybe);
+        }
+    }
+    return "";
+}
+
+// -----------------------------------------------------------------------------
+// Utility: check a file exists
+// -----------------------------------------------------------------------------
+global proc int wst__fileExists(string $p)
+{
+    return `filetest -f (wst__normPath($p))`;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: ensure directory exists (uses Python for reliability)
+// -----------------------------------------------------------------------------
+global proc wst__ensureDir(string $dir)
+{
+    $dir = wst__normPath($dir);
+    if (!`filetest -d $dir`)
+    {
+        string $py = "";
+        $py += "import os\n";
+        $py += "os.makedirs(r\"" + $dir + "\", exist_ok=True)\n";
+        python($py);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Utility: copy a file using Python shutil (reliable cross-platform)
+// -----------------------------------------------------------------------------
+global proc wst__copyFile(string $src, string $dstDir)
+{
+    $src    = wst__normPath($src);
+    $dstDir = wst__normPath($dstDir);
+
+    wst__ensureDir($dstDir);
+
+    string $py = "";
+    $py += "import os, shutil\n";
+    $py += "src     = r\"" + $src    + "\"\n";
+    $py += "dst_dir = r\"" + $dstDir + "\"\n";
+    $py += "dst     = os.path.join(dst_dir, os.path.basename(src))\n";
+    $py += "shutil.copy2(src, dst)\n";
+    $py += "print('Copied:', src, '->', dst)\n";
+    python($py);
+}
+
+// -----------------------------------------------------------------------------
+// Utility: add or replace a shelf button (no duplicates)
+// -----------------------------------------------------------------------------
+global proc wst__replaceShelfButton(
+    string $shelf,
+    string $label,
+    string $annotation,
+    string $icon,
+    string $pyCmd)
+{
+    if ($shelf == "" || !`shelfLayout -ex $shelf`)
+    {
+        warning("Wire Shape Tool: could not find shelf '" + $shelf + "' — skipping shelf button.");
+        return;
+    }
+
+    // Remove existing buttons with the same label to avoid duplicates
+    string $kids[] = `shelfLayout -q -ca $shelf`;
+    for ($k in $kids)
+    {
+        if (`control -ex $k`)
+        {
+            string $kLabel = "";
+            catchQuiet($kLabel = `shelfButton -q -l $k`);
+            if ($kLabel == $label)
+                catchQuiet(`deleteUI $k`);
+        }
+    }
+
+    shelfButton
+        -parent     $shelf
+        -label      $label
+        -annotation $annotation
+        -image      $icon
+        -sourceType "python"
+        -command    $pyCmd;
+
+    refresh -f;
+}
+
+// -----------------------------------------------------------------------------
+// Main installer
+// -----------------------------------------------------------------------------
+global proc wst__install()
+{
+    // ---- Config ----------------------------------------------------------------
+    string $toolName   = "Wire Shape Tool";
+    string $pyFile     = "wire_shape_tool.py";
+    string $iconFile   = "Shape_Icon.png";
+    string $shelfLabel = "Wire Shapes";
+    string $annotation = "Open Wire Shape Tool — create rig control curve shapes";
+
+    string $pyCmd = "";
+    $pyCmd += "import sys, importlib\n";
+    $pyCmd += "import maya.cmds as cmds\n";
+    $pyCmd += "scripts_dir = cmds.internalVar(userScriptDir=True)\n";
+    $pyCmd += "if scripts_dir not in sys.path:\n";
+    $pyCmd += "    sys.path.insert(0, scripts_dir)\n";
+    $pyCmd += "import wire_shape_tool\n";
+    $pyCmd += "importlib.reload(wire_shape_tool)\n";
+    $pyCmd += "wire_shape_tool.show()\n";
+
+    // ---- Locate installer directory --------------------------------------------
+    string $installDir = wst__getInstallerDir("wst__install");
+    if ($installDir == "")
+    {
+        confirmDialog
+            -title   ($toolName + " — Install Failed")
+            -message  "Could not locate the installer folder.\n\nInstallation cancelled."
+            -button  "OK";
+        return;
+    }
+
+    string $srcPy   = $installDir + $pyFile;
+    string $srcIcon = $installDir + $iconFile;
+
+    // ---- Validate required source file ----------------------------------------
+    if (!wst__fileExists($srcPy))
+    {
+        confirmDialog
+            -title   ($toolName + " — Missing File")
+            -message ("Could not find:\n\n" + $srcPy
+                      + "\n\nMake sure wire_shape_tool.py is in the same folder as this .mel file.")
+            -button  "OK";
+        return;
+    }
+
+    // ---- Resolve Maya user destinations ----------------------------------------
+    string $scriptsDir = wst__normPath(`internalVar -userScriptDir`);
+    string $prefDir    = wst__normPath(`internalVar -userPrefDir`);
+    string $iconsDir   = $prefDir + "icons/";
+
+    // ---- Copy script -----------------------------------------------------------
+    wst__copyFile($srcPy, $scriptsDir);
+    print ("// Wire Shape Tool: script  -> " + $scriptsDir + $pyFile + "\n");
+
+    // ---- Copy icon (optional) --------------------------------------------------
+    string $iconToUse = "commandButton.png";
+    if (wst__fileExists($srcIcon))
+    {
+        wst__copyFile($srcIcon, $iconsDir);
+        $iconToUse = $iconFile;
+        print ("// Wire Shape Tool: icon    -> " + $iconsDir + $iconFile + "\n");
+    }
+    else
+    {
+        warning("Wire Shape Tool: Shape_Icon.png not found — shelf button will use default icon.");
+    }
+
+    // ---- Add shelf button to the currently active shelf -----------------------
+    global string $gShelfTopLevel;
+    string $currentShelf = "";
+    if (`shelfTabLayout -ex $gShelfTopLevel`)
+        catchQuiet($currentShelf = `shelfTabLayout -q -st $gShelfTopLevel`);
+
+    if ($currentShelf == "")
+    {
+        $currentShelf = "Custom";
+        if (!`shelfLayout -ex $currentShelf`)
+            addNewShelf $currentShelf;
+    }
+
+    wst__replaceShelfButton($currentShelf, $shelfLabel, $annotation, $iconToUse, $pyCmd);
+
+    // ---- Done -----------------------------------------------------------------
+    print ("// ============================================================\n");
+    print ("// Wire Shape Tool — Installation Complete\n");
+    print ("// Script  -> " + $scriptsDir + $pyFile   + "\n");
+    print ("// Icon    -> " + $iconsDir   + $iconFile + "\n");
+    print ("// Shelf   -> " + $currentShelf            + "\n");
+    print ("// ============================================================\n");
+
+    confirmDialog
+        -title   ($toolName + " — Installed!")
+        -message ("Installation complete!\n\n"
+                  + "Script copied to:\n"  + $scriptsDir + "\n\n"
+                  + "Icon copied to:\n"    + $iconsDir   + "\n\n"
+                  + "Shelf button added to the \"" + $currentShelf + "\" shelf.\n\n"
+                  + "Click the shelf button to launch the tool.")
+        -button  "OK";
+}
+
+// Run immediately on drag-and-drop
+wst__install();

@@ -1,0 +1,89 @@
+/*
+Onion Skin Installer (v2.1.0)
+Drag and drop this file into Maya's viewport to install Onion Skin.
+Compatible with Maya 2020+
+
+Place these files in the SAME folder before dragging:
+  - install_onion_skin.mel  (this file)
+  - onion_skin_2_1_0.py
+  - onionSkinIcon.png       (optional — shelf button works without it)
+*/
+
+global proc onionSkinInstall() {
+
+    // ---- Locate this MEL file on disk ----
+    string $whatIs = `whatIs onionSkinInstall`;
+    string $melPath = `substitute "^.*found in: " $whatIs ""`;
+    $melPath = `strip $melPath`;
+
+    // ---- Derive the source directory ----
+    string $sourceDir = `substitute "[^/\\\\]*$" $melPath ""`;
+
+    // ---- Run Python installer inline ----
+    string $pyCmd = "";
+    $pyCmd += "import os, sys, shutil, maya.cmds as cmds, maya.mel as mel\n";
+    $pyCmd += "source_dir = r'" + $sourceDir + "'\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Resolve target directories ---\n";
+    $pyCmd += "scripts_dir = cmds.internalVar(usd=True)\n";
+    $pyCmd += "prefs_dir   = cmds.internalVar(upd=True)\n";
+    $pyCmd += "icons_dir   = os.path.join(prefs_dir, 'icons')\n";
+    $pyCmd += "\n";
+    $pyCmd += "if not os.path.isdir(icons_dir):\n";
+    $pyCmd += "    os.makedirs(icons_dir)\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Source files ---\n";
+    $pyCmd += "src_script = os.path.join(source_dir, 'onion_skin_2_1_0.py')\n";
+    $pyCmd += "src_icon   = os.path.join(source_dir, 'onionSkinIcon.png')\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Validate main script exists ---\n";
+    $pyCmd += "if not os.path.isfile(src_script):\n";
+    $pyCmd += "    cmds.confirmDialog(title='Install Failed', message='Missing file: onion_skin_2_1_0.py\\nPlace it in the same folder as install_onion_skin.mel', button=['OK'])\n";
+    $pyCmd += "    raise RuntimeError('Missing onion_skin_2_1_0.py')\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Copy files ---\n";
+    $pyCmd += "dst_script = os.path.join(scripts_dir, 'onion_skin_2_1_0.py')\n";
+    $pyCmd += "shutil.copy2(src_script, dst_script)\n";
+    $pyCmd += "\n";
+    $pyCmd += "has_icon = os.path.isfile(src_icon)\n";
+    $pyCmd += "if has_icon:\n";
+    $pyCmd += "    dst_icon = os.path.join(icons_dir, 'onionSkinIcon.png')\n";
+    $pyCmd += "    shutil.copy2(src_icon, dst_icon)\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Ensure scripts dir is on sys.path ---\n";
+    $pyCmd += "if scripts_dir not in sys.path:\n";
+    $pyCmd += "    sys.path.insert(0, scripts_dir)\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Create shelf button ---\n";
+    $pyCmd += "shelf = mel.eval('$__tmp = $gShelfTopLevel')\n";
+    $pyCmd += "current_shelf = cmds.tabLayout(shelf, q=True, selectTab=True)\n";
+    $pyCmd += "\n";
+    $pyCmd += "# Remove any existing Onion Skin button on this shelf\n";
+    $pyCmd += "existing = cmds.shelfLayout(current_shelf, q=True, childArray=True) or []\n";
+    $pyCmd += "for btn in existing:\n";
+    $pyCmd += "    try:\n";
+    $pyCmd += "        if cmds.shelfButton(btn, q=True, label=True) == 'Onion Skin':\n";
+    $pyCmd += "            cmds.deleteUI(btn)\n";
+    $pyCmd += "    except:\n";
+    $pyCmd += "        pass\n";
+    $pyCmd += "\n";
+    $pyCmd += "launch_cmd = 'import onion_skin_2_1_0\\nimport importlib\\nimportlib.reload(onion_skin_2_1_0)\\nonion_skin_2_1_0.launch()'\n";
+    $pyCmd += "\n";
+    $pyCmd += "icon_name = 'onionSkinIcon.png' if has_icon else 'ghostObject.png'\n";
+    $pyCmd += "cmds.shelfButton(\n";
+    $pyCmd += "    parent=current_shelf,\n";
+    $pyCmd += "    label='Onion Skin',\n";
+    $pyCmd += "    annotation='Launch Onion Skin v2.1.0 — Multi-plane Ghosting',\n";
+    $pyCmd += "    image=icon_name,\n";
+    $pyCmd += "    command=launch_cmd,\n";
+    $pyCmd += "    sourceType='python',\n";
+    $pyCmd += ")\n";
+    $pyCmd += "\n";
+    $pyCmd += "# --- Done ---\n";
+    $pyCmd += "cmds.confirmDialog(title='Install Complete', message='Onion Skin v2.1.0 installed!\\n\\nScript: ' + dst_script + '\\n\\nA shelf button has been added to your current shelf.', button=['OK'])\n";
+    $pyCmd += "cmds.inViewMessage(amg='<hl>Onion Skin v2.1.0</hl> installed!', pos='midCenter', fade=True)\n";
+
+    python($pyCmd);
+}
+
+onionSkinInstall();

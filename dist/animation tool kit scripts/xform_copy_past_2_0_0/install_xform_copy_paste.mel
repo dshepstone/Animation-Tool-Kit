@@ -1,0 +1,312 @@
+// =============================================================================
+// install_xform_copy_paste.mel
+//
+// DRAG AND DROP INSTALLER — Copy Xform World Space for Maya
+//
+// How to use:
+//   Drag this .mel file from Windows Explorer / Finder onto the Maya viewport.
+//   Maya will automatically run the installer.
+//
+// Files required in the SAME folder as this .mel:
+//   - xform_copy_paste.py
+//   - xform_copy_paste.png          (optional — falls back to default icon)
+//   - install_xform_copy_paste.mel  (this file)
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// Utility: normalize backslashes to forward slashes
+// -----------------------------------------------------------------------------
+global proc string xcp__normPath(string $p)
+{
+    $p = substituteAllString($p, "\\", "/");
+    return $p;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: find last occurrence of $needle in $p, return 1-based index or -1
+// -----------------------------------------------------------------------------
+global proc int xcp__rindex(string $p, string $needle)
+{
+    int $n = size($needle);
+    int $i;
+    if ($n < 1) return -1;
+    for ($i = size($p) - $n + 1; $i >= 1; $i--)
+    {
+        if (substring($p, $i, $i + $n - 1) == $needle)
+            return $i;
+    }
+    return -1;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: return directory portion of a path (with trailing slash)
+// -----------------------------------------------------------------------------
+global proc string xcp__dirname(string $p)
+{
+    $p = xcp__normPath($p);
+    int $idx = xcp__rindex($p, "/");
+    if ($idx < 0) return "";
+    return substring($p, 1, $idx);
+}
+
+// -----------------------------------------------------------------------------
+// Utility: locate the folder this MEL file lives in by querying Maya
+// -----------------------------------------------------------------------------
+global proc string xcp__getInstallerDir(string $procName)
+{
+    // whatIs returns e.g. "Mel procedure found in: C:/.../install_xform_copy_paste.mel"
+    string $w = `whatIs $procName`;
+
+    if (`gmatch $w "*:*"` || `gmatch $w "*/*"`)
+    {
+        int $pos = xcp__rindex($w, ": ");
+        if ($pos >= 0)
+        {
+            string $full = `substring $w ($pos + 2) (size($w))`;
+            $full = xcp__normPath($full);
+            if (`filetest -f $full`)
+                return xcp__dirname($full);
+        }
+
+        // Fallback: grab last space-delimited token
+        string $tokens[];
+        tokenize $w " " $tokens;
+        if (size($tokens) > 0)
+        {
+            string $maybe = $tokens[(size($tokens) - 1)];
+            $maybe = xcp__normPath($maybe);
+            if (`filetest -f $maybe`)
+                return xcp__dirname($maybe);
+        }
+    }
+    return "";
+}
+
+// -----------------------------------------------------------------------------
+// Utility: check a file exists
+// -----------------------------------------------------------------------------
+global proc int xcp__fileExists(string $p)
+{
+    return `filetest -f (xcp__normPath($p))`;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: ensure directory exists (uses Python for reliability)
+// -----------------------------------------------------------------------------
+global proc xcp__ensureDir(string $dir)
+{
+    $dir = xcp__normPath($dir);
+    if (!`filetest -d $dir`)
+    {
+        string $py = "";
+        $py += "import os\n";
+        $py += "os.makedirs(r\"" + $dir + "\", exist_ok=True)\n";
+        python($py);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Utility: copy a file using Python shutil (reliable cross-platform)
+// -----------------------------------------------------------------------------
+global proc xcp__copyFile(string $src, string $dstDir)
+{
+    $src    = xcp__normPath($src);
+    $dstDir = xcp__normPath($dstDir);
+
+    xcp__ensureDir($dstDir);
+
+    string $py = "";
+    $py += "import os, shutil\n";
+    $py += "src     = r\"" + $src    + "\"\n";
+    $py += "dst_dir = r\"" + $dstDir + "\"\n";
+    $py += "dst     = os.path.join(dst_dir, os.path.basename(src))\n";
+    $py += "shutil.copy2(src, dst)\n";
+    $py += "print('Copied:', src, '->', dst)\n";
+    python($py);
+}
+
+// -----------------------------------------------------------------------------
+// Utility: add or replace a shelf button (no duplicates)
+// -----------------------------------------------------------------------------
+global proc xcp__replaceShelfButton(
+    string $shelf,
+    string $label,
+    string $annotation,
+    string $icon,
+    string $pyCmd)
+{
+    if ($shelf == "" || !`shelfLayout -ex $shelf`)
+    {
+        warning("xform_copy_paste: Could not find shelf '" + $shelf + "' — skipping shelf button.");
+        return;
+    }
+
+    // Remove existing buttons with the same label to avoid duplicates
+    string $kids[] = `shelfLayout -q -ca $shelf`;
+    for ($k in $kids)
+    {
+        if (`control -ex $k`)
+        {
+            string $kLabel = "";
+            catchQuiet($kLabel = `shelfButton -q -l $k`);
+            if ($kLabel == $label)
+                catchQuiet(`deleteUI $k`);
+        }
+    }
+
+    shelfButton
+        -parent     $shelf
+        -label      $label
+        -annotation $annotation
+        -image      $icon
+        -sourceType "python"
+        -command    $pyCmd;
+
+    refresh -f;
+}
+
+// -----------------------------------------------------------------------------
+// Build the shelf button Python command (opens the tool window)
+// -----------------------------------------------------------------------------
+global proc string xcp__buildShowCmd()
+{
+    string $cmd = "";
+    $cmd += "import sys, importlib\n";
+    $cmd += "import maya.cmds as cmds\n";
+    $cmd += "scripts_dir = cmds.internalVar(userScriptDir=True)\n";
+    $cmd += "if scripts_dir not in sys.path:\n";
+    $cmd += "    sys.path.insert(0, scripts_dir)\n";
+    $cmd += "import xform_copy_paste\n";
+    $cmd += "importlib.reload(xform_copy_paste)\n";
+    $cmd += "xform_copy_paste.show()\n";
+    return $cmd;
+}
+
+// -----------------------------------------------------------------------------
+// Remove any old per-function shelf buttons left from a previous install
+// -----------------------------------------------------------------------------
+global proc xcp__removeOldButtons(string $shelf)
+{
+    string $oldLabels[] = {
+        "Auto Xform", "Copy Range", "Paste Xform",
+        "Paste All Keys", "Bake Frames", "Next Frame"
+    };
+    string $kids[] = `shelfLayout -q -ca $shelf`;
+    for ($k in $kids)
+    {
+        if (!`control -ex $k`) continue;
+        string $kLabel = "";
+        catchQuiet($kLabel = `shelfButton -q -l $k`);
+        for ($old in $oldLabels)
+        {
+            if ($kLabel == $old)
+            {
+                catchQuiet(`deleteUI $k`);
+                break;
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Main installer
+// -----------------------------------------------------------------------------
+global proc xcp__install()
+{
+    // ---- Config ----------------------------------------------------------------
+    string $toolName = "Copy Xform World Space";
+    string $pyFile   = "xform_copy_paste.py";
+    string $iconFile = "xform_copy_paste.png";
+
+    // ---- Locate installer directory --------------------------------------------
+    string $installDir = xcp__getInstallerDir("xcp__install");
+    if ($installDir == "")
+    {
+        confirmDialog
+            -title   ($toolName + " — Install Failed")
+            -message  "Could not locate the installer folder.\n\nInstallation cancelled."
+            -button  "OK";
+        return;
+    }
+
+    string $srcPy   = $installDir + $pyFile;
+    string $srcIcon = $installDir + $iconFile;
+
+    // ---- Validate required source file ----------------------------------------
+    if (!xcp__fileExists($srcPy))
+    {
+        confirmDialog
+            -title   ($toolName + " — Missing File")
+            -message ("Could not find:\n\n" + $srcPy
+                      + "\n\nMake sure xform_copy_paste.py is in the same folder as this .mel file.")
+            -button  "OK";
+        return;
+    }
+
+    // ---- Resolve Maya user destinations ----------------------------------------
+    string $scriptsDir = xcp__normPath(`internalVar -userScriptDir`);
+    string $prefDir    = xcp__normPath(`internalVar -userPrefDir`);
+    string $iconsDir   = $prefDir + "icons/";
+
+    // ---- Copy script -----------------------------------------------------------
+    xcp__copyFile($srcPy, $scriptsDir);
+    print ("// xform_copy_paste: script -> " + $scriptsDir + $pyFile + "\n");
+
+    // ---- Copy icon (optional) --------------------------------------------------
+    string $iconToUse = "commandButton.png";
+    if (xcp__fileExists($srcIcon))
+    {
+        xcp__copyFile($srcIcon, $iconsDir);
+        $iconToUse = $iconFile;
+        print ("// xform_copy_paste: icon   -> " + $iconsDir + $iconFile + "\n");
+    }
+    else
+    {
+        warning("xform_copy_paste: xform_copy_paste.png not found — shelf buttons will use default icon.");
+    }
+
+    // ---- Determine active shelf ------------------------------------------------
+    global string $gShelfTopLevel;
+    string $currentShelf = "";
+    if (`shelfTabLayout -ex $gShelfTopLevel`)
+        catchQuiet($currentShelf = `shelfTabLayout -q -st $gShelfTopLevel`);
+
+    if ($currentShelf == "")
+    {
+        $currentShelf = "Custom";
+        if (!`shelfLayout -ex $currentShelf`)
+            addNewShelf $currentShelf;
+    }
+
+    // ---- Remove old per-function buttons (from previous installs) -------------
+    xcp__removeOldButtons($currentShelf);
+
+    // ---- Add single shelf button -----------------------------------------------
+    string $showCmd = xcp__buildShowCmd();
+    xcp__replaceShelfButton(
+        $currentShelf,
+        "XformCP",
+        "Copy Xform World Space — open tool window",
+        $iconToUse,
+        $showCmd);
+
+    // ---- Done -----------------------------------------------------------------
+    print ("// =================================================================\n");
+    print ("// Copy Xform World Space — Installation Complete\n");
+    print ("// Script -> " + $scriptsDir + $pyFile   + "\n");
+    print ("// Icon   -> " + $iconsDir   + $iconFile + "\n");
+    print ("// Shelf  -> " + $currentShelf            + " (1 button: XformCP)\n");
+    print ("// =================================================================\n");
+
+    confirmDialog
+        -title   ($toolName + " — Installed!")
+        -message ("Installation complete!\n\n"
+                  + "Script copied to:\n"  + $scriptsDir + "\n\n"
+                  + "Icon copied to:\n"    + $iconsDir   + "\n\n"
+                  + "Shelf button \"XformCP\" added to the \"" + $currentShelf + "\" shelf.\n\n"
+                  + "Click the shelf button to open the tool window.")
+        -button  "OK";
+}
+
+// Run immediately on drag-and-drop
+xcp__install();
