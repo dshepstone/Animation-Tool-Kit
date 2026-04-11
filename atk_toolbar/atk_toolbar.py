@@ -55,9 +55,12 @@ _OPT_SHOW_TOOLTIPS   = atk_settings.OPT_SHOW_TOOLTIPS
 _OPT_SHOW_SEPARATORS = atk_settings.OPT_SHOW_SEPARATORS
 _OPT_ORIENTATION     = atk_settings.OPT_ORIENTATION
 _OPT_ICON_ALIGNMENT  = atk_settings.OPT_ICON_ALIGNMENT
+_OPT_SHOW_INLINE_SLIDER = atk_settings.OPT_SHOW_INLINE_SLIDER
+_OPT_SHOW_FRAME_STEPPER = atk_settings.OPT_SHOW_FRAME_STEPPER
 
 _INB_TOOLBAR_SLIDER_WIDTH = 290
 _INB_TOOLBAR_SLIDER_HEIGHT = 52
+_FRAME_STEPPER_WIDTH = 118
 
 _BTN_STYLE_NORMAL = (
     "QToolButton {"
@@ -103,6 +106,13 @@ def _show_tooltips():
 
 def _show_separators():
     return bool(atk_settings._get_pref_int(_OPT_SHOW_SEPARATORS, 1))
+
+def _show_inline_slider():
+    return bool(atk_settings._get_pref_int(_OPT_SHOW_INLINE_SLIDER, 1))
+
+
+def _show_frame_stepper():
+    return bool(atk_settings._get_pref_int(_OPT_SHOW_FRAME_STEPPER, 1))
 
 
 def _get_alignment():
@@ -152,7 +162,7 @@ def _calc_content_height():
     n_buttons, n_seps = _count_layout_items()
     n_items  = n_buttons + n_seps
     total = (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
-    if atk_loader.is_tool_installed("inbetweener"):
+    if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
         total += (_INB_TOOLBAR_SLIDER_HEIGHT + spacing)
     return total
 
@@ -167,8 +177,10 @@ def _calc_content_width():
     n_buttons, n_seps = _count_layout_items()
     n_items  = n_buttons + n_seps
     total = (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
-    if atk_loader.is_tool_installed("inbetweener"):
+    if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
         total += (_INB_TOOLBAR_SLIDER_WIDTH + spacing)
+    if atk_loader.is_tool_installed("add_remove") and _show_frame_stepper():
+        total += (_FRAME_STEPPER_WIDTH + spacing)
     return total
 
 
@@ -454,7 +466,11 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             # Build the ordered list of tool widgets (buttons + group separators)
             self._button_map = {}
             tool_widgets = []
-            if atk_loader.is_tool_installed("inbetweener"):
+            if atk_loader.is_tool_installed("add_remove") and _show_frame_stepper():
+                tool_widgets.append(_FrameStepperToolbarWidget(parent=self))
+                if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+                    tool_widgets.append(self._make_sep_widget(orientation))
+            if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
                 # Keep the inline slider directly beside the TW button cluster.
                 tool_widgets.append(_InbetweenerToolbarSlider(parent=self, orientation=orientation))
                 # Visual divider between the inline slider and the TW tool button.
@@ -504,7 +520,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         layout.addWidget(btn)
 
     def _add_inbetweener_slider(self, layout, orientation):
-        if not atk_loader.is_tool_installed("inbetweener"):
+        if not atk_loader.is_tool_installed("inbetweener") or not _show_inline_slider():
             return
         slider = _InbetweenerToolbarSlider(parent=self, orientation=orientation)
         layout.addWidget(slider)
@@ -810,6 +826,66 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
         except Exception:
             pass
         return bool(default)
+
+
+class _FrameStepperToolbarWidget(QtWidgets.QFrame):
+    """Compact insert/remove frame control based on Add-Remove-Inbetweens logic."""
+
+    def __init__(self, parent=None):
+        super(_FrameStepperToolbarWidget, self).__init__(parent)
+        self._mod = None
+        try:
+            self._mod = importlib.import_module("insert_remove_frames_tool")
+        except Exception:
+            self._mod = None
+        self._build_ui()
+
+    def _build_ui(self):
+        self.setStyleSheet("QFrame { background: transparent; border: none; }")
+        self.setFixedWidth(_FRAME_STEPPER_WIDTH)
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(4)
+
+        self.left_btn = QtWidgets.QToolButton()
+        self.left_btn.setText("←")
+        self.left_btn.setToolTip("Remove frames on selected curves")
+        self.left_btn.setFixedSize(22, 22)
+        layout.addWidget(self.left_btn)
+
+        self.right_btn = QtWidgets.QToolButton()
+        self.right_btn.setText("→")
+        self.right_btn.setToolTip("Insert frames on selected curves")
+        self.right_btn.setFixedSize(22, 22)
+        layout.addWidget(self.right_btn)
+
+        self.frames_spin = QtWidgets.QSpinBox()
+        self.frames_spin.setRange(1, 1000)
+        self.frames_spin.setValue(1)
+        self.frames_spin.setFixedWidth(48)
+        self.frames_spin.setToolTip("Number of frames to insert/remove")
+        layout.addWidget(self.frames_spin)
+
+        self.left_btn.clicked.connect(lambda: self._apply(-1))
+        self.right_btn.clicked.connect(lambda: self._apply(1))
+
+    def _apply(self, direction):
+        if self._mod is None:
+            cmds.warning("ATK Toolbar: Add/Remove Frames tool module is not installed.")
+            return
+        frames = self.frames_spin.value()
+        curves = self._mod.gather_anim_curves("selected")
+        if not curves:
+            self._mod._show_headsup("<span style='color:#ffaf00'>No keyed objects selected.</span>")
+            return
+        changed = self._mod.shift_keys(curves, frames * direction, False)
+        if not changed:
+            self._mod._show_headsup("<span style='color:#ffaf00'>No keys in the chosen scope.</span>")
+            return
+        action = "Inserted" if direction > 0 else "Removed"
+        self._mod._show_headsup(
+            "<span style='color:#a0ff7a'>{} {} frame(s).</span>".format(action, frames)
+        )
 
 
 # ---------------------------------------------------------------------------
