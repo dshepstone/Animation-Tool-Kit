@@ -707,69 +707,83 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
         self.slider.sliderPressed.connect(self._on_pressed)
         self.slider.valueChanged.connect(self._on_changed)
         self.slider.sliderReleased.connect(self._on_released)
-        self._on_type_changed("LT")
+        try:
+            self._on_type_changed("LT")
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: failed to initialize Inbetweener slider defaults: {}".format(exc))
 
     def _on_type_changed(self, key):
-        if key not in self._config:
-            return
-        cfg = self._config[key]
-        self._neutral = cfg["neutral"]
-        self.slider.is_tw = cfg["is_tw"]
-        self.slider.is_world = cfg["is_world"]
-        self.slider.label_text = cfg["label"]
-        overshoot_key = getattr(self._vt, "PREF_OVERSHOOT_MODE", "vertexTweener_overshootMode")
-        overshoot = self._pref_bool(overshoot_key, False)
-        if key == "LT" and overshoot:
-            self.slider.setRange(-50, 150)
-        else:
-            self.slider.setRange(0, 100)
-        self.slider.setValue(self._neutral)
-        self.slider.keyed_value = None
-        self.slider.update()
+        try:
+            if key not in self._config:
+                return
+            cfg = self._config[key]
+            self._neutral = cfg["neutral"]
+            self.slider.is_tw = cfg["is_tw"]
+            self.slider.is_world = cfg["is_world"]
+            self.slider.label_text = cfg["label"]
+            overshoot_key = getattr(self._vt, "PREF_OVERSHOOT_MODE", "vertexTweener_overshootMode")
+            overshoot = self._pref_bool(overshoot_key, False)
+            if key == "LT" and overshoot:
+                self.slider.setRange(-50, 150)
+            else:
+                self.slider.setRange(0, 100)
+            self.slider.setValue(self._neutral)
+            self.slider.keyed_value = None
+            self.slider.update()
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: Inbetweener slider mode switch failed ({}): {}".format(key, exc))
 
     def _on_pressed(self):
-        key = self.slider_type_combo.currentText()
-        self._cache = []
-        self.slider.keyed_value = None
-        self.slider.update()
-        self._undo_open = True
-        cmds.undoInfo(openChunk=True, chunkName="ATK_InbetweenerToolbarSlider_{}".format(key))
+        try:
+            key = self.slider_type_combo.currentText()
+            self._cache = []
+            self.slider.keyed_value = None
+            self.slider.update()
+            self._undo_open = True
+            cmds.undoInfo(openChunk=True, chunkName="ATK_InbetweenerToolbarSlider_{}".format(key))
 
-        if key == "LT":
-            self._vt.TweenEngine.cache_selection()
-        elif key == "WT":
-            self._vt.WorldTweenEngine.cache_selected_keys()
-        elif key == "BN":
-            self._cache = self._vt.BlendEngine.cache_bn()
-        elif key == "BD":
-            self._cache = self._vt.BlendEngine.cache_bd()
-        elif key == "BE":
-            self._cache = self._vt.BlendEngine.cache_be()
+            if key == "LT":
+                self._vt.TweenEngine.cache_selection()
+            elif key == "WT":
+                self._vt.WorldTweenEngine.cache_selected_keys()
+            elif key == "BN":
+                self._cache = self._vt.BlendEngine.cache_bn()
+            elif key == "BD":
+                self._cache = self._vt.BlendEngine.cache_bd()
+            elif key == "BE":
+                self._cache = self._vt.BlendEngine.cache_be()
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: Inbetweener slider press failed: {}".format(exc))
 
     def _on_changed(self, value):
-        key = self.slider_type_combo.currentText()
-        if key == "LT":
-            if self._vt.TweenEngine._cached_attrs:
-                self._vt.TweenEngine.apply_cached_tween(value)
-        elif key == "WT":
-            if self._vt.WorldTweenEngine._key_cache:
-                self._vt.WorldTweenEngine.apply_cached_world_tween(value)
-            else:
-                self._vt.WorldTweenEngine.apply_world_tween(value)
-        elif key == "BN":
-            if value != 50:
-                self._vt.BlendEngine.apply_bn(value, self._cache)
-        elif key == "BD":
-            self._vt.BlendEngine.apply_bd(value, self._cache)
-        elif key == "BE":
-            if value != 50:
-                self._vt.BlendEngine.apply_be(value, self._cache)
+        try:
+            key = self.slider_type_combo.currentText()
+            if key == "LT":
+                if self._vt.TweenEngine._cached_attrs:
+                    self._vt.TweenEngine.apply_cached_tween(value)
+            elif key == "WT":
+                if self._vt.WorldTweenEngine._key_cache:
+                    self._vt.WorldTweenEngine.apply_cached_world_tween(value)
+                else:
+                    self._vt.WorldTweenEngine.apply_world_tween(value)
+            elif key == "BN":
+                if value != 50:
+                    self._vt.BlendEngine.apply_bn(value, self._cache)
+            elif key == "BD":
+                self._vt.BlendEngine.apply_bd(value, self._cache)
+            elif key == "BE":
+                if value != 50:
+                    self._vt.BlendEngine.apply_be(value, self._cache)
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: Inbetweener slider drag failed: {}".format(exc))
 
     def _on_released(self):
         try:
             auto_key_name = getattr(self._vt, "PREF_AUTO_KEY", "vertexTweener_autoKey")
             if self._pref_bool(auto_key_name, True):
-                self._vt._auto_key_selection()
+                auto_key_fn = getattr(self._vt, "_auto_key_selection", None)
+                if callable(auto_key_fn):
+                    auto_key_fn()
         finally:
             if self._undo_open:
                 cmds.undoInfo(closeChunk=True)
