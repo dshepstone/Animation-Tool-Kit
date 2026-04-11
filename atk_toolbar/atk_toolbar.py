@@ -876,12 +876,10 @@ def show():
     except Exception:
         pass
 
-    # Size the initial window to match orientation + exact button count
+    # Force default launch orientation to horizontal so the bar opens above
+    # the timeline (docked to bottom of the Maya main window).
+    cmds.optionVar(sv=(_OPT_ORIENTATION, "horizontal"))
     orient = "horizontal"
-    if cmds.optionVar(exists=_OPT_ORIENTATION):
-        val = cmds.optionVar(q=_OPT_ORIENTATION)
-        if val in ("horizontal", "vertical"):
-            orient = val
 
     icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
     btn_sz  = icon_sz + 8
