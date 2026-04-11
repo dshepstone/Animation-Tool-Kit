@@ -350,8 +350,8 @@ global proc atk__install()
     print "// Copying tool icons:\n";
     string $toolIcons[] = {
         "Temp_Pivot_Tool_1_0_5/temp-pivot.png",
-        "inbetweener_2_0_1/inbetweener.png",
-        "inbetweener_2_0_1/defaultPose.png",
+        "inbetweener_2_0_2/inbetweener.png",
+        "inbetweener_2_0_2/defaultPose.png",
         "Add-Remove-Inbetweens_1_0_1/add-remove.png",
         "noise_generator_1_0_0/noise_generator_icon.png",
         "onion-skin-tool_2_1_0/onionSkinIcon.png",
