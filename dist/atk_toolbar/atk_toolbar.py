@@ -920,37 +920,30 @@ def show():
     # won't auto-strip min/max buttons or resize after a dock/undock transition.
     dock_kw = dict(
         label=TOOLBAR_LABEL,
-        retain=True,
+        retain=False,
         actLikeMayaUIElement=True,
         initialWidth=init_w,
         initialHeight=init_h,
         minimumWidth=52,
         minimumHeight=52,
         uiScript=ui_script,
-        dockToMainWindow=["bottom", True],
+        dockToMainWindow=["bottom", False],
     )
+
+    # Prefer docking directly above Maya's Time Slider toolbar.
+    try:
+        time_slider_ui = mel.eval('getUIComponentToolBar("Time Slider", false)')
+        if time_slider_ui and cmds.control(time_slider_ui, exists=True):
+            dock_kw["dockToControl"] = [time_slider_ui, "top"]
+            dock_kw.pop("dockToMainWindow", None)
+    except Exception:
+        pass
 
     try:
         cmds.workspaceControl(WORKSPACE_NAME, floatingChangeCommand=float_cmd, **dock_kw)
     except TypeError:
         # Maya version does not support floatingChangeCommand — create without it
         cmds.workspaceControl(WORKSPACE_NAME, **dock_kw)
-
-    # Prefer docking just above the time slider inside Maya's main UI.
-    try:
-        play_back_slider = mel.eval("$tmp=$gPlayBackSlider")
-        if play_back_slider and cmds.control(play_back_slider, exists=True):
-            parent_layout = cmds.control(play_back_slider, q=True, parent=True)
-            if parent_layout and cmds.control(parent_layout, exists=True):
-                cmds.workspaceControl(
-                    WORKSPACE_NAME,
-                    e=True,
-                    floating=False,
-                    dockToControl=[parent_layout, "top"],
-                )
-    except Exception:
-        # Fall back to normal bottom docking if time-slider docking fails.
-        pass
 
     cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=True)
     _rebuild_ui()
