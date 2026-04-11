@@ -448,13 +448,15 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
             # Settings gear always anchored to the far left
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
-            self._add_inbetweener_slider(layout, orientation)
             if show_sep:
                 self._add_sep(layout, orientation)
 
             # Build the ordered list of tool widgets (buttons + group separators)
             self._button_map = {}
             tool_widgets = []
+            if atk_loader.is_tool_installed("inbetweener"):
+                # Keep the inline slider directly beside the TW button cluster.
+                tool_widgets.append(_InbetweenerToolbarSlider(parent=self, orientation=orientation))
             prev_group = None
             for tool in atk_loader.TOOL_REGISTRY:
                 if not atk_loader.is_tool_visible(tool["id"]):
@@ -466,21 +468,10 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 tool_widgets.append(btn)
                 prev_group = tool["group"]
 
-            # Position tools according to the workspace alignment setting
-            alignment = _get_alignment()
-            if alignment == "center":
-                layout.addStretch()
-                for w in tool_widgets:
-                    layout.addWidget(w)
-                layout.addStretch()
-            elif alignment == "right":
-                layout.addStretch()
-                for w in tool_widgets:
-                    layout.addWidget(w)
-            else:  # left
-                for w in tool_widgets:
-                    layout.addWidget(w)
-                layout.addStretch()
+            # Keep tool cluster right-aligned so slider sits immediately left of TW.
+            layout.addStretch()
+            for w in tool_widgets:
+                layout.addWidget(w)
 
     def _add_settings_btn(self, layout, icon_sz, show_tips, orientation):
         btn = QtWidgets.QToolButton()
@@ -924,7 +915,7 @@ def show():
         minimumWidth=52,
         minimumHeight=52,
         uiScript=ui_script,
-        dockToMainWindow=["bottom", False],
+        dockToMainWindow=["bottom", True],
     )
 
     try:
