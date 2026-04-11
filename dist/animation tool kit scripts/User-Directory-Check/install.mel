@@ -1,0 +1,12 @@
+/*
+Drag and drop installer for Maya 2016+
+*/
+
+global proc userDirectoryCheckInstall() {
+    string $whatIs = `whatIs userDirectoryCheckInstall`;
+    string $path = `substitute "Mel procedure found in: " $whatIs ""`;
+    string $filename = `substitute "install.mel" $path "install.py"`;
+    python("import imp;imp.load_source('_userDirectoryCheckInstall', '" + $filename + "')");
+}
+
+userDirectoryCheckInstall();
