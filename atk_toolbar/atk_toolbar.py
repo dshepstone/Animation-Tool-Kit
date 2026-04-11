@@ -25,6 +25,7 @@ Right-click context menu per button
 
 import os
 import sys
+import importlib
 
 import maya.cmds as cmds
 import maya.mel as mel
@@ -54,6 +55,12 @@ _OPT_SHOW_TOOLTIPS   = atk_settings.OPT_SHOW_TOOLTIPS
 _OPT_SHOW_SEPARATORS = atk_settings.OPT_SHOW_SEPARATORS
 _OPT_ORIENTATION     = atk_settings.OPT_ORIENTATION
 _OPT_ICON_ALIGNMENT  = atk_settings.OPT_ICON_ALIGNMENT
+_OPT_SHOW_INLINE_SLIDER = atk_settings.OPT_SHOW_INLINE_SLIDER
+_OPT_SHOW_FRAME_STEPPER = atk_settings.OPT_SHOW_FRAME_STEPPER
+
+_INB_TOOLBAR_SLIDER_WIDTH = 290
+_INB_TOOLBAR_SLIDER_HEIGHT = 52
+_FRAME_STEPPER_WIDTH = 118
 
 _BTN_STYLE_NORMAL = (
     "QToolButton {"
@@ -99,6 +106,13 @@ def _show_tooltips():
 
 def _show_separators():
     return bool(atk_settings._get_pref_int(_OPT_SHOW_SEPARATORS, 1))
+
+def _show_inline_slider():
+    return bool(atk_settings._get_pref_int(_OPT_SHOW_INLINE_SLIDER, 1))
+
+
+def _show_frame_stepper():
+    return bool(atk_settings._get_pref_int(_OPT_SHOW_FRAME_STEPPER, 1))
 
 
 def _get_alignment():
@@ -147,8 +161,10 @@ def _calc_content_height():
 
     n_buttons, n_seps = _count_layout_items()
     n_items  = n_buttons + n_seps
-    # sum of item heights + spacing between consecutive items + outer margins
-    return (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+    total = (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+    if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+        total += (_INB_TOOLBAR_SLIDER_HEIGHT + spacing)
+    return total
 
 
 def _calc_content_width():
@@ -160,7 +176,12 @@ def _calc_content_width():
 
     n_buttons, n_seps = _count_layout_items()
     n_items  = n_buttons + n_seps
-    return (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+    total = (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+    if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+        total += (_INB_TOOLBAR_SLIDER_WIDTH + spacing)
+    if atk_loader.is_tool_installed("add_remove") and _show_frame_stepper():
+        total += (_FRAME_STEPPER_WIDTH + spacing)
+    return total
 
 
 def _get_chrome_height():
@@ -411,6 +432,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
             # Settings gear always at the top
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
+            self._add_inbetweener_slider(layout, orientation)
             if show_sep:
                 self._add_sep(layout, orientation)
 
@@ -444,6 +466,15 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             # Build the ordered list of tool widgets (buttons + group separators)
             self._button_map = {}
             tool_widgets = []
+            if atk_loader.is_tool_installed("add_remove") and _show_frame_stepper():
+                tool_widgets.append(_FrameStepperToolbarWidget(parent=self))
+                if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+                    tool_widgets.append(self._make_sep_widget(orientation))
+            if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+                # Keep the inline slider directly beside the TW button cluster.
+                tool_widgets.append(_InbetweenerToolbarSlider(parent=self, orientation=orientation))
+                # Visual divider between the inline slider and the TW tool button.
+                tool_widgets.append(self._make_sep_widget(orientation))
             prev_group = None
             for tool in atk_loader.TOOL_REGISTRY:
                 if not atk_loader.is_tool_visible(tool["id"]):
@@ -455,7 +486,8 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 tool_widgets.append(btn)
                 prev_group = tool["group"]
 
-            # Position tools according to the workspace alignment setting
+            # Respect workspace alignment preference while keeping the slider
+            # adjacent to the TW tool cluster.
             alignment = _get_alignment()
             if alignment == "center":
                 layout.addStretch()
@@ -486,6 +518,12 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             lambda pos, b=btn: self._settings_context_menu(b, pos)
         )
         layout.addWidget(btn)
+
+    def _add_inbetweener_slider(self, layout, orientation):
+        if not atk_loader.is_tool_installed("inbetweener") or not _show_inline_slider():
+            return
+        slider = _InbetweenerToolbarSlider(parent=self, orientation=orientation)
+        layout.addWidget(slider)
 
     def _make_tool_btn(self, tool, icon_sz, show_tips):
         btn = QtWidgets.QToolButton()
@@ -519,6 +557,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             lambda pos, t=tool, b=btn, inst=installed: self._tool_context_menu(t, b, pos, inst)
         )
         return btn
+
 
     @staticmethod
     def _make_sep_widget(orientation):
@@ -634,6 +673,221 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             QtCore.QTimer.singleShot(50, _remove_min_max_buttons)
 
 
+class _InbetweenerToolbarSlider(QtWidgets.QFrame):
+    SLIDER_TYPES = ("LT", "WT", "BN", "BD", "BE")
+
+    def __init__(self, parent=None, orientation="horizontal"):
+        super(_InbetweenerToolbarSlider, self).__init__(parent)
+        self._orientation = orientation
+        self._vt = None
+        self._config = {}
+        self._neutral = 50
+        self._cache = []
+        self._undo_open = False
+        self._build_failed = False
+        self._load_inbetweener()
+        self._build_ui()
+
+    def _load_inbetweener(self):
+        try:
+            self._vt = importlib.import_module("vertex_tweener")
+            self._config = dict(self._vt.SliderPopOut.CONFIGS)
+        except Exception:
+            self._build_failed = True
+
+    def _build_ui(self):
+        self.setObjectName("ATKInbetweenerSlider")
+        self.setStyleSheet("#ATKInbetweenerSlider { background: transparent; border: none; }")
+        main = QtWidgets.QHBoxLayout(self)
+        main.setContentsMargins(4, 0, 4, 0)
+        main.setSpacing(4)
+
+        if self._build_failed:
+            unavailable = QtWidgets.QLabel("Inbetweener slider unavailable")
+            unavailable.setStyleSheet("color:#999; font-size:10px;")
+            main.addWidget(unavailable)
+            return
+
+        self.slider_type_combo = QtWidgets.QComboBox()
+        for key in self.SLIDER_TYPES:
+            self.slider_type_combo.addItem(key)
+        self.slider_type_combo.setToolTip("Choose Inbetweener slider mode")
+        self.slider_type_combo.setFixedWidth(54)
+        main.addWidget(self.slider_type_combo)
+
+        self.slider = self._vt.VertexTickedSlider(QtCore.Qt.Horizontal, label_text="LT")
+        self.slider.setTracking(True)
+        self.slider.setMinimumHeight(40)
+        self.slider.setRange(0, 100)
+        self.slider.setValue(50)
+        self.setFixedWidth(_INB_TOOLBAR_SLIDER_WIDTH)
+        self.setFixedHeight(_INB_TOOLBAR_SLIDER_HEIGHT)
+        main.addWidget(self.slider, 1)
+
+        self.slider_type_combo.currentTextChanged.connect(self._on_type_changed)
+        self.slider.sliderPressed.connect(self._on_pressed)
+        self.slider.valueChanged.connect(self._on_changed)
+        self.slider.sliderReleased.connect(self._on_released)
+        try:
+            self._on_type_changed("LT")
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: failed to initialize Inbetweener slider defaults: {}".format(exc))
+
+    def _on_type_changed(self, key):
+        try:
+            if key not in self._config:
+                return
+            cfg = self._config[key]
+            self._neutral = cfg["neutral"]
+            self.slider.is_tw = cfg["is_tw"]
+            self.slider.is_world = cfg["is_world"]
+            self.slider.label_text = cfg["label"]
+            overshoot_key = getattr(self._vt, "PREF_OVERSHOOT_MODE", "vertexTweener_overshootMode")
+            overshoot = self._pref_bool(overshoot_key, False)
+            if key == "LT" and overshoot:
+                self.slider.setRange(-50, 150)
+            else:
+                self.slider.setRange(0, 100)
+            self.slider.setValue(self._neutral)
+            self.slider.keyed_value = None
+            self.slider.update()
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: Inbetweener slider mode switch failed ({}): {}".format(key, exc))
+
+    def _on_pressed(self):
+        try:
+            key = self.slider_type_combo.currentText()
+            self._cache = []
+            self.slider.keyed_value = None
+            self.slider.update()
+            self._undo_open = True
+            cmds.undoInfo(openChunk=True, chunkName="ATK_InbetweenerToolbarSlider_{}".format(key))
+
+            if key == "LT":
+                self._vt.TweenEngine.cache_selection()
+            elif key == "WT":
+                self._vt.WorldTweenEngine.cache_selected_keys()
+            elif key == "BN":
+                self._cache = self._vt.BlendEngine.cache_bn()
+            elif key == "BD":
+                self._cache = self._vt.BlendEngine.cache_bd()
+            elif key == "BE":
+                self._cache = self._vt.BlendEngine.cache_be()
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: Inbetweener slider press failed: {}".format(exc))
+
+    def _on_changed(self, value):
+        try:
+            key = self.slider_type_combo.currentText()
+            if key == "LT":
+                if self._vt.TweenEngine._cached_attrs:
+                    self._vt.TweenEngine.apply_cached_tween(value)
+            elif key == "WT":
+                if self._vt.WorldTweenEngine._key_cache:
+                    self._vt.WorldTweenEngine.apply_cached_world_tween(value)
+                else:
+                    self._vt.WorldTweenEngine.apply_world_tween(value)
+            elif key == "BN":
+                if value != 50:
+                    self._vt.BlendEngine.apply_bn(value, self._cache)
+            elif key == "BD":
+                self._vt.BlendEngine.apply_bd(value, self._cache)
+            elif key == "BE":
+                if value != 50:
+                    self._vt.BlendEngine.apply_be(value, self._cache)
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: Inbetweener slider drag failed: {}".format(exc))
+
+    def _on_released(self):
+        try:
+            auto_key_name = getattr(self._vt, "PREF_AUTO_KEY", "vertexTweener_autoKey")
+            if self._pref_bool(auto_key_name, True):
+                auto_key_fn = getattr(self._vt, "_auto_key_selection", None)
+                if callable(auto_key_fn):
+                    auto_key_fn()
+        finally:
+            if self._undo_open:
+                cmds.undoInfo(closeChunk=True)
+                self._undo_open = False
+            self.slider.keyed_value = self.slider.value()
+            self.slider.setValue(self._neutral)
+            self.slider.update()
+
+    def _pref_bool(self, pref_name, default):
+        loader = getattr(self._vt, "_load_bool_pref", None)
+        if callable(loader):
+            try:
+                return bool(loader(pref_name, default))
+            except Exception:
+                pass
+        try:
+            if cmds.optionVar(exists=pref_name):
+                return bool(cmds.optionVar(q=pref_name))
+        except Exception:
+            pass
+        return bool(default)
+
+
+class _FrameStepperToolbarWidget(QtWidgets.QFrame):
+    """Compact insert/remove frame control based on Add-Remove-Inbetweens logic."""
+
+    def __init__(self, parent=None):
+        super(_FrameStepperToolbarWidget, self).__init__(parent)
+        self._mod = None
+        try:
+            self._mod = importlib.import_module("insert_remove_frames_tool")
+        except Exception:
+            self._mod = None
+        self._build_ui()
+
+    def _build_ui(self):
+        self.setStyleSheet("QFrame { background: transparent; border: none; }")
+        self.setFixedWidth(_FRAME_STEPPER_WIDTH)
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(4)
+
+        self.left_btn = QtWidgets.QToolButton()
+        self.left_btn.setText("←")
+        self.left_btn.setToolTip("Remove frames on selected curves")
+        self.left_btn.setFixedSize(22, 22)
+        layout.addWidget(self.left_btn)
+
+        self.right_btn = QtWidgets.QToolButton()
+        self.right_btn.setText("→")
+        self.right_btn.setToolTip("Insert frames on selected curves")
+        self.right_btn.setFixedSize(22, 22)
+        layout.addWidget(self.right_btn)
+
+        self.frames_spin = QtWidgets.QSpinBox()
+        self.frames_spin.setRange(1, 1000)
+        self.frames_spin.setValue(1)
+        self.frames_spin.setFixedWidth(48)
+        self.frames_spin.setToolTip("Number of frames to insert/remove")
+        layout.addWidget(self.frames_spin)
+
+        self.left_btn.clicked.connect(lambda: self._apply(-1))
+        self.right_btn.clicked.connect(lambda: self._apply(1))
+
+    def _apply(self, direction):
+        if self._mod is None:
+            cmds.warning("ATK Toolbar: Add/Remove Frames tool module is not installed.")
+            return
+        frames = self.frames_spin.value()
+        curves = self._mod.gather_anim_curves("selected")
+        if not curves:
+            self._mod._show_headsup("<span style='color:#ffaf00'>No keyed objects selected.</span>")
+            return
+        changed = self._mod.shift_keys(curves, frames * direction, False)
+        if not changed:
+            self._mod._show_headsup("<span style='color:#ffaf00'>No keys in the chosen scope.</span>")
+            return
+        action = "Inserted" if direction > 0 else "Removed"
+        self._mod._show_headsup(
+            "<span style='color:#a0ff7a'>{} {} frame(s).</span>".format(action, frames)
+        )
+
+
 # ---------------------------------------------------------------------------
 # workspaceControl management
 # ---------------------------------------------------------------------------
@@ -703,12 +957,10 @@ def show():
     except Exception:
         pass
 
-    # Size the initial window to match orientation + exact button count
+    # Force default launch orientation to horizontal so the bar opens above
+    # the timeline (docked to bottom of the Maya main window).
+    cmds.optionVar(sv=(_OPT_ORIENTATION, "horizontal"))
     orient = "horizontal"
-    if cmds.optionVar(exists=_OPT_ORIENTATION):
-        val = cmds.optionVar(q=_OPT_ORIENTATION)
-        if val in ("horizontal", "vertical"):
-            orient = val
 
     icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
     btn_sz  = icon_sz + 8
@@ -746,7 +998,7 @@ def show():
     # won't auto-strip min/max buttons or resize after a dock/undock transition.
     dock_kw = dict(
         label=TOOLBAR_LABEL,
-        retain=True,
+        retain=False,
         actLikeMayaUIElement=True,
         initialWidth=init_w,
         initialHeight=init_h,
@@ -755,6 +1007,15 @@ def show():
         uiScript=ui_script,
         dockToMainWindow=["bottom", False],
     )
+
+    # Prefer docking directly above Maya's Time Slider toolbar.
+    try:
+        time_slider_ui = mel.eval('getUIComponentToolBar("Time Slider", false)')
+        if time_slider_ui and cmds.control(time_slider_ui, exists=True):
+            dock_kw["dockToControl"] = [time_slider_ui, "top"]
+            dock_kw.pop("dockToMainWindow", None)
+    except Exception:
+        pass
 
     try:
         cmds.workspaceControl(WORKSPACE_NAME, floatingChangeCommand=float_cmd, **dock_kw)

@@ -3,13 +3,13 @@ Inbetweener Tool - Maya Animation Breakdown Tool
 A high-performance tweening utility for Maya animators to break down poses and manage arcs.
 
 Author: Pipeline Tools
-Version: 2.1.0
+Version: 2.2.0
 """
 
+import math
 import os
 
 import maya.cmds as cmds
-import maya.mel as mel
 import maya.OpenMayaUI as omui
 import maya.api.OpenMaya as om
 
@@ -58,7 +58,6 @@ QtCore, QtGui, QtWidgets, shiboken = _import_qt_modules()
 
 PREF_AUTO_KEY = "vertexTweener_autoKey"
 PREF_SLIDER_VALUE = "vertexTweener_sliderValue"
-PREF_MOTION_TRAILS = "vertexTweener_motionTrails"
 PREF_OVERSHOOT_MODE = "vertexTweener_overshootMode"
 PREF_SKIP_SCAN_CONFIRM = "vertexTweener_skipScanConfirm"
 
@@ -259,10 +258,31 @@ class DefaultPoseStore:
 # ============================================================================
 
 class TweenEngine:
-    """Handles both Tweener (current time) and BN (selected keys) calculations."""
+    """Handles the LOCAL Tweener slider (classic TweenMachine behavior).
+
+    The tweener interpolates every selected key between the nearest
+    UNSELECTED keys that sit just before and after the selection on the
+    same curve. That is: a selection of three adjacent keys gets blended
+    as a group between the key just before the first selected key and
+    the key just after the last selected key, using the slider bias.
+
+    When no keys are selected in the Graph Editor, the tool falls back
+    to current-time behavior on the viewport selection.
+    """
 
     # Cache populated on slider press for fast drag interpolation.
-    # List of (full_attr, prev_val, next_val) tuples — only scalar attrs.
+    # Each entry is a dict. Two modes coexist:
+    #
+    #   Current-time mode (viewport selection, no graph editor keys):
+    #       {'attr', 'prev', 'next'}
+    #
+    #   Per-selected-key mode (Graph Editor keys selected):
+    #       {'curve', 'index', 'prev', 'next'}
+    #       where 'prev' and 'next' are the selection-BOUND values on the
+    #       curve (NOT the key's immediate neighbors). That is the whole
+    #       point of Tweener — every selected key is tweened between the
+    #       same pair of boundary values, just like a classic tween
+    #       machine slider.
     _cached_attrs = []
 
     @staticmethod
@@ -270,21 +290,43 @@ class TweenEngine:
         """Query and cache keyframe boundary values for the current selection.
 
         Called once on slider press so that drag only does lightweight lerp.
-        Returns the number of cached attributes.
+        If keys are selected in the Graph Editor, operate per-selected-key
+        against each curve's selection BOUNDS (tween-machine style).
+        Returns the number of cached entries.
         """
         TweenEngine._cached_attrs = []
-        target_attrs = TweenEngine.get_selected_keyframe_attrs()
-        selection = list(target_attrs.keys()) if target_attrs else cmds.ls(selection=True)
+
+        groups = BlendEngine._get_selection_info()
+        if groups:
+            for group in groups:
+                prev_val = group['bound_prev_val']
+                next_val = group['bound_next_val']
+                # Need BOTH bounds to tween. If one side of the selection
+                # sits at the first/last key on the curve there is nothing
+                # to tween against on that side, so skip those keys.
+                if prev_val is None or next_val is None:
+                    continue
+                if not isinstance(prev_val, (int, float)):
+                    continue
+                if not isinstance(next_val, (int, float)):
+                    continue
+                for key in group['keys']:
+                    TweenEngine._cached_attrs.append({
+                        'curve': group['curve'],
+                        'index': key['index'],
+                        'prev': prev_val,
+                        'next': next_val,
+                    })
+            return len(TweenEngine._cached_attrs)
+
+        selection = cmds.ls(selection=True)
         if not selection:
             return 0
 
         current_time = cmds.currentTime(query=True)
 
         for obj in selection:
-            if target_attrs:
-                keyable_attrs = sorted(target_attrs.get(obj, []))
-            else:
-                keyable_attrs = cmds.listAttr(obj, keyable=True) or []
+            keyable_attrs = cmds.listAttr(obj, keyable=True) or []
             for attr in keyable_attrs:
                 full_attr = "{}.{}".format(obj, attr)
                 try:
@@ -305,7 +347,11 @@ class TweenEngine:
                 if not isinstance(next_val, (int, float)):
                     continue
 
-                TweenEngine._cached_attrs.append((full_attr, prev_val, next_val))
+                TweenEngine._cached_attrs.append({
+                    'attr': full_attr,
+                    'prev': prev_val,
+                    'next': next_val,
+                })
 
         return len(TweenEngine._cached_attrs)
 
@@ -313,14 +359,19 @@ class TweenEngine:
     def apply_cached_tween(bias):
         """Fast interpolation using cached data — called during slider drag.
 
-        Only performs setAttr calls with pre-computed lerp, no Maya queries.
+        Only performs setAttr / keyframe calls with pre-computed lerp.
         """
         t = bias / 100.0
         count = 0
-        for full_attr, prev_val, next_val in TweenEngine._cached_attrs:
-            new_value = prev_val + (next_val - prev_val) * t
+        for entry in TweenEngine._cached_attrs:
+            new_value = entry['prev'] + (entry['next'] - entry['prev']) * t
             try:
-                cmds.setAttr(full_attr, new_value)
+                if 'curve' in entry:
+                    cmds.keyframe(
+                        entry['curve'], index=(entry['index'],),
+                        valueChange=new_value)
+                else:
+                    cmds.setAttr(entry['attr'], new_value)
                 count += 1
             except (RuntimeError, TypeError, ValueError):
                 pass
@@ -381,20 +432,44 @@ class TweenEngine:
         """Full query-and-apply tween for one-shot use (quick buttons).
 
         For slider drag, use cache_selection() + apply_cached_tween() instead.
+        If keys are selected in the Graph Editor, tween every selected key
+        on each curve between the curve's selection BOUNDS — i.e. the key
+        just before and the key just after the selection — like a classic
+        TweenMachine.
         """
-        target_attrs = TweenEngine.get_selected_keyframe_attrs()
-        selection = list(target_attrs.keys()) if target_attrs else cmds.ls(selection=True)
+        t = bias / 100.0
+        count = 0
+
+        groups = BlendEngine._get_selection_info()
+        if groups:
+            for group in groups:
+                prev_val = group['bound_prev_val']
+                next_val = group['bound_next_val']
+                if prev_val is None or next_val is None:
+                    continue
+                if not isinstance(prev_val, (int, float)):
+                    continue
+                if not isinstance(next_val, (int, float)):
+                    continue
+                new_value = prev_val + (next_val - prev_val) * t
+                for key in group['keys']:
+                    try:
+                        cmds.keyframe(
+                            group['curve'], index=(key['index'],),
+                            valueChange=new_value)
+                        count += 1
+                    except (RuntimeError, TypeError, ValueError):
+                        pass
+            return count
+
+        selection = cmds.ls(selection=True)
         if not selection:
             return 0
 
         current_time = cmds.currentTime(query=True)
-        count = 0
 
         for obj in selection:
-            if target_attrs:
-                keyable_attrs = sorted(target_attrs.get(obj, []))
-            else:
-                keyable_attrs = cmds.listAttr(obj, keyable=True) or []
+            keyable_attrs = cmds.listAttr(obj, keyable=True) or []
             for attr in keyable_attrs:
                 full_attr = "{}.{}".format(obj, attr)
                 try:
@@ -413,7 +488,7 @@ class TweenEngine:
                 if not isinstance(next_val, (int, float)):
                     continue
 
-                new_value = prev_val + (next_val - prev_val) * (bias / 100.0)
+                new_value = prev_val + (next_val - prev_val) * t
                 try:
                     cmds.setAttr(full_attr, new_value)
                     count += 1
@@ -514,7 +589,29 @@ class TweenEngine:
 
 
 class WorldTweenEngine:
-    """Handles world-space matrix interpolation for tweening in global coordinates."""
+    """Handles world-space matrix interpolation for tweening in global coordinates.
+
+    Like ``TweenEngine`` (the Local Tweener), WorldTweenEngine supports
+    two modes:
+
+      * Current-time mode — used when the viewport selection has
+        keyframes but no keys are selected in the Graph Editor. Blends
+        each object between its nearest prev/next transform keyframes
+        around the current scene time.
+
+      * Per-selected-key mode — used when keys are selected in the
+        Graph Editor. Each selected transform key is reshaped between
+        the same object's SELECTION BOUND keys (the last unselected
+        key before the selection and the first unselected key after)
+        in world space, mirroring the Local Tweener's behavior but in
+        global coordinates.
+    """
+
+    # Per-selected-key cache populated on slider press. List of dicts,
+    # one per object with selected transform keys. See cache_selected_keys.
+    _key_cache = []
+
+    _TRANSFORM_ATTRS = ('tx', 'ty', 'tz', 'rx', 'ry', 'rz')
 
     @staticmethod
     def get_selected_keyframe_objects():
@@ -621,41 +718,749 @@ class WorldTweenEngine:
 
         return count
 
+    # ------------------------------------------------------------------
+    # Per-selected-key mode
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _selected_transform_keys_by_object():
+        """Group selected transform keys by their owning object.
 
-# ============================================================================
-# MOTION TRAILS MANAGER
-# ============================================================================
+        Returns ``{obj: {attr: [(curve, index, time), ...]}}`` for every
+        transform attribute (tx/ty/tz/rx/ry/rz) that has at least one
+        selected key.
+        """
+        selected_curves = cmds.keyframe(q=True, selected=True, name=True)
+        if not selected_curves:
+            return {}
 
-class MotionTrailsManager:
-    active_trails = []
-    @classmethod
-    def toggle_motion_trails(cls, enable):
-        if enable: cls.create_motion_trails()
-        else: cls.delete_motion_trails()
-
-    @classmethod
-    def create_motion_trails(cls):
-        cls.delete_motion_trails()
-        selection = cmds.ls(selection=True, type=('transform', 'joint'))
-        if not selection: return
-        for obj in selection:
+        grouped = {}
+        for curve in set(selected_curves):
             try:
-                safe_name = obj.replace('"', '\\"')
-                snapshot = mel.eval('snapshot -motionTrail 1 -increment 1 -startTime `playbackOptions -q -min` -endTime `playbackOptions -q -max` "{}"'.format(safe_name))
-                if snapshot: cls.active_trails.extend(cmds.ls(snapshot))
-            except RuntimeError: pass
+                dest_plugs = cmds.listConnections(
+                    curve, s=False, d=True, plugs=True) or []
+            except (RuntimeError, TypeError):
+                continue
+            if not dest_plugs:
+                continue
+            plug = dest_plugs[0]
+            if '.' not in plug:
+                continue
+            obj, attr = plug.split('.', 1)
+            if attr not in WorldTweenEngine._TRANSFORM_ATTRS:
+                continue
 
-    @classmethod
-    def delete_motion_trails(cls):
-        for trail in cls.active_trails:
-            if cmds.objExists(trail):
-                try: cmds.delete(trail)
-                except RuntimeError: pass
-        cls.active_trails = []
+            sel_indices = cmds.keyframe(
+                curve, q=True, selected=True, indexValue=True) or []
+            sel_times = cmds.keyframe(
+                curve, q=True, selected=True, timeChange=True) or []
+            if not sel_indices:
+                continue
 
-    @classmethod
-    def refresh_motion_trails(cls):
-        if cls.active_trails: cls.create_motion_trails()
+            attr_map = grouped.setdefault(obj, {})
+            entries = attr_map.setdefault(attr, [])
+            for i, raw_idx in enumerate(sel_indices):
+                try:
+                    entries.append((
+                        curve,
+                        int(raw_idx),
+                        sel_times[i] if i < len(sel_times) else None,
+                    ))
+                except (TypeError, ValueError):
+                    continue
+
+        return grouped
+
+    @staticmethod
+    def _find_object_selection_bounds(obj, selected_times):
+        """Find the nearest unselected prev/next transform key on ``obj``.
+
+        Scans all six transform curves to build a combined list of key
+        times, then picks the greatest time strictly less than
+        ``min(selected_times)`` as the prev bound and the smallest time
+        strictly greater than ``max(selected_times)`` as the next bound.
+        """
+        if not selected_times:
+            return None, None
+        min_sel = min(selected_times)
+        max_sel = max(selected_times)
+
+        all_times = set()
+        for attr in WorldTweenEngine._TRANSFORM_ATTRS:
+            plug = "{}.{}".format(obj, attr)
+            times = cmds.keyframe(plug, q=True, timeChange=True) or []
+            all_times.update(times)
+        if not all_times:
+            return None, None
+
+        prev_bound = None
+        next_bound = None
+        for t in sorted(all_times):
+            if t < min_sel - 1e-6:
+                prev_bound = t
+            elif t > max_sel + 1e-6 and next_bound is None:
+                next_bound = t
+                break
+        return prev_bound, next_bound
+
+    @staticmethod
+    def cache_selected_keys():
+        """Build a per-selected-key world-tween cache.
+
+        For each object with selected transform keys:
+          * Resolve the object's selection bounds (prev/next unselected
+            transform key times across all transform curves combined).
+          * Query world matrices at those bound times.
+          * Cache the parent-inverse matrix at EACH selected key time
+            (so decomposition doesn't need timeline scrubbing).
+          * Record the (curve, index, attr) of every selected transform
+            key so apply() can write per-channel values via
+            ``cmds.keyframe``.
+
+        Returns the number of selected keys cached.
+        """
+        WorldTweenEngine._key_cache = []
+        grouped = WorldTweenEngine._selected_transform_keys_by_object()
+        if not grouped:
+            return 0
+
+        count = 0
+        for obj, attr_map in grouped.items():
+            # Validate object is a transform
+            if not cmds.objExists(obj):
+                continue
+            if not cmds.ls(obj, type=('transform', 'joint')):
+                continue
+
+            # Gather every selected key time on this object
+            per_key = []  # list of (attr, curve, index, time)
+            for attr, entries in attr_map.items():
+                for curve, idx, t_val in entries:
+                    if t_val is None:
+                        continue
+                    per_key.append((attr, curve, idx, t_val))
+            if not per_key:
+                continue
+
+            selected_times = [entry[3] for entry in per_key]
+            prev_time, next_time = WorldTweenEngine._find_object_selection_bounds(
+                obj, selected_times)
+            if prev_time is None or next_time is None:
+                continue
+
+            prev_mat = WorldTweenEngine.get_world_matrix_at_time(obj, prev_time)
+            next_mat = WorldTweenEngine.get_world_matrix_at_time(obj, next_time)
+            if prev_mat is None or next_mat is None:
+                continue
+            prev_trans, prev_rot = WorldTweenEngine.matrix_to_transform_components(
+                prev_mat)
+            next_trans, next_rot = WorldTweenEngine.matrix_to_transform_components(
+                next_mat)
+
+            # Rotation order is time-invariant (0=XYZ..5=ZYX in cmds;
+            # MEulerRotation.reorder() accepts the same 0..5 values).
+            try:
+                rot_order = cmds.getAttr(obj + '.rotateOrder')
+            except (RuntimeError, TypeError):
+                rot_order = 0
+
+            # Group per-frame: multiple channels may share the same key time.
+            frames = {}  # time -> list of (attr, curve, index)
+            for attr, curve, idx, t_val in per_key:
+                frames.setdefault(t_val, []).append((attr, curve, idx))
+
+            # Pre-cache parentInverseMatrix at each selected key time so
+            # we can do world->local without scrubbing during drag.
+            frame_list = []
+            for t_val, channels in frames.items():
+                try:
+                    parent_inv_list = cmds.getAttr(
+                        obj + '.parentInverseMatrix[0]', time=t_val)
+                    parent_inv = om.MMatrix(parent_inv_list)
+                except (RuntimeError, ValueError):
+                    parent_inv = om.MMatrix()  # identity fallback
+                frame_list.append({
+                    'time': t_val,
+                    'parent_inv': parent_inv,
+                    'channels': channels,
+                })
+                count += len(channels)
+
+            WorldTweenEngine._key_cache.append({
+                'obj': obj,
+                'rot_order': rot_order,
+                'prev_trans': prev_trans,
+                'prev_rot': prev_rot,
+                'next_trans': next_trans,
+                'next_rot': next_rot,
+                'frames': frame_list,
+            })
+
+        return count
+
+    @staticmethod
+    def apply_cached_world_tween(bias):
+        """Apply the per-selected-key world tween at the given bias.
+
+        Interpolates each object's world matrix between its cached
+        selection-bound matrices, then for every selected transform key
+        on that object: multiplies by the cached parent-inverse matrix
+        to get the local matrix, decomposes it to translate/Euler in
+        the object's rotation order, and writes the result into the
+        specific (curve, index) for each selected channel.
+
+        Because we cached parentInverseMatrix per key at press time,
+        this needs zero timeline scrubbing and no Maya DG re-eval.
+        """
+        if not WorldTweenEngine._key_cache:
+            return 0
+
+        t = bias / 100.0
+        count = 0
+
+        for obj_entry in WorldTweenEngine._key_cache:
+            prev_trans = obj_entry['prev_trans']
+            next_trans = obj_entry['next_trans']
+            prev_rot = obj_entry['prev_rot']
+            next_rot = obj_entry['next_rot']
+            rot_order = obj_entry['rot_order']
+
+            # Interpolate world-space translation linearly and rotation via slerp.
+            interp_trans = prev_trans + (next_trans - prev_trans) * t
+            interp_rot = om.MQuaternion.slerp(prev_rot, next_rot, t)
+
+            interp_tm = om.MTransformationMatrix()
+            interp_tm.setTranslation(interp_trans, om.MSpace.kWorld)
+            interp_tm.setRotation(interp_rot)
+            world_mat = interp_tm.asMatrix()
+
+            for frame in obj_entry['frames']:
+                local_mat = world_mat * frame['parent_inv']
+                local_tm = om.MTransformationMatrix(local_mat)
+                local_trans = local_tm.translation(om.MSpace.kTransform)
+                local_euler = local_tm.rotation(asQuaternion=False)
+                # MEulerRotation.reorder accepts 0..5 matching Maya's
+                # rotateOrder values (0=XYZ .. 5=ZYX).
+                try:
+                    local_euler = local_euler.reorder(rot_order)
+                except (AttributeError, RuntimeError):
+                    pass
+
+                comps = {
+                    'tx': local_trans.x,
+                    'ty': local_trans.y,
+                    'tz': local_trans.z,
+                    'rx': math.degrees(local_euler.x),
+                    'ry': math.degrees(local_euler.y),
+                    'rz': math.degrees(local_euler.z),
+                }
+
+                for attr, curve, idx in frame['channels']:
+                    val = comps.get(attr)
+                    if val is None:
+                        continue
+                    try:
+                        cmds.keyframe(curve, index=(idx,), valueChange=val)
+                        count += 1
+                    except (RuntimeError, TypeError, ValueError):
+                        continue
+
+        return count
+
+    @staticmethod
+    def clear_key_cache():
+        """Release the per-selected-key world-tween cache."""
+        WorldTweenEngine._key_cache = []
+
+
+# ============================================================================
+# BLEND ENGINE (BN / BD / BE)
+# ============================================================================
+
+class BlendEngine:
+    """Shared cache/apply helpers for Blend-to-Neighbor, -Default, -Ease.
+
+    All three sliders need the same behavior: when called they must operate on
+    whatever is currently selected — a set of rig controls in the viewport, a
+    single object, or a set of keys on a curve in the Graph Editor. The helper
+    below resolves that selection once so every slider can reuse it.
+    """
+
+    @staticmethod
+    def iter_selected_attrs():
+        """Yield (obj, attr) pairs for the current selection.
+
+        Preference order:
+        1. Graph Editor key selection — yields only the specific attrs whose
+           keys are selected on each curve.
+        2. Viewport selection — yields every keyable attribute on each object.
+        """
+        target_attrs = TweenEngine.get_selected_keyframe_attrs()
+        if target_attrs:
+            for obj in target_attrs:
+                for attr in sorted(target_attrs[obj]):
+                    yield obj, attr
+            return
+
+        for obj in cmds.ls(selection=True) or []:
+            for attr in cmds.listAttr(obj, keyable=True) or []:
+                yield obj, attr
+
+    @staticmethod
+    def _get_selection_info():
+        """Gather rich per-curve selection info for every curve with selected keys.
+
+        Returns a list of group dicts (one per curve). Each group contains:
+
+          curve            : the animation curve node name
+          plug             : destination plug (``obj.attr``) the curve drives
+          keys             : list of per-selected-key entries, each a dict of
+                             {index, time, value, prev_val, prev_time,
+                              next_val, next_time}. prev/next here refer to
+                             the IMMEDIATE neighbor key on the curve,
+                             regardless of whether it is selected.
+          bound_prev_val   : value of the nearest UNSELECTED key immediately
+                             before the earliest selected key on this curve
+                             (None if the selection starts at index 0).
+          bound_prev_time  : time of that key.
+          bound_next_val   : value of the nearest UNSELECTED key immediately
+                             after the latest selected key on this curve
+                             (None if the selection ends at the last key).
+          bound_next_time  : time of that key.
+
+        The per-key ``prev/next`` fields drive Blend-to-Neighbor (each key
+        blends against its immediate left/right key). The group-level
+        ``bound_prev/bound_next`` fields drive Tweener (interpolate every
+        selected key between the selection bounds — classic TweenMachine
+        behavior) and Blend-to-Ease (reshape the selected range into an
+        eased curve between the selection bounds).
+
+        Original values are cached up front so multi-key drags always
+        compute against the pre-drag state, not mid-drag values.
+        """
+        selected_curves = cmds.keyframe(q=True, selected=True, name=True)
+        if not selected_curves:
+            return []
+
+        groups = []
+        for curve in set(selected_curves):
+            try:
+                dest_plugs = cmds.listConnections(
+                    curve, s=False, d=True, plugs=True) or []
+            except (RuntimeError, TypeError):
+                continue
+            if not dest_plugs:
+                continue
+            plug = dest_plugs[0]
+            if '.' not in plug:
+                continue
+
+            try:
+                if cmds.getAttr(plug, lock=True):
+                    continue
+            except (RuntimeError, TypeError, ValueError):
+                continue
+
+            # Cache ALL key times/values for this curve in one query each.
+            # This is cheaper than per-index queries when there are many
+            # selected keys, and guarantees we have a consistent snapshot.
+            all_times = cmds.keyframe(curve, q=True, timeChange=True) or []
+            all_values = cmds.keyframe(curve, q=True, valueChange=True) or []
+            if not all_times or len(all_times) != len(all_values):
+                continue
+            total = len(all_times)
+
+            raw_sel_indices = cmds.keyframe(
+                curve, q=True, selected=True, indexValue=True) or []
+            if not raw_sel_indices:
+                continue
+            sel_indices = sorted({int(i) for i in raw_sel_indices
+                                  if 0 <= int(i) < total})
+            if not sel_indices:
+                continue
+
+            keys = []
+            for idx in sel_indices:
+                entry = {
+                    'index': idx,
+                    'time': all_times[idx],
+                    'value': all_values[idx],
+                    'prev_val': all_values[idx - 1] if idx > 0 else None,
+                    'prev_time': all_times[idx - 1] if idx > 0 else None,
+                    'next_val': all_values[idx + 1] if idx + 1 < total else None,
+                    'next_time': all_times[idx + 1] if idx + 1 < total else None,
+                }
+                keys.append(entry)
+
+            # Selection bounds: the key immediately before the earliest
+            # selected key is, by definition, NOT selected (because the
+            # earliest selected key is the smallest selected index).
+            min_idx = sel_indices[0]
+            max_idx = sel_indices[-1]
+            bound_prev_idx = min_idx - 1 if min_idx > 0 else None
+            bound_next_idx = max_idx + 1 if max_idx + 1 < total else None
+
+            groups.append({
+                'curve': curve,
+                'plug': plug,
+                'keys': keys,
+                'bound_prev_val': (all_values[bound_prev_idx]
+                                   if bound_prev_idx is not None else None),
+                'bound_prev_time': (all_times[bound_prev_idx]
+                                    if bound_prev_idx is not None else None),
+                'bound_next_val': (all_values[bound_next_idx]
+                                   if bound_next_idx is not None else None),
+                'bound_next_time': (all_times[bound_next_idx]
+                                    if bound_next_idx is not None else None),
+            })
+
+        return groups
+
+    @staticmethod
+    def cache_bn():
+        """Blend-to-Neighbor cache.
+
+        BN is the "spacing" slider: each selected key blends toward its
+        OWN immediate left or right neighbor on the curve, regardless of
+        whether that neighbor is itself selected. This is distinct from
+        Tweener (which uses the selection bounds) and from Blend-to-Ease
+        (which reshapes the selection range).
+
+        Per-selected-key mode stores each key's original value plus the
+        values of the immediate prev/next key. Current-time fallback
+        stores the prev/next VALUES at the current time.
+        """
+        groups = BlendEngine._get_selection_info()
+        if groups:
+            cache = []
+            for group in groups:
+                for key in group['keys']:
+                    prev_val = key['prev_val']
+                    next_val = key['next_val']
+                    if prev_val is not None and not isinstance(prev_val, (int, float)):
+                        prev_val = None
+                    if next_val is not None and not isinstance(next_val, (int, float)):
+                        next_val = None
+                    if prev_val is None and next_val is None:
+                        continue
+                    cache.append({
+                        'curve': group['curve'],
+                        'index': key['index'],
+                        'original': key['value'],
+                        'prev': prev_val,
+                        'next': next_val,
+                    })
+            return cache
+
+        current_time = cmds.currentTime(query=True)
+        cache = []
+        for obj, attr in BlendEngine.iter_selected_attrs():
+            full_attr = "{}.{}".format(obj, attr)
+            try:
+                if cmds.getAttr(full_attr, lock=True):
+                    continue
+            except (RuntimeError, TypeError, ValueError):
+                continue
+
+            keyframes = cmds.keyframe(full_attr, query=True, timeChange=True)
+            if not keyframes or len(keyframes) < 2:
+                continue
+
+            current_val = cmds.getAttr(full_attr)
+            if not isinstance(current_val, (int, float)):
+                continue
+
+            prev_val = None
+            next_val = None
+            for kf_time in keyframes:
+                if kf_time < current_time - 0.001:
+                    prev_val = cmds.getAttr(full_attr, time=kf_time)
+                elif kf_time > current_time + 0.001:
+                    next_val = cmds.getAttr(full_attr, time=kf_time)
+                    break
+
+            if prev_val is not None and not isinstance(prev_val, (int, float)):
+                prev_val = None
+            if next_val is not None and not isinstance(next_val, (int, float)):
+                next_val = None
+            if prev_val is None and next_val is None:
+                continue
+
+            cache.append({
+                'attr': full_attr,
+                'original': current_val,
+                'prev': prev_val,
+                'next': next_val,
+            })
+        return cache
+
+    @staticmethod
+    def apply_bn(value, cache):
+        if value == 50 or not cache:
+            return 0
+        if value < 50:
+            blend_to_next = False
+            weight = (50 - value) / 50.0
+        else:
+            blend_to_next = True
+            weight = (value - 50) / 50.0
+
+        count = 0
+        for entry in cache:
+            target_val = entry['next'] if blend_to_next else entry['prev']
+            if target_val is None:
+                continue
+            new_val = entry['original'] + (target_val - entry['original']) * weight
+            try:
+                if 'curve' in entry:
+                    cmds.keyframe(
+                        entry['curve'], index=(entry['index'],),
+                        valueChange=new_val)
+                else:
+                    cmds.setAttr(entry['attr'], new_val)
+                count += 1
+            except (RuntimeError, TypeError, ValueError):
+                continue
+        return count
+
+    @staticmethod
+    def cache_bd():
+        """Blend-to-Default cache.
+
+        BD is the "return to rest" slider: every selected key blends
+        toward the attribute's scanned default pose (or Maya's attribute
+        default as a fallback). The default is resolved once per curve
+        since every key on the same curve targets the same default value.
+
+        Per-selected-key mode stores each key's original value and the
+        default for its owning attribute. Current-time fallback stores
+        the attribute value and its default.
+        """
+        groups = BlendEngine._get_selection_info()
+        if groups:
+            cache = []
+            for group in groups:
+                default_val = DefaultPoseStore.get_default(group['plug'])
+                if not isinstance(default_val, (int, float)):
+                    continue
+                for key in group['keys']:
+                    cache.append({
+                        'curve': group['curve'],
+                        'index': key['index'],
+                        'original': key['value'],
+                        'default': default_val,
+                    })
+            return cache
+
+        cache = []
+        for obj, attr in BlendEngine.iter_selected_attrs():
+            full_attr = "{}.{}".format(obj, attr)
+            try:
+                if cmds.getAttr(full_attr, lock=True):
+                    continue
+            except (RuntimeError, TypeError, ValueError):
+                continue
+
+            if not cmds.keyframe(full_attr, query=True, keyframeCount=True):
+                continue
+
+            current_val = cmds.getAttr(full_attr)
+            if not isinstance(current_val, (int, float)):
+                continue
+
+            default_val = DefaultPoseStore.get_default(full_attr)
+            cache.append({
+                'attr': full_attr,
+                'original': current_val,
+                'default': default_val,
+            })
+        return cache
+
+    @staticmethod
+    def apply_bd(value, cache):
+        if value == 0 or not cache:
+            return 0
+        n_weight = value / 100.0
+        count = 0
+        for entry in cache:
+            new_val = entry['original'] + (entry['default'] - entry['original']) * n_weight
+            try:
+                if 'curve' in entry:
+                    cmds.keyframe(
+                        entry['curve'], index=(entry['index'],),
+                        valueChange=new_val)
+                else:
+                    cmds.setAttr(entry['attr'], new_val)
+                count += 1
+            except (RuntimeError, TypeError, ValueError):
+                continue
+        return count
+
+    @staticmethod
+    def cache_be():
+        """Blend-to-Ease cache.
+
+        BE is the "reshape the selected range" slider. For each curve
+        with selected keys we treat the selection as a contiguous range
+        anchored by the two SELECTION BOUNDARY keys (the key just before
+        and the key just after the selection on that curve). Every
+        selected key is then mapped to an eased position along the
+        (bound_prev -> bound_next) interval based on its time:
+
+            t = (key_time - bound_prev_time) / (bound_next_time - bound_prev_time)
+
+        The ease-in target uses t**3 (accelerate toward next), and the
+        ease-out target uses 1 - (1-t)**3 (decelerate from prev). At the
+        slider extremes the selected keys collectively land on a cubic
+        ease curve between the bounds — i.e. the shape of the range
+        changes, rather than every key moving in lockstep.
+
+        Current-time fallback preserves the old "pose at current time"
+        ease behavior for viewport selections.
+        """
+        groups = BlendEngine._get_selection_info()
+        if groups:
+            cache = []
+            for group in groups:
+                prev_val = group['bound_prev_val']
+                next_val = group['bound_next_val']
+                prev_time = group['bound_prev_time']
+                next_time = group['bound_next_time']
+                if (prev_val is None or next_val is None
+                        or prev_time is None or next_time is None):
+                    continue
+                if not isinstance(prev_val, (int, float)):
+                    continue
+                if not isinstance(next_val, (int, float)):
+                    continue
+                time_range = next_time - prev_time
+                if time_range == 0:
+                    continue
+                delta = next_val - prev_val
+                for key in group['keys']:
+                    # Clamp t to [0, 1] in case of unusual key arrangements
+                    # (e.g. keys outside the bound times shouldn't overshoot).
+                    t = (key['time'] - prev_time) / time_range
+                    if t < 0.0:
+                        t = 0.0
+                    elif t > 1.0:
+                        t = 1.0
+                    ease_in_t = t * t * t
+                    ease_out_t = 1 - pow(1 - t, 3)
+                    cache.append({
+                        'curve': group['curve'],
+                        'index': key['index'],
+                        'original': key['value'],
+                        'ease_in': prev_val + delta * ease_in_t,
+                        'ease_out': prev_val + delta * ease_out_t,
+                    })
+            return cache
+
+        current_time = cmds.currentTime(query=True)
+        cache = []
+        for obj, attr in BlendEngine.iter_selected_attrs():
+            full_attr = "{}.{}".format(obj, attr)
+            try:
+                if cmds.getAttr(full_attr, lock=True):
+                    continue
+            except (RuntimeError, TypeError, ValueError):
+                continue
+
+            keyframes = cmds.keyframe(full_attr, query=True, timeChange=True)
+            if not keyframes or len(keyframes) < 3:
+                continue
+
+            current_val = cmds.getAttr(full_attr)
+            if not isinstance(current_val, (int, float)):
+                continue
+
+            prev_time = None
+            next_time = None
+            for kf_time in keyframes:
+                if kf_time < current_time - 0.001:
+                    prev_time = kf_time
+                elif kf_time > current_time + 0.001:
+                    next_time = kf_time
+                    break
+
+            if prev_time is None or next_time is None:
+                continue
+
+            prev_val = cmds.getAttr(full_attr, time=prev_time)
+            next_val = cmds.getAttr(full_attr, time=next_time)
+            if not isinstance(prev_val, (int, float)) or not isinstance(next_val, (int, float)):
+                continue
+
+            time_range = next_time - prev_time
+            if time_range == 0:
+                continue
+
+            t = (current_time - prev_time) / time_range
+            ease_in_t = t * t * t
+            ease_out_t = 1 - pow(1 - t, 3)
+
+            cache.append({
+                'attr': full_attr,
+                'original': current_val,
+                'ease_in': prev_val + (next_val - prev_val) * ease_in_t,
+                'ease_out': prev_val + (next_val - prev_val) * ease_out_t,
+            })
+        return cache
+
+    @staticmethod
+    def apply_be(value, cache):
+        if value == 50 or not cache:
+            return 0
+        weight = abs(value - 50) / 50.0
+        blend_to_next = value > 50
+        count = 0
+        for entry in cache:
+            eased_val = entry['ease_in'] if blend_to_next else entry['ease_out']
+            new_val = entry['original'] + (eased_val - entry['original']) * weight
+            try:
+                if 'curve' in entry:
+                    cmds.keyframe(
+                        entry['curve'], index=(entry['index'],),
+                        valueChange=new_val)
+                else:
+                    cmds.setAttr(entry['attr'], new_val)
+                count += 1
+            except (RuntimeError, TypeError, ValueError):
+                continue
+        return count
+
+
+def _auto_key_selection():
+    """Set keys on every already-animated keyable attr on the selection.
+
+    Used by every slider's release handler to lock in the tweened pose.
+    Works for both viewport selection and Graph-Editor-filtered attrs; the
+    attrs that the tweener actually touched are exactly those that have
+    animation curves, so we key everything that has a curve.
+
+    When the user has keys selected in the Graph Editor, the slider already
+    modified those keys directly via cmds.keyframe(valueChange=...), so
+    there is nothing more to do here — skip the auto-key step to avoid
+    creating phantom keys at the current time.
+    """
+    if cmds.keyframe(q=True, selected=True, name=True):
+        return
+
+    selection = cmds.ls(selection=True) or []
+    if not selection:
+        return
+
+    current_time = cmds.currentTime(query=True)
+    for obj in selection:
+        keyable_attrs = cmds.listAttr(obj, keyable=True) or []
+        for attr in keyable_attrs:
+            full_attr = "{}.{}".format(obj, attr)
+            try:
+                if cmds.getAttr(full_attr, lock=True):
+                    continue
+                if cmds.keyframe(full_attr, query=True, keyframeCount=True):
+                    cmds.setKeyframe(full_attr, time=current_time)
+            except (RuntimeError, TypeError):
+                continue
 
 
 # ============================================================================
@@ -771,6 +1576,263 @@ class VertexTickedSlider(QtWidgets.QSlider):
         painter.end()
 
 
+# ============================================================================
+# POP-OUT SLIDER WINDOW
+# ============================================================================
+
+class SliderPopOut(QtWidgets.QDialog):
+    """A compact, stand-alone floating window containing one slider.
+
+    Users can pop out any of the Inbetweener sliders into a small independent
+    window — handy when only one slider is needed and screen space is tight.
+    Each pop-out is fully self-contained: its own cache, its own undo chunk,
+    its own handlers. They all share the same engine backends, so they work
+    on whatever is currently selected (viewport objects or Graph Editor keys).
+    """
+
+    # slider_type -> configuration
+    CONFIGS = {
+        'LT': {'name': 'Local Tweener', 'color': '#6BB5FF', 'neutral': 50,
+               'label': 'LT', 'is_world': False, 'is_tw': True},
+        'WT': {'name': 'World Tweener', 'color': '#FFD700', 'neutral': 50,
+               'label': 'WT', 'is_world': True, 'is_tw': True},
+        'BN': {'name': 'Blend to Neighbor', 'color': '#7EC8A0', 'neutral': 50,
+               'label': 'BN', 'is_world': False, 'is_tw': False},
+        'BD': {'name': 'Blend to Default', 'color': '#E8A87C', 'neutral': 0,
+               'label': 'BD', 'is_world': False, 'is_tw': False},
+        'BE': {'name': 'Blend to Ease', 'color': '#C49BD6', 'neutral': 50,
+               'label': 'BE', 'is_world': False, 'is_tw': False},
+    }
+
+    # Keep hard references so Qt/Python don't garbage-collect open pop-outs.
+    _open_windows = []
+
+    def __init__(self, slider_type, overshoot=False, parent=None):
+        if slider_type not in self.CONFIGS:
+            raise ValueError("Unknown SliderPopOut type: {}".format(slider_type))
+
+        if parent is None:
+            ptr = omui.MQtUtil.mainWindow()
+            parent = shiboken.wrapInstance(int(ptr), QtWidgets.QWidget)
+        super(SliderPopOut, self).__init__(parent)
+
+        self.slider_type = slider_type
+        self.config = self.CONFIGS[slider_type]
+        self.neutral = self.config['neutral']
+
+        self.cache = []
+        self.undo_chunk_open = False
+
+        self.setWindowTitle("Inbetweener - " + self.config['name'])
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
+        # Keep pop-outs alive even after the main window closes
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        self.setMinimumWidth(300)
+        self.setMaximumHeight(140)
+
+        self._build_ui(overshoot)
+        self._connect()
+
+        SliderPopOut._open_windows.append(self)
+
+    def _build_ui(self, overshoot):
+        self.setStyleSheet("""
+            QDialog { background: #3c3c3c; }
+            QLabel { color: #ddd; background: transparent; border: none; }
+        """)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(3)
+
+        # Header: colored title + value readout on the right
+        header_row = QtWidgets.QHBoxLayout()
+        header_row.setSpacing(6)
+
+        title = QtWidgets.QLabel(self.config['name'])
+        title.setStyleSheet(
+            "color: {}; font-weight: bold; font-size: 11px;".format(self.config['color'])
+        )
+        header_row.addWidget(title)
+        header_row.addStretch()
+
+        self.value_label = QtWidgets.QLabel(
+            "{} {}%".format(self.config['label'], self.neutral)
+        )
+        val_font = QtGui.QFont()
+        val_font.setPointSize(11)
+        val_font.setBold(True)
+        self.value_label.setFont(val_font)
+        self.value_label.setStyleSheet("color: #E0E0E0;")
+        header_row.addWidget(self.value_label)
+
+        layout.addLayout(header_row)
+
+        # The slider itself
+        self.slider = VertexTickedSlider(
+            QtCore.Qt.Horizontal,
+            is_tw=self.config['is_tw'],
+            is_world=self.config['is_world'],
+            label_text=self.config['label'],
+        )
+        self.slider.setMinimumHeight(40)
+        self.slider.setTracking(True)
+        if self.slider_type == 'LT' and overshoot:
+            self.slider.setRange(-50, 150)
+        else:
+            self.slider.setRange(0, 100)
+        self.slider.setValue(self.neutral)
+        layout.addWidget(self.slider)
+
+        # Compact status line
+        self.status_label = QtWidgets.QLabel("Ready")
+        self.status_label.setStyleSheet(
+            "color: #999; font-size: 9px; padding: 2px 4px;"
+            " background: #333; border: 1px solid #444; border-radius: 3px;"
+        )
+        self.status_label.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(self.status_label)
+
+    def _connect(self):
+        self.slider.valueChanged.connect(self._on_changed)
+        self.slider.sliderPressed.connect(self._on_pressed)
+        self.slider.sliderReleased.connect(self._on_released)
+
+    # ------------------------------------------------------------------
+    # Press / Drag / Release handlers
+    # ------------------------------------------------------------------
+    def _on_pressed(self):
+        self.slider.keyed_value = None
+        self.slider.update()
+        self.undo_chunk_open = True
+        cmds.undoInfo(openChunk=True, chunkName="Inbetweener_{}_popout".format(self.slider_type))
+
+        if self.slider_type == 'LT':
+            cached = TweenEngine.cache_selection()
+            if not cached:
+                self.status_label.setText("No keyframes found on selection")
+        elif self.slider_type == 'WT':
+            # Cache per-selected-key data if keys are selected in the
+            # Graph Editor. Cache is empty -> _on_changed falls back to
+            # current-time world tween on the viewport selection.
+            WorldTweenEngine.cache_selected_keys()
+        elif self.slider_type == 'BN':
+            self.cache = BlendEngine.cache_bn()
+            if not self.cache:
+                self.status_label.setText("No neighbor keyframes found")
+        elif self.slider_type == 'BD':
+            if not DefaultPoseStore.has_stored_defaults():
+                self.status_label.setText("Tip: scan default pose for best results")
+            self.cache = BlendEngine.cache_bd()
+            if not self.cache:
+                self.status_label.setText("No animated attributes on selection")
+        elif self.slider_type == 'BE':
+            self.cache = BlendEngine.cache_be()
+            if not self.cache:
+                self.status_label.setText("Need 3+ keyframes for easing")
+
+    def _on_changed(self, value):
+        self.value_label.setText("{} {}%".format(self.config['label'], value))
+        count = 0
+        if self.slider_type == 'LT':
+            if TweenEngine._cached_attrs:
+                count = TweenEngine.apply_cached_tween(value)
+        elif self.slider_type == 'WT':
+            if WorldTweenEngine._key_cache:
+                count = WorldTweenEngine.apply_cached_world_tween(value)
+            else:
+                count = WorldTweenEngine.apply_world_tween(value)
+        elif self.slider_type == 'BN':
+            if value == 50:
+                self.status_label.setText("BN neutral")
+                return
+            count = BlendEngine.apply_bn(value, self.cache)
+        elif self.slider_type == 'BD':
+            count = BlendEngine.apply_bd(value, self.cache)
+        elif self.slider_type == 'BE':
+            if value == 50:
+                self.status_label.setText("BE neutral")
+                return
+            count = BlendEngine.apply_be(value, self.cache)
+
+        if count:
+            self.status_label.setText(
+                "Affecting {} attr{}".format(count, 's' if count != 1 else '')
+            )
+
+    def _on_released(self):
+        final_val = self.slider.value()
+
+        # Apply the final value from cache so it sticks, then key the pose.
+        if self.slider_type == 'LT':
+            if TweenEngine._cached_attrs:
+                TweenEngine.apply_cached_tween(final_val)
+            TweenEngine.clear_cache()
+            _auto_key_selection()
+        elif self.slider_type == 'WT':
+            # Apply final value from per-key cache (if any) so it sticks.
+            if WorldTweenEngine._key_cache:
+                WorldTweenEngine.apply_cached_world_tween(final_val)
+            WorldTweenEngine.clear_key_cache()
+            _auto_key_selection()
+        elif self.slider_type == 'BN':
+            if self.cache:
+                if final_val != 50:
+                    BlendEngine.apply_bn(final_val, self.cache)
+                _auto_key_selection()
+        elif self.slider_type == 'BD':
+            if self.cache:
+                if final_val != 0:
+                    BlendEngine.apply_bd(final_val, self.cache)
+                _auto_key_selection()
+        elif self.slider_type == 'BE':
+            if self.cache:
+                if final_val != 50:
+                    BlendEngine.apply_be(final_val, self.cache)
+                _auto_key_selection()
+
+        self.cache = []
+
+        if self.undo_chunk_open:
+            cmds.undoInfo(closeChunk=True)
+            self.undo_chunk_open = False
+
+        # Show keyed position tick, then snap slider back to neutral
+        self.slider.keyed_value = final_val
+        self.slider.blockSignals(True)
+        self.slider.setValue(self.neutral)
+        self.slider.blockSignals(False)
+        self.slider.update()
+        self.value_label.setText("{} {}%".format(self.config['label'], self.neutral))
+        self.status_label.setText("Keyed at {}%".format(final_val))
+
+    def set_overshoot(self, enabled):
+        """External hook to toggle LT overshoot range after construction."""
+        if self.slider_type != 'LT':
+            return
+        self.slider.blockSignals(True)
+        if enabled:
+            self.slider.setRange(-50, 150)
+        else:
+            self.slider.setRange(0, 100)
+        self.slider.setValue(self.neutral)
+        self.slider.blockSignals(False)
+        self.slider.update()
+
+    def closeEvent(self, event):
+        if self.undo_chunk_open:
+            try:
+                cmds.undoInfo(closeChunk=True)
+            except RuntimeError:
+                pass
+            self.undo_chunk_open = False
+        try:
+            SliderPopOut._open_windows.remove(self)
+        except ValueError:
+            pass
+        super(SliderPopOut, self).closeEvent(event)
+
+
 class VertexTweenerUI(QtWidgets.QDialog):
     instance = None
 
@@ -798,7 +1860,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
             parent = shiboken.wrapInstance(int(ptr), QtWidgets.QWidget)
         super(VertexTweenerUI, self).__init__(parent)
         
-        self.setWindowTitle("Inbetweener v2.1")
+        self.setWindowTitle("Inbetweener v2.2")
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
         self.setMinimumWidth(420)
 
@@ -812,9 +1874,6 @@ class VertexTweenerUI(QtWidgets.QDialog):
         self.bn_original_values = []
         self.bd_original_values = []
         self.be_original_values = []
-
-        # Maya autoKeyframe state saved during slider drag
-        self._saved_autokey_state = False
 
         self.create_widgets()
         self.create_layout()
@@ -853,10 +1912,13 @@ class VertexTweenerUI(QtWidgets.QDialog):
         self._update_bd_tick_labels()
         self._update_be_tick_labels()
 
-        self.motion_trails_checkbox.setChecked(get_pref(PREF_MOTION_TRAILS, False))
+    def _make_group_box(self, title, color="#5285A6", popout_type=None):
+        """Create a styled group frame with a colored header bar.
 
-    def _make_group_box(self, title, color="#5285A6"):
-        """Create a styled group frame with a colored header bar."""
+        When *popout_type* is given (e.g. 'LT', 'BN'), a small pop-out button
+        is added to the header row so the user can spawn a stand-alone mini
+        window containing just that slider.
+        """
         frame = QtWidgets.QFrame()
         frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
         frame.setStyleSheet(
@@ -866,12 +1928,36 @@ class VertexTweenerUI(QtWidgets.QDialog):
         layout.setContentsMargins(8, 4, 8, 8)
         layout.setSpacing(4)
 
+        header_row = QtWidgets.QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(4)
+
         header = QtWidgets.QLabel(title)
         header.setStyleSheet(
             "QLabel {{ color: {c}; font-weight: bold; font-size: 11px;"
             " background: transparent; border: none; padding: 2px 0; }}".format(c=color)
         )
-        layout.addWidget(header)
+        header_row.addWidget(header)
+        header_row.addStretch()
+
+        if popout_type is not None:
+            popout_btn = QtWidgets.QToolButton()
+            # Unicode "north-east arrow" makes a compact, universally-available icon.
+            popout_btn.setText("\u2197")
+            popout_btn.setToolTip(
+                "Pop out this slider into a small stand-alone window"
+            )
+            popout_btn.setStyleSheet(
+                "QToolButton { background: #4a4a4a; color: #ddd; border: 1px solid #666;"
+                " border-radius: 3px; padding: 0 6px; font-size: 12px; font-weight: bold; }"
+                "QToolButton:hover { background: #5a5a5a; border-color: #888; }"
+                "QToolButton:pressed { background: #333; }"
+            )
+            popout_btn.setFixedHeight(20)
+            popout_btn.clicked.connect(lambda _=False, t=popout_type: self._open_popout(t))
+            header_row.addWidget(popout_btn)
+
+        layout.addLayout(header_row)
         return frame, layout
 
     def _make_descriptor(self, text):
@@ -990,8 +2076,6 @@ class VertexTweenerUI(QtWidgets.QDialog):
         )
 
         # ---- Options ----
-        self.motion_trails_checkbox = QtWidgets.QCheckBox("Motion Trails")
-        self.motion_trails_checkbox.setToolTip("Display motion trail arcs for selected objects")
         self.overshoot_checkbox = QtWidgets.QCheckBox("Overshoot")
         self.overshoot_checkbox.setToolTip("Extend Local Tweener range to -50% / 150%")
         self.reset_btn = QtWidgets.QPushButton("Reset All")
@@ -1017,7 +2101,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
         # ================================================================
         # LOCAL TWEENER GROUP
         # ================================================================
-        lt_group, lt_layout = self._make_group_box("LOCAL TWEENER", "#6BB5FF")
+        lt_group, lt_layout = self._make_group_box("LOCAL TWEENER", "#6BB5FF", popout_type='LT')
         lt_layout.addWidget(self._make_descriptor(
             "Blends selected objects between previous and next keyframes at the current time. "
             "Works with transforms, joints, and any rig control with keyable attributes."
@@ -1041,7 +2125,6 @@ class VertexTweenerUI(QtWidgets.QDialog):
         opts_row = QtWidgets.QHBoxLayout()
         opts_row.setSpacing(12)
         opts_row.addWidget(self.overshoot_checkbox)
-        opts_row.addWidget(self.motion_trails_checkbox)
         opts_row.addStretch()
         lt_layout.addLayout(opts_row)
 
@@ -1050,7 +2133,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
         # ================================================================
         # WORLD TWEENER GROUP
         # ================================================================
-        wt_group, wt_layout = self._make_group_box("WORLD TWEENER", "#FFD700")
+        wt_group, wt_layout = self._make_group_box("WORLD TWEENER", "#FFD700", popout_type='WT')
         wt_layout.addWidget(self._make_descriptor(
             "Blends in world space using matrix interpolation with quaternion slerp. "
             "Ideal for maintaining arcs on parented or space-switched controls."
@@ -1071,7 +2154,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
         self.accordion_layout.setSpacing(6)
 
         # ---- BN GROUP ----
-        bn_group, bn_layout = self._make_group_box("BLEND TO NEIGHBOR", "#7EC8A0")
+        bn_group, bn_layout = self._make_group_box("BLEND TO NEIGHBOR", "#7EC8A0", popout_type='BN')
         bn_layout.addWidget(self._make_descriptor(
             "Blends selected controls toward their neighboring keyframe values. "
             "Drag left for previous neighbor, right for next."
@@ -1081,7 +2164,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
         self.accordion_layout.addWidget(bn_group)
 
         # ---- BD GROUP ----
-        bd_group, bd_layout = self._make_group_box("BLEND TO DEFAULT", "#E8A87C")
+        bd_group, bd_layout = self._make_group_box("BLEND TO DEFAULT", "#E8A87C", popout_type='BD')
         bd_layout.addWidget(self._make_descriptor(
             "Blends selected controls from their current values toward the rest pose. "
             "Use 'Scan Default Pose' to capture accurate rest values from your rig."
@@ -1104,7 +2187,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
         self.accordion_layout.addWidget(bd_group)
 
         # ---- BE GROUP ----
-        be_group, be_layout = self._make_group_box("BLEND TO EASE", "#C49BD6")
+        be_group, be_layout = self._make_group_box("BLEND TO EASE", "#C49BD6", popout_type='BE')
         be_layout.addWidget(self._make_descriptor(
             "Applies cubic easing curves to selected controls at current time. "
             "Drag left for ease-out (decelerate), right for ease-in (accelerate)."
@@ -1165,7 +2248,6 @@ class VertexTweenerUI(QtWidgets.QDialog):
         # Options
         self.reset_btn.clicked.connect(self.reset_all)
         self.overshoot_checkbox.toggled.connect(self.on_overshoot_toggled)
-        self.motion_trails_checkbox.toggled.connect(self.on_trails_toggled)
         self.help_action.triggered.connect(self.show_help_dialog)
         self.accordion_toggle.toggled.connect(self.on_accordion_toggled)
 
@@ -1176,13 +2258,10 @@ class VertexTweenerUI(QtWidgets.QDialog):
             count = TweenEngine.apply_cached_tween(value)
             if count:
                 self.status_label.setText("Tweening {} attribute{}".format(count, 's' if count != 1 else ''))
-            if self.motion_trails_checkbox.isChecked():
-                MotionTrailsManager.refresh_motion_trails()
 
     def on_slider_pressed(self):
         self.slider.keyed_value = None
         self.slider.update()
-        self._suspend_maya_autokey()
         self.undo_chunk_open = True
         cmds.undoInfo(openChunk=True, chunkName="VertexTW")
         # Cache all keyframe data up front — the only expensive query
@@ -1204,7 +2283,6 @@ class VertexTweenerUI(QtWidgets.QDialog):
             cmds.undoInfo(closeChunk=True)
             self.undo_chunk_open = False
 
-        self._restore_maya_autokey()
         TweenEngine.clear_cache()
 
         # Show keyed position tick, then reset slider to center
@@ -1218,31 +2296,46 @@ class VertexTweenerUI(QtWidgets.QDialog):
 
     def on_world_slider_changed(self, value):
         self.value_label.setText("World {}%".format(value))
+        # If the press handler cached selected keys, drive the per-key
+        # world tween; otherwise fall back to current-time world tween.
+        if WorldTweenEngine._key_cache:
+            count = WorldTweenEngine.apply_cached_world_tween(value)
+            if count:
+                self.status_label.setText(
+                    "World tweening {} key{}".format(count, 's' if count != 1 else ''))
+            return
         count = WorldTweenEngine.apply_world_tween(value)
         if count:
             self.status_label.setText("World tweening {} object{}".format(count, 's' if count != 1 else ''))
         else:
             self.status_label.setText("No keyframes found on selection")
-        if self.motion_trails_checkbox.isChecked(): MotionTrailsManager.refresh_motion_trails()
 
     def on_world_slider_pressed(self):
         self.world_slider.keyed_value = None
         self.world_slider.update()
-        self._suspend_maya_autokey()
         self.world_undo_chunk_open = True
         cmds.undoInfo(openChunk=True, chunkName="WorldTW")
+        # Pre-cache per-selected-key data (no-op if nothing is selected
+        # in the Graph Editor). apply_world_tween handles the fallback
+        # current-time path when the cache is empty.
+        WorldTweenEngine.cache_selected_keys()
 
     def on_world_slider_released(self):
         final_val = self.world_slider.value()
 
-        # Always set keyframes to lock in the tween
+        # Apply final value from the per-key cache so it sticks.
+        if WorldTweenEngine._key_cache:
+            WorldTweenEngine.apply_cached_world_tween(final_val)
+
+        # Always set keyframes to lock in the tween (skipped automatically
+        # when keys are selected — _auto_key_selection already guards that).
         self._auto_key_current_position()
+
+        WorldTweenEngine.clear_key_cache()
 
         if self.world_undo_chunk_open:
             cmds.undoInfo(closeChunk=True)
             self.world_undo_chunk_open = False
-
-        self._restore_maya_autokey()
 
         # Show keyed position tick, then reset slider to center
         self.world_slider.keyed_value = final_val
@@ -1255,105 +2348,21 @@ class VertexTweenerUI(QtWidgets.QDialog):
 
     def on_bn_changed(self, value):
         self.value_label.setText("BN {}%".format(value))
-        if value == 50 or not self.bn_original_values:
-            if value == 50:
-                self.status_label.setText("BN neutral")
+        if value == 50:
+            self.status_label.setText("BN neutral")
             return
-
-        if value < 50:
-            blend_to_next = False
-            weight = (50 - value) / 50.0
-        else:
-            blend_to_next = True
-            weight = (value - 50) / 50.0
-
-        count = 0
-        for entry in self.bn_original_values:
-            full_attr = entry['attr']
-            original_val = entry['original']
-            prev_val = entry.get('prev')
-            next_val = entry.get('next')
-
-            target_val = next_val if blend_to_next else prev_val
-            if target_val is None:
-                continue
-
-            new_val = original_val + (target_val - original_val) * weight
-            try:
-                cmds.setAttr(full_attr, new_val)
-                count += 1
-            except (RuntimeError, TypeError, ValueError):
-                continue
-
+        count = BlendEngine.apply_bn(value, self.bn_original_values)
         if count:
             self.status_label.setText("Blending {} attribute{}".format(count, 's' if count != 1 else ''))
-        else:
+        elif self.bn_original_values:
             self.status_label.setText("No neighbor keyframes found")
 
     def on_bn_pressed(self):
         self.bn_slider.keyed_value = None
         self.bn_slider.update()
-        self._suspend_maya_autokey()
         self.bn_undo_chunk_open = True
         cmds.undoInfo(openChunk=True, chunkName="VertexBN")
-
-        # Cache current values and neighbor values for all selected controls
-        self.bn_original_values = []
-        selection = cmds.ls(selection=True)
-        if not selection:
-            return
-
-        current_time = cmds.currentTime(query=True)
-
-        for obj in selection:
-            keyable_attrs = cmds.listAttr(obj, keyable=True) or []
-            for attr in keyable_attrs:
-                full_attr = "{}.{}".format(obj, attr)
-                try:
-                    if cmds.getAttr(full_attr, lock=True):
-                        continue
-                except (RuntimeError, TypeError, ValueError):
-                    continue
-
-                keyframes = cmds.keyframe(full_attr, query=True, timeChange=True)
-                if not keyframes or len(keyframes) < 2:
-                    continue
-
-                # Find the key at current time (or closest)
-                current_val = cmds.getAttr(full_attr)
-                if not isinstance(current_val, (int, float)):
-                    continue
-
-                # Find prev and next keyframe values relative to current time
-                prev_val = None
-                next_val = None
-                for kf_time in keyframes:
-                    if kf_time < current_time - 0.001:
-                        prev_val = cmds.getAttr(full_attr, time=kf_time)
-                    elif kf_time > current_time + 0.001:
-                        next_val = cmds.getAttr(full_attr, time=kf_time)
-                        break
-
-                # Skip if no neighbors at all
-                if prev_val is None and next_val is None:
-                    continue
-
-                # Validate scalar
-                if prev_val is not None and not isinstance(prev_val, (int, float)):
-                    prev_val = None
-                if next_val is not None and not isinstance(next_val, (int, float)):
-                    next_val = None
-
-                if prev_val is None and next_val is None:
-                    continue
-
-                self.bn_original_values.append({
-                    'attr': full_attr,
-                    'original': current_val,
-                    'prev': prev_val,
-                    'next': next_val,
-                })
-
+        self.bn_original_values = BlendEngine.cache_bn()
         if not self.bn_original_values:
             self.status_label.setText("No neighbor keyframes found on selection")
 
@@ -1363,14 +2372,13 @@ class VertexTweenerUI(QtWidgets.QDialog):
         # Apply final value
         if self.bn_original_values:
             if final_val != 50:
-                self.on_bn_changed(final_val)
+                BlendEngine.apply_bn(final_val, self.bn_original_values)
             # Always set keyframes to lock in the blend
             self._auto_key_current_position()
 
         if self.bn_undo_chunk_open:
             cmds.undoInfo(closeChunk=True)
             self.bn_undo_chunk_open = False
-        self._restore_maya_autokey()
         self.bn_original_values = []
 
         # Show keyed position tick, then reset slider to center
@@ -1385,35 +2393,22 @@ class VertexTweenerUI(QtWidgets.QDialog):
     def on_bd_changed(self, value):
         """BD slider: Blend from original pose (at 0) toward default/rest pose (at 100)."""
         self.value_label.setText("BD {}%".format(value))
-        if value == 0 or not self.bd_original_values:
-            return
-
-        n_weight = value / 100.0
-        count = 0
-
-        for entry in self.bd_original_values:
-            new_val = entry['original'] + (entry['default'] - entry['original']) * n_weight
-            try:
-                cmds.setAttr(entry['attr'], new_val)
-                count += 1
-            except (RuntimeError, TypeError, ValueError):
-                continue
-
+        count = BlendEngine.apply_bd(value, self.bd_original_values)
         if count:
             self.status_label.setText("Blending {} attribute{} to default".format(count, 's' if count != 1 else ''))
-        else:
+        elif value != 0 and self.bd_original_values:
             self.status_label.setText("No attributes found")
 
     def on_bd_pressed(self):
         self.bd_slider.keyed_value = None
         self.bd_slider.update()
-        self._suspend_maya_autokey()
         self.bd_undo_chunk_open = True
         cmds.undoInfo(openChunk=True, chunkName="VertexBD")
 
         self.bd_original_values = []
-        selection = cmds.ls(selection=True)
-        if not selection:
+        # Respect both Graph-Editor and viewport selection for "nothing selected" check
+        has_selection = bool(TweenEngine.get_selected_keyframe_attrs()) or bool(cmds.ls(selection=True))
+        if not has_selection:
             return
 
         # Prompt user if no default pose has been scanned yet
@@ -1436,33 +2431,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
                 self.status_label.setText("Scan default pose first for accurate BD blending")
                 return
 
-        for obj in selection:
-            keyable_attrs = cmds.listAttr(obj, keyable=True) or []
-            for attr in keyable_attrs:
-                full_attr = "{}.{}".format(obj, attr)
-                try:
-                    if cmds.getAttr(full_attr, lock=True):
-                        continue
-                except (RuntimeError, TypeError, ValueError):
-                    continue
-
-                # Only process attributes that have animation
-                if not cmds.keyframe(full_attr, query=True, keyframeCount=True):
-                    continue
-
-                current_val = cmds.getAttr(full_attr)
-                if not isinstance(current_val, (int, float)):
-                    continue
-
-                # Look up stored default — scanned node > Maya default > fallback
-                default_val = DefaultPoseStore.get_default(full_attr)
-
-                self.bd_original_values.append({
-                    'attr': full_attr,
-                    'original': current_val,
-                    'default': default_val,
-                })
-
+        self.bd_original_values = BlendEngine.cache_bd()
         if not self.bd_original_values:
             self.status_label.setText("No animated attributes on selection")
 
@@ -1471,14 +2440,13 @@ class VertexTweenerUI(QtWidgets.QDialog):
 
         if self.bd_original_values:
             if final_val != 0:
-                self.on_bd_changed(final_val)
+                BlendEngine.apply_bd(final_val, self.bd_original_values)
             # Always set keyframes to lock in the blend
             self._auto_key_current_position()
 
         if self.bd_undo_chunk_open:
             cmds.undoInfo(closeChunk=True)
             self.bd_undo_chunk_open = False
-        self._restore_maya_autokey()
         self.bd_original_values = []
 
         # Show keyed position tick, then reset slider to zero
@@ -1493,95 +2461,22 @@ class VertexTweenerUI(QtWidgets.QDialog):
     def on_be_changed(self, value):
         """BE slider: Blend toward eased position using pre-computed targets."""
         self.value_label.setText("BE {}%".format(value))
-        if value == 50 or not self.be_original_values:
-            if value == 50:
-                self.status_label.setText("BE neutral")
+        if value == 50:
+            self.status_label.setText("BE neutral")
             return
-
-        weight = abs(value - 50) / 50.0
-        blend_to_next = value > 50
-        count = 0
-
-        for entry in self.be_original_values:
-            eased_val = entry['ease_in'] if blend_to_next else entry['ease_out']
-            new_val = entry['original'] + (eased_val - entry['original']) * weight
-            try:
-                cmds.setAttr(entry['attr'], new_val)
-                count += 1
-            except (RuntimeError, TypeError, ValueError):
-                continue
-
+        count = BlendEngine.apply_be(value, self.be_original_values)
         if count:
             self.status_label.setText("Easing {} attribute{}".format(count, 's' if count != 1 else ''))
-        else:
+        elif self.be_original_values:
             self.status_label.setText("No attributes found")
 
     def on_be_pressed(self):
         self.be_slider.keyed_value = None
         self.be_slider.update()
-        self._suspend_maya_autokey()
         self.be_undo_chunk_open = True
         cmds.undoInfo(openChunk=True, chunkName="VertexBE")
 
-        self.be_original_values = []
-        selection = cmds.ls(selection=True)
-        if not selection:
-            return
-
-        current_time = cmds.currentTime(query=True)
-
-        for obj in selection:
-            keyable_attrs = cmds.listAttr(obj, keyable=True) or []
-            for attr in keyable_attrs:
-                full_attr = "{}.{}".format(obj, attr)
-                try:
-                    if cmds.getAttr(full_attr, lock=True):
-                        continue
-                except (RuntimeError, TypeError, ValueError):
-                    continue
-
-                keyframes = cmds.keyframe(full_attr, query=True, timeChange=True)
-                if not keyframes or len(keyframes) < 3:
-                    continue
-
-                current_val = cmds.getAttr(full_attr)
-                if not isinstance(current_val, (int, float)):
-                    continue
-
-                # Find prev and next keyframe times
-                prev_time = None
-                next_time = None
-                for kf_time in keyframes:
-                    if kf_time < current_time - 0.001:
-                        prev_time = kf_time
-                    elif kf_time > current_time + 0.001:
-                        next_time = kf_time
-                        break
-
-                if prev_time is None or next_time is None:
-                    continue
-
-                prev_val = cmds.getAttr(full_attr, time=prev_time)
-                next_val = cmds.getAttr(full_attr, time=next_time)
-
-                if not isinstance(prev_val, (int, float)) or not isinstance(next_val, (int, float)):
-                    continue
-
-                time_range = next_time - prev_time
-                if time_range == 0:
-                    continue
-
-                t = (current_time - prev_time) / time_range
-                ease_in_t = t * t * t
-                ease_out_t = 1 - pow(1 - t, 3)
-
-                self.be_original_values.append({
-                    'attr': full_attr,
-                    'original': current_val,
-                    'ease_in': prev_val + (next_val - prev_val) * ease_in_t,
-                    'ease_out': prev_val + (next_val - prev_val) * ease_out_t,
-                })
-
+        self.be_original_values = BlendEngine.cache_be()
         if not self.be_original_values:
             self.status_label.setText("Need 3+ keyframes for easing")
 
@@ -1590,14 +2485,13 @@ class VertexTweenerUI(QtWidgets.QDialog):
 
         if self.be_original_values:
             if final_val != 50:
-                self.on_be_changed(final_val)
+                BlendEngine.apply_be(final_val, self.be_original_values)
             # Always set keyframes to lock in the blend
             self._auto_key_current_position()
 
         if self.be_undo_chunk_open:
             cmds.undoInfo(closeChunk=True)
             self.be_undo_chunk_open = False
-        self._restore_maya_autokey()
         self.be_original_values = []
 
         # Show keyed position tick, then reset slider to center
@@ -1789,50 +2683,15 @@ class VertexTweenerUI(QtWidgets.QDialog):
                 "color: #CC8888; font-size: 10px; background: transparent; border: none;"
             )
 
-    def _suspend_maya_autokey(self):
-        """Temporarily disable Maya's native autoKeyframe during slider drag.
-
-        This prevents Maya from auto-keying on every setAttr call, which causes
-        the 'autoKeyframe; // Result: 1' spam and creates unwanted mid-drag keys.
-        """
-        try:
-            self._saved_autokey_state = cmds.autoKeyframe(q=True, state=True)
-            if self._saved_autokey_state:
-                cmds.autoKeyframe(state=False)
-        except RuntimeError:
-            self._saved_autokey_state = False
-
-    def _restore_maya_autokey(self):
-        """Restore Maya's autoKeyframe to its state before the drag started."""
-        try:
-            if self._saved_autokey_state:
-                cmds.autoKeyframe(state=True)
-        except RuntimeError:
-            pass
-
     def _auto_key_current_position(self):
         """Set keyframes on all selected objects at current time to lock in the tween.
 
         Keys any keyable attribute that already has animation curves,
-        supporting transforms, joints, and custom rig controls.
+        supporting transforms, joints, and custom rig controls. The user's
+        Maya autoKeyframe setting is intentionally NOT touched here — the
+        tool's keying is orthogonal to Maya's autoKey preference.
         """
-        selection = cmds.ls(selection=True)
-        if not selection:
-            return
-
-        current_time = cmds.currentTime(query=True)
-        for obj in selection:
-            keyable_attrs = cmds.listAttr(obj, keyable=True) or []
-            for attr in keyable_attrs:
-                full_attr = "{}.{}".format(obj, attr)
-                try:
-                    if cmds.getAttr(full_attr, lock=True):
-                        continue
-                    # Only key attributes that already have animation
-                    if cmds.keyframe(full_attr, query=True, keyframeCount=True):
-                        cmds.setKeyframe(full_attr, time=current_time)
-                except (RuntimeError, TypeError):
-                    continue
+        _auto_key_selection()
 
     def _populate_fraction_labels(self):
         for layout in (self.fraction_labels_top_layout, self.fraction_labels_bottom_layout):
@@ -1864,7 +2723,6 @@ class VertexTweenerUI(QtWidgets.QDialog):
 
     def set_slider_val(self, val):
         """Quick button handler - applies tween, keys, then resets to center."""
-        self._suspend_maya_autokey()
         cmds.undoInfo(openChunk=True)
 
         # One-shot full query-and-apply (no drag, so no need for cache)
@@ -1874,7 +2732,6 @@ class VertexTweenerUI(QtWidgets.QDialog):
         self._auto_key_current_position()
 
         cmds.undoInfo(closeChunk=True)
-        self._restore_maya_autokey()
 
         # Show keyed position tick, then reset slider to center
         self.slider.keyed_value = val
@@ -1922,11 +2779,32 @@ class VertexTweenerUI(QtWidgets.QDialog):
         else:
             self.slider.setRange(0, 100)
         self._update_tick_labels(checked)
+        # Propagate the new overshoot state to any open LT pop-out windows.
+        for popout in list(SliderPopOut._open_windows):
+            try:
+                if popout.slider_type == 'LT':
+                    popout.set_overshoot(checked)
+            except RuntimeError:
+                # Qt object was deleted out from under us
+                pass
         # World slider always stays 0-100 (no overshoot)
 
-    def on_trails_toggled(self, checked):
-        set_pref(PREF_MOTION_TRAILS, checked)
-        MotionTrailsManager.toggle_motion_trails(checked)
+    def _open_popout(self, slider_type):
+        """Spawn a compact, stand-alone window containing a single slider.
+
+        Pop-outs are parented to Maya's main window (not this dialog) so they
+        remain usable even after the main Inbetweener window is closed.
+        """
+        overshoot = self.overshoot_checkbox.isChecked() if slider_type == 'LT' else False
+        popout = SliderPopOut(slider_type, overshoot=overshoot, parent=None)
+        # Position the pop-out near the top-right of the main window so the
+        # two are easy to use side-by-side.
+        main_geom = self.geometry()
+        popout.move(main_geom.x() + main_geom.width() + 10, main_geom.y())
+        popout.show()
+        popout.raise_()
+        popout.activateWindow()
+        return popout
 
     def on_accordion_toggled(self, checked):
         self.accordion_container.setVisible(checked)
@@ -1990,8 +2868,6 @@ class VertexTweenerUI(QtWidgets.QDialog):
             self.be_tick_labels_layout.addWidget(lbl, 1 if i not in [0, len(ticks) - 1] else 0)
 
     def closeEvent(self, event):
-        MotionTrailsManager.delete_motion_trails()
-        self._restore_maya_autokey()
         if self.undo_chunk_open: cmds.undoInfo(closeChunk=True)
         if self.world_undo_chunk_open: cmds.undoInfo(closeChunk=True)
         if self.bn_undo_chunk_open: cmds.undoInfo(closeChunk=True)
@@ -2001,7 +2877,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
 
     def show_help_dialog(self):
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Inbetweener v2.1 - Help")
+        dialog.setWindowTitle("Inbetweener v2.2 - Help")
         dialog.setMinimumSize(520, 600)
         layout = QtWidgets.QVBoxLayout(dialog)
 
@@ -2023,85 +2899,95 @@ class VertexTweenerUI(QtWidgets.QDialog):
             <p>The <b>Inbetweener Tool</b> provides five slider modes for creating breakdowns
             and refining animation curves in Autodesk Maya. It works with <b>transforms, joints,
             NURBS curve controls</b>, and any object with keyable attributes.</p>
-            <p>Version 2.1.0 &mdash; Pipeline Tools</p>
+            <p>Version 2.2.0 &mdash; Pipeline Tools</p>
         </div>
 
         <h2>Local Tweener (LT)</h2>
         <div class="section">
-            <p>Blends the current pose between the <b>previous</b> and <b>next</b> keyframes
-            at the current time.</p>
+            <p>Classic tween machine: interpolates selected keys between their
+            <b>surrounding boundary keys</b> on the same curve.</p>
             <ul>
-                <li><span class="key">0%</span> = Previous keyframe pose</li>
-                <li><span class="key">50%</span> = Halfway between (linear interpolation)</li>
-                <li><span class="key">100%</span> = Next keyframe pose</li>
+                <li><span class="key">0%</span> = Previous boundary key value</li>
+                <li><span class="key">50%</span> = Halfway between boundaries (linear)</li>
+                <li><span class="key">100%</span> = Next boundary key value</li>
                 <li><span class="key">Overshoot</span>: -50% to 150% for exaggerated motion</li>
             </ul>
-            <p><b>Selection:</b> Select objects in the viewport, or select specific attributes
-            via Graph Editor keyframes. Works with transforms, joints, and custom rig controls.</p>
+            <p><b>Graph Editor mode:</b> Every selected key on a curve collapses toward
+            the same boundary values — the key just before and the key just after the
+            selection. At 50% the whole selected range collapses to the midpoint.</p>
+            <p><b>Viewport mode:</b> Operates at the current scene time on every animated
+            attribute of the selection.</p>
             <p><b>Quick Buttons:</b> 1/8, 1/4, 1/2, 3/4, 7/8 and 0, 1/3, 2/3, 1 for precise
             common breakdown positions.</p>
         </div>
 
         <h2>World Tweener (WT)</h2>
         <div class="section">
-            <p>Blends objects in <b>world space</b> using matrix interpolation with quaternion
-            slerp for rotation. No viewport flickering.</p>
+            <p>Like Local Tweener, but the interpolation is computed in <b>world space</b>
+            using matrix lerp + quaternion slerp, then decomposed back to local channels
+            so the keys land on a straight world-space path.</p>
             <ul>
                 <li>Range: <span class="key">0%</span> to <span class="key">100%</span> (no overshoot)</li>
-                <li>Ideal for maintaining world-space arcs on constrained or parented controls</li>
+                <li>Ideal for maintaining world-space arcs on parented / constrained controls</li>
                 <li>Works with transforms and joints</li>
             </ul>
-            <p><b>When to use:</b> When local-space tweening produces incorrect arcs due to
-            parent space changes between keys (e.g., IK/FK switching, space-matched controls).</p>
+            <p><b>Graph Editor mode:</b> Selected transform keys are rewritten between the
+            same object's selection boundary matrices — no timeline scrubbing.</p>
+            <p><b>When to use:</b> When local-space tweening produces incorrect arcs due
+            to parent space changes between keys (IK/FK switching, space-matched rigs).</p>
         </div>
 
         <h2>Blend to Neighbor (BN)</h2>
         <div class="section">
-            <p>Blends <b>selected Graph Editor keyframes</b> toward their neighboring keys.</p>
+            <p>The "spacing" slider: moves each selected key closer to or farther from
+            its own <b>immediate left / right neighbor</b> on the curve. This changes
+            how keys relate to their adjacent keys — it does not collapse the range.</p>
             <ul>
-                <li><span class="key">&lt; 50</span>: Blend toward <b>previous</b> neighbor key</li>
-                <li><span class="key">&gt; 50</span>: Blend toward <b>next</b> neighbor key</li>
+                <li><span class="key">&lt; 50</span>: Blend each key toward its <b>previous</b> neighbor</li>
+                <li><span class="key">&gt; 50</span>: Blend each key toward its <b>next</b> neighbor</li>
                 <li><span class="key">50</span>: No change (neutral)</li>
             </ul>
-            <p><b>Selection:</b> Select controls in the viewport, or select keys in the Graph Editor.</p>
-            <p><b>Use cases:</b> Smoothing motion, pulling timing toward holds, evening out spacing.</p>
+            <p><b>Use cases:</b> Tightening / loosening spacing, pulling timing toward
+            holds, evening out breakdowns without changing the overall pose.</p>
         </div>
 
         <h2>Blend to Default (BD)</h2>
         <div class="section">
-            <p>Blends selected controls from their <b>current values</b> toward the <b>rest pose</b>.</p>
+            <p>Blends each selected key toward the attribute's <b>rest pose</b> value.
+            Every selected key slides independently toward its own default.</p>
             <ul>
                 <li><span class="key">0</span>: Original values (no change)</li>
-                <li><span class="key">100</span>: Default/rest pose</li>
+                <li><span class="key">100</span>: Default / rest pose</li>
             </ul>
             <p><b>Scan Default Pose:</b> Select your rig controls (or root) while in the
             default pose, then click &ldquo;Scan Default Pose&rdquo; to store accurate rest
             values. Without scanning, BD falls back to 0 for translate/rotate and 1 for scale.</p>
-            <p><b>Selection:</b> Select controls in the viewport, or select keys in the Graph Editor.</p>
             <p><b>Use cases:</b> Zeroing out overshoot, resetting controls to neutral,
             reducing extreme poses.</p>
         </div>
 
         <h2>Blend to Ease (BE)</h2>
         <div class="section">
-            <p>Calculates <b>cubic eased positions</b> and blends selected controls toward them
-            for natural acceleration/deceleration.</p>
+            <p>Reshapes the <b>selected key range</b> into a cubic ease curve between the
+            selection boundary keys. Each selected key is remapped to its time-proportional
+            position along the eased curve, so the range gets a smooth acceleration or
+            deceleration shape rather than each key shifting uniformly.</p>
             <ul>
                 <li><span class="key">&gt; 50</span>: Ease-in (slow start, accelerate — t&sup3;)</li>
                 <li><span class="key">&lt; 50</span>: Ease-out (fast start, decelerate — 1-(1-t)&sup3;)</li>
                 <li><span class="key">50</span>: No change (neutral)</li>
             </ul>
-            <p><b>Selection:</b> Select controls in the viewport, or select keys in the Graph Editor.
-            Controls need keyframes on both sides of the current time.</p>
+            <p><b>Selection:</b> Best used with 2+ keys selected in the Graph Editor so
+            the slider has a range to reshape. Works on a single selected key too —
+            that key gets reshaped between its immediate boundaries.</p>
         </div>
 
         <h2>Options</h2>
         <div class="section">
             <ul>
                 <li><span class="key">Auto Keying</span>: All sliders automatically set keyframes
-                on release. A green diamond tick marks the keyed position on the slider.</li>
-                <li><span class="key">Motion Trails</span>: Displays motion trail arcs for selected
-                objects to visualize the animation path.</li>
+                on release. A green diamond tick marks the keyed position on the slider.
+                Maya's own Auto Key preference is left untouched — the tool never toggles it.</li>
                 <li><span class="key">Overshoot Mode</span>: Extends Local Tweener range to
                 -50% / 150% for exaggerated breakdown poses.</li>
                 <li><span class="key">Scan Default Pose</span>: Stores the current pose of selected

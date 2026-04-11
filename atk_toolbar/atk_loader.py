@@ -34,7 +34,7 @@ TOOL_REGISTRY = [
         "icon_file": "inbetweener.png",
         "icon_key":  "tween",
         "group":     "timing",
-        "version":   "2.1.0",
+        "version":   "2.0.2",
     },
     {
         "id":        "add_remove",

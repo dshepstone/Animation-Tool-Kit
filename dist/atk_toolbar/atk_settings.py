@@ -35,6 +35,8 @@ OPT_SHOW_TOOLTIPS    = "atk_toolbar_show_tooltips"    # int 0/1
 OPT_SHOW_SEPARATORS  = "atk_toolbar_show_separators"  # int 0/1
 OPT_ORIENTATION      = "atk_toolbar_orientation"      # str: "horizontal" | "vertical"
 OPT_ICON_ALIGNMENT   = "atk_toolbar_icon_alignment"   # str: "left" | "center" | "right"
+OPT_SHOW_INLINE_SLIDER = "atk_toolbar_show_inline_slider"  # int 0/1
+OPT_SHOW_FRAME_STEPPER = "atk_toolbar_show_frame_stepper"  # int 0/1
 
 ICON_SIZES = [("Small  (24 px)", 24), ("Medium  (32 px)", 32), ("Large  (48 px)", 48)]
 
@@ -355,7 +357,24 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         scroll.setWidget(inner_widget)
 
         self._tool_checks = {}
+        self._inline_widget_checks = {}
         current_group = None
+
+        widget_label = QtWidgets.QLabel("TOOLBAR WIDGETS")
+        widget_label.setObjectName("lbl_section")
+        inner_layout.addWidget(widget_label)
+
+        slider_cb = QtWidgets.QCheckBox("Inbetweener Slider")
+        slider_cb.setToolTip("Show/hide the inline Inbetweener slider widget on the toolbar.")
+        self._inline_widget_checks[OPT_SHOW_INLINE_SLIDER] = slider_cb
+        inner_layout.addWidget(slider_cb)
+
+        frame_cb = QtWidgets.QCheckBox("Insert/Remove Frame Stepper")
+        frame_cb.setToolTip("Show/hide the inline frame insert/remove control next to the slider.")
+        self._inline_widget_checks[OPT_SHOW_FRAME_STEPPER] = frame_cb
+        inner_layout.addWidget(frame_cb)
+
+        inner_layout.addSpacing(8)
 
         for tool in atk_loader.TOOL_REGISTRY:
             if tool["group"] != current_group:
@@ -456,6 +475,8 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         # Tool visibility
         for tool_id, cb in self._tool_checks.items():
             cb.setChecked(atk_loader.is_tool_visible(tool_id))
+        for pref_key, cb in self._inline_widget_checks.items():
+            cb.setChecked(bool(_get_pref_int(pref_key, 1)))
 
     def _apply(self):
         # Orientation
@@ -484,6 +505,8 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         # Tool visibility
         for tool_id, cb in self._tool_checks.items():
             atk_loader.set_tool_visible(tool_id, cb.isChecked())
+        for pref_key, cb in self._inline_widget_checks.items():
+            _set_pref_int(pref_key, int(cb.isChecked()))
 
         # Trigger toolbar rebuild
         if callable(self.rebuild_callback):
@@ -495,6 +518,8 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         _set_pref_int(OPT_ICON_SIZE, 32)
         _set_pref_int(OPT_SHOW_TOOLTIPS, 1)
         _set_pref_int(OPT_SHOW_SEPARATORS, 1)
+        _set_pref_int(OPT_SHOW_INLINE_SLIDER, 1)
+        _set_pref_int(OPT_SHOW_FRAME_STEPPER, 1)
         for tool in atk_loader.TOOL_REGISTRY:
             atk_loader.set_tool_visible(tool["id"], True)
         self._load_prefs()

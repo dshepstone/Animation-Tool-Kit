@@ -205,9 +205,13 @@ global proc atk__install()
     $pyCmd += "scripts_dir = cmds.internalVar(userScriptDir=True)\n";
     $pyCmd += "if scripts_dir not in sys.path:\n";
     $pyCmd += "    sys.path.insert(0, scripts_dir)\n";
-    $pyCmd += "import atk_toolbar\n";
-    $pyCmd += "importlib.reload(atk_toolbar)\n";
-    $pyCmd += "atk_toolbar.show()\n";
+    $pyCmd += "cmds.optionVar(sv=('atk_toolbar_orientation', 'horizontal'))\n";
+    $pyCmd += "for name in list(sys.modules):\n";
+    $pyCmd += "    if name == 'atk_toolbar' or name.startswith('atk_toolbar.'):\n";
+    $pyCmd += "        sys.modules.pop(name, None)\n";
+    $pyCmd += "import atk_toolbar.atk_toolbar as _atk\n";
+    $pyCmd += "importlib.reload(_atk)\n";
+    $pyCmd += "_atk.show()\n";
 
     // ---- Locate installer directory --------------------------------------------
     string $installDir = atk__getInstallerDir("atk__install");
@@ -275,7 +279,7 @@ global proc atk__install()
     // Single-file tools: copy the main .py to scriptsDir
     string $toolScripts[] = {
         "Temp_Pivot_Tool_1_0_5/temp_pivot_tool.py",
-        "inbetweener_2_0_1/vertex_tweener.py",
+        "inbetweener_2_0_2/vertex_tweener.py",
         "Add-Remove-Inbetweens_1_0_1/insert_remove_frames_tool.py",
         "noise_generator_1_0_0/noise_generator_1_0_0.py",
         "onion-skin-tool_2_1_0/onion_skin_2_1_0.py",
@@ -346,8 +350,8 @@ global proc atk__install()
     print "// Copying tool icons:\n";
     string $toolIcons[] = {
         "Temp_Pivot_Tool_1_0_5/temp-pivot.png",
-        "inbetweener_2_0_1/inbetweener.png",
-        "inbetweener_2_0_1/defaultPose.png",
+        "inbetweener_2_0_2/inbetweener.png",
+        "inbetweener_2_0_2/defaultPose.png",
         "Add-Remove-Inbetweens_1_0_1/add-remove.png",
         "noise_generator_1_0_0/noise_generator_icon.png",
         "onion-skin-tool_2_1_0/onionSkinIcon.png",
@@ -366,6 +370,7 @@ global proc atk__install()
             atk__copyFile($fullSrc, $iconsDir);
     }
 
+<<<<<<< HEAD
     // User Directory Check icon: prefer the tool install folder, then fallback
     string $udcIconSrc = $toolsBase + "User-Directory-Check/user_directory_check_icon.png";
     if (!atk__fileExists($udcIconSrc))
@@ -375,6 +380,14 @@ global proc atk__install()
         atk__copyFile($udcIconSrc, $iconsDir);
     else
         warning("ATK Installer: User Directory Check icon not found (skipped).");
+=======
+    // User Directory Check icon is distributed in the repo-level icon folder
+    string $udcIconSrc = $installDir + "icon/user_directory_check_icon.png";
+    if (atk__fileExists($udcIconSrc))
+        atk__copyFile($udcIconSrc, $iconsDir);
+    else
+        warning("ATK Installer: User Directory Check icon not found (skipped): " + $udcIconSrc);
+>>>>>>> 37d036210937dde2afc308206341d6eab62c7321
 
     // Studio Library icon needs renaming from icon.png to studioLibrary.png
     string $slIconSrc = $toolsBase + "studiolibrary-2.21.1/src/studiolibrary/resource/icons/icon.png";
@@ -414,12 +427,17 @@ global proc atk__install()
     // ---- 7. Launch the toolbar immediately -------------------------------------
     print "// Launching toolbar...\n";
     string $launchPy = "";
-    $launchPy += "import sys, maya.cmds as cmds\n";
+    $launchPy += "import sys, importlib, maya.cmds as cmds\n";
     $launchPy += "scripts_dir = cmds.internalVar(userScriptDir=True)\n";
     $launchPy += "if scripts_dir not in sys.path:\n";
     $launchPy += "    sys.path.insert(0, scripts_dir)\n";
-    $launchPy += "import atk_toolbar\n";
-    $launchPy += "atk_toolbar.show()\n";
+    $launchPy += "cmds.optionVar(sv=('atk_toolbar_orientation', 'horizontal'))\n";
+    $launchPy += "for name in list(sys.modules):\n";
+    $launchPy += "    if name == 'atk_toolbar' or name.startswith('atk_toolbar.'):\n";
+    $launchPy += "        sys.modules.pop(name, None)\n";
+    $launchPy += "import atk_toolbar.atk_toolbar as _atk\n";
+    $launchPy += "importlib.reload(_atk)\n";
+    $launchPy += "_atk.show()\n";
     python($launchPy);
 
     // ---- Done -----------------------------------------------------------------
