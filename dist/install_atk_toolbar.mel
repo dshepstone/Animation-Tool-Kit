@@ -275,7 +275,7 @@ global proc atk__install()
     // Single-file tools: copy the main .py to scriptsDir
     string $toolScripts[] = {
         "Temp_Pivot_Tool_1_0_5/temp_pivot_tool.py",
-        "inbetweener_2_0_1/vertex_tweener.py",
+        "inbetweener_2_0_2/vertex_tweener.py",
         "Add-Remove-Inbetweens_1_0_1/insert_remove_frames_tool.py",
         "noise_generator_1_0_0/noise_generator_1_0_0.py",
         "onion-skin-tool_2_1_0/onion_skin_2_1_0.py",

@@ -25,6 +25,7 @@ Right-click context menu per button
 
 import os
 import sys
+import importlib
 
 import maya.cmds as cmds
 import maya.mel as mel
@@ -54,6 +55,9 @@ _OPT_SHOW_TOOLTIPS   = atk_settings.OPT_SHOW_TOOLTIPS
 _OPT_SHOW_SEPARATORS = atk_settings.OPT_SHOW_SEPARATORS
 _OPT_ORIENTATION     = atk_settings.OPT_ORIENTATION
 _OPT_ICON_ALIGNMENT  = atk_settings.OPT_ICON_ALIGNMENT
+
+_INB_TOOLBAR_SLIDER_WIDTH = 290
+_INB_TOOLBAR_SLIDER_HEIGHT = 52
 
 _BTN_STYLE_NORMAL = (
     "QToolButton {"
@@ -147,8 +151,10 @@ def _calc_content_height():
 
     n_buttons, n_seps = _count_layout_items()
     n_items  = n_buttons + n_seps
-    # sum of item heights + spacing between consecutive items + outer margins
-    return (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+    total = (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+    if atk_loader.is_tool_installed("inbetweener"):
+        total += (_INB_TOOLBAR_SLIDER_HEIGHT + spacing)
+    return total
 
 
 def _calc_content_width():
@@ -160,7 +166,10 @@ def _calc_content_width():
 
     n_buttons, n_seps = _count_layout_items()
     n_items  = n_buttons + n_seps
-    return (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+    total = (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+    if atk_loader.is_tool_installed("inbetweener"):
+        total += (_INB_TOOLBAR_SLIDER_WIDTH + spacing)
+    return total
 
 
 def _get_chrome_height():
@@ -411,6 +420,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
             # Settings gear always at the top
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
+            self._add_inbetweener_slider(layout, orientation)
             if show_sep:
                 self._add_sep(layout, orientation)
 
@@ -438,6 +448,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
             # Settings gear always anchored to the far left
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
+            self._add_inbetweener_slider(layout, orientation)
             if show_sep:
                 self._add_sep(layout, orientation)
 
@@ -487,6 +498,12 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         )
         layout.addWidget(btn)
 
+    def _add_inbetweener_slider(self, layout, orientation):
+        if not atk_loader.is_tool_installed("inbetweener"):
+            return
+        slider = _InbetweenerToolbarSlider(parent=self, orientation=orientation)
+        layout.addWidget(slider)
+
     def _make_tool_btn(self, tool, icon_sz, show_tips):
         btn = QtWidgets.QToolButton()
         btn.setFixedSize(icon_sz + 8, icon_sz + 8)
@@ -519,6 +536,134 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             lambda pos, t=tool, b=btn, inst=installed: self._tool_context_menu(t, b, pos, inst)
         )
         return btn
+
+
+class _InbetweenerToolbarSlider(QtWidgets.QFrame):
+    SLIDER_TYPES = ("LT", "WT", "BN", "BD", "BE")
+
+    def __init__(self, parent=None, orientation="horizontal"):
+        super(_InbetweenerToolbarSlider, self).__init__(parent)
+        self._orientation = orientation
+        self._vt = None
+        self._config = {}
+        self._neutral = 50
+        self._cache = []
+        self._undo_open = False
+        self._build_failed = False
+        self._load_inbetweener()
+        self._build_ui()
+
+    def _load_inbetweener(self):
+        try:
+            self._vt = importlib.import_module("vertex_tweener")
+            self._config = dict(self._vt.SliderPopOut.CONFIGS)
+        except Exception:
+            self._build_failed = True
+
+    def _build_ui(self):
+        self.setObjectName("ATKInbetweenerSlider")
+        self.setStyleSheet("#ATKInbetweenerSlider { background: transparent; border: none; }")
+        main = QtWidgets.QHBoxLayout(self)
+        main.setContentsMargins(4, 0, 4, 0)
+        main.setSpacing(4)
+
+        if self._build_failed:
+            unavailable = QtWidgets.QLabel("Inbetweener slider unavailable")
+            unavailable.setStyleSheet("color:#999; font-size:10px;")
+            main.addWidget(unavailable)
+            return
+
+        self.slider_type_combo = QtWidgets.QComboBox()
+        for key in self.SLIDER_TYPES:
+            self.slider_type_combo.addItem(key)
+        self.slider_type_combo.setToolTip("Choose Inbetweener slider mode")
+        self.slider_type_combo.setFixedWidth(54)
+        main.addWidget(self.slider_type_combo)
+
+        self.slider = self._vt.VertexTickedSlider(QtCore.Qt.Horizontal, label_text="LT")
+        self.slider.setTracking(True)
+        self.slider.setMinimumHeight(40)
+        self.slider.setRange(0, 100)
+        self.slider.setValue(50)
+        if self._orientation == "vertical":
+            self.setFixedWidth(_INB_TOOLBAR_SLIDER_WIDTH)
+        else:
+            self.setFixedWidth(_INB_TOOLBAR_SLIDER_WIDTH)
+        self.setFixedHeight(_INB_TOOLBAR_SLIDER_HEIGHT)
+        main.addWidget(self.slider, 1)
+
+        self.slider_type_combo.currentTextChanged.connect(self._on_type_changed)
+        self.slider.sliderPressed.connect(self._on_pressed)
+        self.slider.valueChanged.connect(self._on_changed)
+        self.slider.sliderReleased.connect(self._on_released)
+        self._on_type_changed("LT")
+
+    def _on_type_changed(self, key):
+        if key not in self._config:
+            return
+        cfg = self._config[key]
+        self._neutral = cfg["neutral"]
+        self.slider.is_tw = cfg["is_tw"]
+        self.slider.is_world = cfg["is_world"]
+        self.slider.label_text = cfg["label"]
+        overshoot = bool(getattr(self._vt, "_load_bool_pref")(self._vt.PREF_OVERSHOOT_MODE, False))
+        if key == "LT" and overshoot:
+            self.slider.setRange(-50, 150)
+        else:
+            self.slider.setRange(0, 100)
+        self.slider.setValue(self._neutral)
+        self.slider.keyed_value = None
+        self.slider.update()
+
+    def _on_pressed(self):
+        key = self.slider_type_combo.currentText()
+        self._cache = []
+        self.slider.keyed_value = None
+        self.slider.update()
+        self._undo_open = True
+        cmds.undoInfo(openChunk=True, chunkName="ATK_InbetweenerToolbarSlider_{}".format(key))
+
+        if key == "LT":
+            self._vt.TweenEngine.cache_selection()
+        elif key == "WT":
+            self._vt.WorldTweenEngine.cache_selected_keys()
+        elif key == "BN":
+            self._cache = self._vt.BlendEngine.cache_bn()
+        elif key == "BD":
+            self._cache = self._vt.BlendEngine.cache_bd()
+        elif key == "BE":
+            self._cache = self._vt.BlendEngine.cache_be()
+
+    def _on_changed(self, value):
+        key = self.slider_type_combo.currentText()
+        if key == "LT":
+            if self._vt.TweenEngine._cached_attrs:
+                self._vt.TweenEngine.apply_cached_tween(value)
+        elif key == "WT":
+            if self._vt.WorldTweenEngine._key_cache:
+                self._vt.WorldTweenEngine.apply_cached_world_tween(value)
+            else:
+                self._vt.WorldTweenEngine.apply_world_tween(value)
+        elif key == "BN":
+            if value != 50:
+                self._vt.BlendEngine.apply_bn(value, self._cache)
+        elif key == "BD":
+            self._vt.BlendEngine.apply_bd(value, self._cache)
+        elif key == "BE":
+            if value != 50:
+                self._vt.BlendEngine.apply_be(value, self._cache)
+
+    def _on_released(self):
+        try:
+            if bool(getattr(self._vt, "_load_bool_pref")(self._vt.PREF_AUTO_KEY, True)):
+                self._vt._auto_key_selection()
+        finally:
+            if self._undo_open:
+                cmds.undoInfo(closeChunk=True)
+                self._undo_open = False
+            self.slider.keyed_value = self.slider.value()
+            self.slider.setValue(self._neutral)
+            self.slider.update()
 
     @staticmethod
     def _make_sep_widget(orientation):
