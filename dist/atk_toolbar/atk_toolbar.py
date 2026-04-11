@@ -468,10 +468,22 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 tool_widgets.append(btn)
                 prev_group = tool["group"]
 
-            # Keep tool cluster right-aligned so slider sits immediately left of TW.
-            layout.addStretch()
-            for w in tool_widgets:
-                layout.addWidget(w)
+            # Respect workspace alignment preference while keeping the slider
+            # adjacent to the TW tool cluster.
+            alignment = _get_alignment()
+            if alignment == "center":
+                layout.addStretch()
+                for w in tool_widgets:
+                    layout.addWidget(w)
+                layout.addStretch()
+            elif alignment == "right":
+                layout.addStretch()
+                for w in tool_widgets:
+                    layout.addWidget(w)
+            else:  # left
+                for w in tool_widgets:
+                    layout.addWidget(w)
+                layout.addStretch()
 
     def _add_settings_btn(self, layout, icon_sz, show_tips, orientation):
         btn = QtWidgets.QToolButton()
@@ -923,6 +935,22 @@ def show():
     except TypeError:
         # Maya version does not support floatingChangeCommand — create without it
         cmds.workspaceControl(WORKSPACE_NAME, **dock_kw)
+
+    # Prefer docking just above the time slider inside Maya's main UI.
+    try:
+        play_back_slider = mel.eval("$tmp=$gPlayBackSlider")
+        if play_back_slider and cmds.control(play_back_slider, exists=True):
+            parent_layout = cmds.control(play_back_slider, q=True, parent=True)
+            if parent_layout and cmds.control(parent_layout, exists=True):
+                cmds.workspaceControl(
+                    WORKSPACE_NAME,
+                    e=True,
+                    floating=False,
+                    dockToControl=[parent_layout, "top"],
+                )
+    except Exception:
+        # Fall back to normal bottom docking if time-slider docking fails.
+        pass
 
     cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=True)
     _rebuild_ui()
