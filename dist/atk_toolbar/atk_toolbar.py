@@ -457,6 +457,8 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             if atk_loader.is_tool_installed("inbetweener"):
                 # Keep the inline slider directly beside the TW button cluster.
                 tool_widgets.append(_InbetweenerToolbarSlider(parent=self, orientation=orientation))
+                # Visual divider between the inline slider and the TW tool button.
+                tool_widgets.append(self._make_sep_widget(orientation))
             prev_group = None
             for tool in atk_loader.TOOL_REGISTRY:
                 if not atk_loader.is_tool_visible(tool["id"]):
