@@ -205,9 +205,12 @@ global proc atk__install()
     $pyCmd += "scripts_dir = cmds.internalVar(userScriptDir=True)\n";
     $pyCmd += "if scripts_dir not in sys.path:\n";
     $pyCmd += "    sys.path.insert(0, scripts_dir)\n";
-    $pyCmd += "import atk_toolbar\n";
-    $pyCmd += "importlib.reload(atk_toolbar)\n";
-    $pyCmd += "atk_toolbar.show()\n";
+    $pyCmd += "for name in list(sys.modules):\n";
+    $pyCmd += "    if name == 'atk_toolbar' or name.startswith('atk_toolbar.'):\n";
+    $pyCmd += "        sys.modules.pop(name, None)\n";
+    $pyCmd += "import atk_toolbar.atk_toolbar as _atk\n";
+    $pyCmd += "importlib.reload(_atk)\n";
+    $pyCmd += "_atk.show()\n";
 
     // ---- Locate installer directory --------------------------------------------
     string $installDir = atk__getInstallerDir("atk__install");
@@ -414,12 +417,16 @@ global proc atk__install()
     // ---- 7. Launch the toolbar immediately -------------------------------------
     print "// Launching toolbar...\n";
     string $launchPy = "";
-    $launchPy += "import sys, maya.cmds as cmds\n";
+    $launchPy += "import sys, importlib, maya.cmds as cmds\n";
     $launchPy += "scripts_dir = cmds.internalVar(userScriptDir=True)\n";
     $launchPy += "if scripts_dir not in sys.path:\n";
     $launchPy += "    sys.path.insert(0, scripts_dir)\n";
-    $launchPy += "import atk_toolbar\n";
-    $launchPy += "atk_toolbar.show()\n";
+    $launchPy += "for name in list(sys.modules):\n";
+    $launchPy += "    if name == 'atk_toolbar' or name.startswith('atk_toolbar.'):\n";
+    $launchPy += "        sys.modules.pop(name, None)\n";
+    $launchPy += "import atk_toolbar.atk_toolbar as _atk\n";
+    $launchPy += "importlib.reload(_atk)\n";
+    $launchPy += "_atk.show()\n";
     python($launchPy);
 
     // ---- Done -----------------------------------------------------------------
