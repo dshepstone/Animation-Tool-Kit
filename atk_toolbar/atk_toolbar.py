@@ -717,7 +717,8 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
         self.slider.is_tw = cfg["is_tw"]
         self.slider.is_world = cfg["is_world"]
         self.slider.label_text = cfg["label"]
-        overshoot = bool(getattr(self._vt, "_load_bool_pref")(self._vt.PREF_OVERSHOOT_MODE, False))
+        overshoot_key = getattr(self._vt, "PREF_OVERSHOOT_MODE", "vertexTweener_overshootMode")
+        overshoot = self._pref_bool(overshoot_key, False)
         if key == "LT" and overshoot:
             self.slider.setRange(-50, 150)
         else:
@@ -766,7 +767,8 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
 
     def _on_released(self):
         try:
-            if bool(getattr(self._vt, "_load_bool_pref")(self._vt.PREF_AUTO_KEY, True)):
+            auto_key_name = getattr(self._vt, "PREF_AUTO_KEY", "vertexTweener_autoKey")
+            if self._pref_bool(auto_key_name, True):
                 self._vt._auto_key_selection()
         finally:
             if self._undo_open:
@@ -775,6 +777,20 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
             self.slider.keyed_value = self.slider.value()
             self.slider.setValue(self._neutral)
             self.slider.update()
+
+    def _pref_bool(self, pref_name, default):
+        loader = getattr(self._vt, "_load_bool_pref", None)
+        if callable(loader):
+            try:
+                return bool(loader(pref_name, default))
+            except Exception:
+                pass
+        try:
+            if cmds.optionVar(exists=pref_name):
+                return bool(cmds.optionVar(q=pref_name))
+        except Exception:
+            pass
+        return bool(default)
 
 
 # ---------------------------------------------------------------------------
