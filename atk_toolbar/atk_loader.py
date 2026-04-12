@@ -70,6 +70,17 @@ TOOL_REGISTRY = [
         "version":   "2.0.0",
     },
     {
+        "id":        "micro_manipulator",
+        "label":     "Micro Manipulator",
+        "tooltip":   "Precision transform controls with micro speed scrubbing",
+        "module":    "Micro_Manipulator_v1_0_0",
+        "launch_fn": "show",
+        "icon_file": "Micro_Manipulator_Icon.png",
+        "icon_key":  "xform",
+        "group":     "viewport",
+        "version":   "1.0.0",
+    },
+    {
         "id":        "temp_pivot",
         "label":     "Temp Pivot",
         "tooltip":   "Create temporary non-destructive rotation pivots for animation",

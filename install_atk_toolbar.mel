@@ -279,6 +279,7 @@ global proc atk__install()
     // Single-file tools: copy the main .py to scriptsDir
     string $toolScripts[] = {
         "Temp_Pivot_Tool_1_0_5/temp_pivot_tool.py",
+        "micro_manipulator_v1_0_0/Micro_Manipulator_v1_0_0.py",
         "inbetweener_2_0_2/vertex_tweener.py",
         "Add-Remove-Inbetweens_1_0_1/insert_remove_frames_tool.py",
         "noise_generator_1_0_0/noise_generator_1_0_0.py",
@@ -350,6 +351,7 @@ global proc atk__install()
     print "// Copying tool icons:\n";
     string $toolIcons[] = {
         "Temp_Pivot_Tool_1_0_5/temp-pivot.png",
+        "micro_manipulator_v1_0_0/Micro_Manipulator_Icon.png",
         "inbetweener_2_0_2/inbetweener.png",
         "inbetweener_2_0_2/defaultPose.png",
         "Add-Remove-Inbetweens_1_0_1/add-remove.png",
@@ -370,7 +372,6 @@ global proc atk__install()
             atk__copyFile($fullSrc, $iconsDir);
     }
 
-<<<<<<< HEAD
     // User Directory Check icon: prefer the tool install folder, then fallback
     string $udcIconSrc = $toolsBase + "User-Directory-Check/user_directory_check_icon.png";
     if (!atk__fileExists($udcIconSrc))
@@ -380,14 +381,6 @@ global proc atk__install()
         atk__copyFile($udcIconSrc, $iconsDir);
     else
         warning("ATK Installer: User Directory Check icon not found (skipped).");
-=======
-    // User Directory Check icon is distributed in the repo-level icon folder
-    string $udcIconSrc = $installDir + "icon/user_directory_check_icon.png";
-    if (atk__fileExists($udcIconSrc))
-        atk__copyFile($udcIconSrc, $iconsDir);
-    else
-        warning("ATK Installer: User Directory Check icon not found (skipped): " + $udcIconSrc);
->>>>>>> 37d036210937dde2afc308206341d6eab62c7321
 
     // Studio Library icon needs renaming from icon.png to studioLibrary.png
     string $slIconSrc = $toolsBase + "studiolibrary-2.21.1/src/studiolibrary/resource/icons/icon.png";
