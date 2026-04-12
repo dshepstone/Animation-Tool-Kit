@@ -1,0 +1,142 @@
+// ============================================================================
+// Micro Manipulator Tool - Drag & Drop Installer
+// Drop this .mel file into Maya to install/update the tool and shelf button.
+// ============================================================================
+
+global proc string microManipulator_resolveInstallerPath(string $procName)
+{
+    string $info = `whatIs $procName`;
+    $info = `substituteAllString $info "\\" "/"`;
+
+    // Common format: "Mel procedure found in: C:/path/install.mel"
+    if (`gmatch $info "*found in:*"`)
+    {
+        string $path = `substituteAllString $info "Mel procedure found in: " ""`;
+        $path = `substituteAllString $path "Script found in: " ""`;
+        $path = `strip $path`;
+        return $path;
+    }
+
+    // Fallback format used in some versions: "... in file C:/path/install.mel"
+    if (`gmatch $info "* in file *"`)
+    {
+        string $path = `substituteAllString $info "Mel procedure found in file " ""`;
+        $path = `substituteAllString $path "Script found in file " ""`;
+        return `strip $path`;
+    }
+
+    return "";
+}
+
+global proc int microManipulator_copyFile(string $source, string $target)
+{
+    if (!`filetest -f $source`)
+    {
+        warning ("[MicroManipulator] Missing source file: " + $source);
+        return 0;
+    }
+
+    if (`filetest -f $target`)
+    {
+        sysFile -delete $target;
+    }
+
+    return `sysFile -copy $target $source`;
+}
+
+global proc microManipulator_installTool()
+{
+    string $scriptName = "Micro_Manipulator_v01_0_0.py";
+    string $iconName   = "Micro_Manipulator_Icon.png";
+
+    string $installerPath = `microManipulator_resolveInstallerPath "microManipulator_installTool"`;
+    if ($installerPath == "")
+    {
+        warning "[MicroManipulator] Could not resolve installer path from whatIs.";
+        return;
+    }
+
+    string $sourceDir = `dirname $installerPath`;
+    $sourceDir = `substituteAllString $sourceDir "\\" "/"`;
+
+    string $sourceScript = ($sourceDir + "/" + $scriptName);
+    string $sourceIcon   = ($sourceDir + "/" + $iconName);
+
+    string $userScriptsDir = `internalVar -userScriptDir`;
+    string $userIconsDir   = `internalVar -userBitmapsDir`;
+
+    $userScriptsDir = `substituteAllString $userScriptsDir "\\" "/"`;
+    $userIconsDir   = `substituteAllString $userIconsDir "\\" "/"`;
+
+    string $targetScript = ($userScriptsDir + $scriptName);
+    string $targetIcon   = ($userIconsDir + $iconName);
+
+    if (!`microManipulator_copyFile $sourceScript $targetScript`)
+    {
+        warning "[MicroManipulator] Script install failed.";
+        return;
+    }
+
+    if (!`microManipulator_copyFile $sourceIcon $targetIcon`)
+    {
+        warning "[MicroManipulator] Icon install failed.";
+        return;
+    }
+
+    global string $gShelfTopLevel;
+    string $currentShelf = `shelfTabLayout -q -selectTab $gShelfTopLevel`;
+    if ($currentShelf == "")
+    {
+        warning "[MicroManipulator] Could not find an active shelf tab.";
+        return;
+    }
+
+    // Remove previous MicroManipulator button(s) on this shelf to avoid duplicates.
+    string $children[] = `shelfLayout -q -ca $currentShelf`;
+    for ($child in $children)
+    {
+        if (!`control -exists $child`)
+        {
+            continue;
+        }
+
+        if (`objectType $child` != "shelfButton")
+        {
+            continue;
+        }
+
+        string $ann = `shelfButton -q -annotation $child`;
+        string $label = `shelfButton -q -label $child`;
+
+        if ($ann == "Micro Manipulator Tool" || $label == "MicroManipulator")
+        {
+            deleteUI $child;
+        }
+    }
+
+    string $pythonCommand =
+        "import importlib\n"
+        + "import Micro_Manipulator_v01_0_0 as micro_manipulator\n"
+        + "importlib.reload(micro_manipulator)\n"
+        + "micro_manipulator.show()";
+
+    shelfButton
+        -parent $currentShelf
+        -annotation "Micro Manipulator Tool"
+        -label "MicroManipulator"
+        -image $iconName
+        -image1 $iconName
+        -style "iconOnly"
+        -command $pythonCommand
+        -sourceType "python";
+
+    // Persist shelf edits immediately.
+    saveShelf($currentShelf, (`internalVar -userShelfDir` + "shelf_" + $currentShelf + ".mel"));
+
+    print ("[MicroManipulator] Installed script: " + $targetScript + "\n");
+    print ("[MicroManipulator] Installed icon: " + $targetIcon + "\n");
+    print ("[MicroManipulator] Shelf button added to: " + $currentShelf + "\n");
+}
+
+// Run immediately when this .mel file is dragged and dropped.
+microManipulator_installTool();
