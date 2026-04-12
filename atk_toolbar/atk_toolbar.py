@@ -47,7 +47,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.0.0"
+VERSION        = "1.0.1"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
