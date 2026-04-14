@@ -48,6 +48,17 @@ TOOL_REGISTRY = [
         "version":   "1.0.1",
     },
     {
+        "id":        "tween_machine",
+        "label":     "TweenMachine",
+        "tooltip":   "Create in-between poses on selected keys and controls",
+        "module":    "tweenMachine",
+        "launch_fn": "start",
+        "icon_file": "tm3-ShelfIcon.png",
+        "icon_key":  "tween",
+        "group":     "timing",
+        "version":   "3.x",
+    },
+    {
         "id":        "noise",
         "label":     "Noise Generator",
         "tooltip":   "Add noise, easing and scaling effects to animation curves",
