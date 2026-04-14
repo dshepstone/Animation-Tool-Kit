@@ -20,14 +20,6 @@ Keep these items side-by-side in the same folder before sending to users:
 - `atk_toolbar/`
 - `animation tool kit scripts/`
 
-For **User Directory Check**, the installer first looks for:
-
-- `animation tool kit scripts/User-Directory-Check/user_directory_check_icon.png`
-
-If that file is missing, it falls back to:
-
-- `icon/user_directory_check_icon.png`
-
 ## Installation steps (for artists)
 
 1. Open Maya.
@@ -39,7 +31,6 @@ If that file is missing, it falls back to:
 
 - The installer copies files into Maya user preference/script locations (per-user install).
 - If a tool file or icon is missing, Maya will show a warning and continue installing the rest.
-
 
 ## Toolbar script tools
 
@@ -58,20 +49,22 @@ The ATK toolbar currently registers the following script tools (in toolbar order
 11. Wire Shape Tool
 12. Reset Tool
 13. Selection Set
-14. Diget Mirror
-15. SavePlus
+14. Diget Mirror +
+15. SavePlus 
 16. Studio Library
 17. User Directory Check
 
 ## Open-source script license details
 
 ### Studio Library
+
 - Repository: https://github.com/krathjen/studiolibrary
 - Bundled version in ATK: `studiolibrary-2.21.1`
 - License in this repository: **GNU Lesser General Public License v3.0 (LGPL-3.0)**
 - Primary credited author/copyright holder in bundled source: **Kurt Rathjen**
 
 ### tweenMachine
+
 - Repository: https://github.com/The-Maize/tweenMachine/tree/master
 - Bundled location in ATK: `animation tool kit scripts/tweenMachine/`
 - License in this repository: **MIT License**
@@ -80,10 +73,11 @@ The ATK toolbar currently registers the following script tools (in toolbar order
 ## Contributors (tools and scripts)
 
 ### ATK repository contributors
+
 - David Shepstone
-- Claude (Anthropic)
 
 ### Third-party script contributors included with ATK
+
 - Kurt Rathjen (Studio Library)
 - Justin S Barrett (tweenMachine)
 - Wade Schneider (tweenMachine updates)
