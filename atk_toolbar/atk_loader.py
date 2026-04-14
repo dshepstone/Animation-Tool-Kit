@@ -70,6 +70,17 @@ TOOL_REGISTRY = [
         "version":   "2.0.0",
     },
     {
+        "id":        "bookmarks",
+        "label":     "Bookmarks",
+        "tooltip":   "Create and navigate time bookmarks on the Maya timeline",
+        "module":    "time_bookmarks.main",
+        "launch_fn": "launch",
+        "icon_file": "Bookmark.png",
+        "icon_key":  "bookmark",
+        "group":     "timing",
+        "version":   "0.1.0",
+    },
+    {
         "id":        "micro_manipulator",
         "label":     "Micro Manipulator",
         "tooltip":   "Precision transform controls with micro speed scrubbing",
