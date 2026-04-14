@@ -150,10 +150,11 @@ def _draw_symbol(painter, icon_key, accent, size):
         "wire":    _draw_wire,
         "reset":   _draw_reset,
         "mirror":  _draw_mirror,
-        "save":    _draw_save,
-        "library": _draw_library,
+        "save":     _draw_save,
+        "library":  _draw_library,
         "user_dir": _draw_user_dir,
-        "warning": _draw_warning,
+        "bookmark": _draw_bookmark,
+        "warning":  _draw_warning,
     }
 
     fn = dispatch.get(icon_key, _draw_generic)
@@ -577,6 +578,34 @@ def _draw_warning(painter, accent, s, m):
     painter.setPen(QtCore.Qt.NoPen)
     dot_r = s * 0.06
     painter.drawEllipse(QtCore.QPointF(mid_x, base_y - s * 0.10), dot_r, dot_r)
+
+
+def _draw_bookmark(painter, accent, s, m):
+    """Bookmark ribbon — classic pointed-bottom ribbon shape."""
+    bw = s * 0.34    # half-width of ribbon
+    top = m
+    bottom = s - m
+    notch = s * 0.22  # depth of the V-notch at the bottom
+
+    cx = s / 2.0
+    path = QtGui.QPainterPath()
+    path.moveTo(cx - bw, top)
+    path.lineTo(cx + bw, top)
+    path.lineTo(cx + bw, bottom - notch)
+    path.lineTo(cx, bottom)
+    path.lineTo(cx - bw, bottom - notch)
+    path.closeSubpath()
+
+    painter.setPen(_pen(accent, s * 0.055))
+    painter.setBrush(QtGui.QBrush(accent.darker(210)))
+    painter.drawPath(path)
+
+    # Small horizontal line accent near the top
+    painter.setPen(_pen(accent.lighter(130), s * 0.04))
+    painter.drawLine(
+        QtCore.QPointF(cx - bw * 0.55, top + s * 0.20),
+        QtCore.QPointF(cx + bw * 0.55, top + s * 0.20),
+    )
 
 
 def _draw_generic(painter, accent, s, m):

@@ -279,6 +279,7 @@ global proc atk__install()
     // Single-file tools: copy the main .py to scriptsDir
     string $toolScripts[] = {
         "Temp_Pivot_Tool_1_0_5/temp_pivot_tool.py",
+        "micro_manipulator_v1_0_0/Micro_Manipulator_v1_0_0.py",
         "inbetweener_2_0_2/vertex_tweener.py",
         "Add-Remove-Inbetweens_1_0_1/insert_remove_frames_tool.py",
         "noise_generator_1_0_0/noise_generator_1_0_0.py",
@@ -346,10 +347,29 @@ global proc atk__install()
             warning("ATK Installer: Studio Library package not found (skipped): " + $pkgSrc);
     }
 
+    // Bookmarks (time_bookmarks) is a package — copy from Bookmarks/src/time_bookmarks
+    string $bookmarksSrc = $toolsBase + "Bookmarks/src/time_bookmarks";
+    if (`filetest -d $bookmarksSrc`)
+    {
+        string $bookmarksDst = $scriptsDir + "time_bookmarks/";
+        string $copyBmPy = "";
+        $copyBmPy += "import os, shutil\n";
+        $copyBmPy += "src = r\"" + $bookmarksSrc + "\"\n";
+        $copyBmPy += "dst = r\"" + $bookmarksDst + "\"\n";
+        $copyBmPy += "if os.path.exists(dst):\n";
+        $copyBmPy += "    shutil.rmtree(dst)\n";
+        $copyBmPy += "shutil.copytree(src, dst)\n";
+        $copyBmPy += "print('  Copied package: time_bookmarks')\n";
+        python($copyBmPy);
+    }
+    else
+        warning("ATK Installer: Bookmarks package not found (skipped): " + $bookmarksSrc);
+
     // ---- 4. Copy tool icons → userBitmapsDir ----------------------------------
     print "// Copying tool icons:\n";
     string $toolIcons[] = {
         "Temp_Pivot_Tool_1_0_5/temp-pivot.png",
+        "micro_manipulator_v1_0_0/Micro_Manipulator_Icon.png",
         "inbetweener_2_0_2/inbetweener.png",
         "inbetweener_2_0_2/defaultPose.png",
         "Add-Remove-Inbetweens_1_0_1/add-remove.png",
@@ -361,7 +381,8 @@ global proc atk__install()
         "AnimSnap_1_0_0/animSnap.png",
         "xform_copy_past_2_0_0/xform_copy_paste.png",
         "selection_set_2_0_4/selectionSet.png",
-        "diget_mirror_2_5_5/mirror.png"
+        "diget_mirror_2_5_5/mirror.png",
+        "Bookmarks/icons/Bookmark.png"
     };
     for ($relPath in $toolIcons)
     {
