@@ -1,0 +1,15 @@
+/*
+Drag and drop installer for Maya 2022+
+
+Drop this file onto the Maya viewport to install Maya Time Bookmarks.
+All installation logic lives in install.py alongside this file.
+*/
+
+global proc timeBookmarksInstall() {
+    string $whatIs  = `whatIs timeBookmarksInstall`;
+    string $melPath = `substring $whatIs 25 999`;
+    string $pyPath  = `substitute "install.mel" $melPath "install.py"`;
+    python("import importlib.util as _u; _s=_u.spec_from_file_location('_tb',r'" + $pyPath + "'); _m=_u.module_from_spec(_s); _s.loader.exec_module(_m)");
+}
+
+timeBookmarksInstall();
