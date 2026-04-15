@@ -898,17 +898,17 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
 
         self.left_btn = QtWidgets.QToolButton()
         self.left_btn.setToolTip("Remove frames on selected curves")
-        self.left_btn.setFixedSize(22, 22)
+        self.left_btn.setFixedSize(26, 22)
         self.left_btn.setIcon(self._retime_icon("ReTimeArrowLeft.png"))
-        self.left_btn.setIconSize(QtCore.QSize(14, 14))
+        self.left_btn.setIconSize(QtCore.QSize(18, 18))
         self.left_btn.setText("" if not self.left_btn.icon().isNull() else "◀")
         layout.addWidget(self.left_btn)
 
         self.right_btn = QtWidgets.QToolButton()
         self.right_btn.setToolTip("Insert frames on selected curves")
-        self.right_btn.setFixedSize(22, 22)
+        self.right_btn.setFixedSize(26, 22)
         self.right_btn.setIcon(self._retime_icon("ReTimeArrowRight.png"))
-        self.right_btn.setIconSize(QtCore.QSize(14, 14))
+        self.right_btn.setIconSize(QtCore.QSize(18, 18))
         self.right_btn.setText("" if not self.right_btn.icon().isNull() else "▶")
         layout.addWidget(self.right_btn)
 
