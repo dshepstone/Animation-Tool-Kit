@@ -936,12 +936,23 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
             os.path.join(module_dir, "icons", icon_name),
             os.path.normpath(os.path.join(module_dir, "..", "icon", icon_name)),
             os.path.normpath(os.path.join(module_dir, "..", "..", "icon", icon_name)),
+            os.path.normpath(
+                os.path.join(
+                    module_dir, "..", "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1", icon_name
+                )
+            ),
             os.path.join(os.getcwd(), "icon", icon_name),
+            os.path.join(
+                os.getcwd(), "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1", icon_name
+            ),
         ]
         for entry in sys.path:
             if not entry:
                 continue
             candidate_paths.append(os.path.join(entry, "icon", icon_name))
+            candidate_paths.append(
+                os.path.join(entry, "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1", icon_name)
+            )
 
         for icon_path in candidate_paths:
             if not os.path.exists(icon_path):
@@ -960,6 +971,10 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
             os.path.normpath(os.path.join(module_dir, "..", "icon")),
             os.path.normpath(os.path.join(module_dir, "..", "..", "icon")),
             os.path.join(os.getcwd(), "icon"),
+            os.path.normpath(
+                os.path.join(module_dir, "..", "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1")
+            ),
+            os.path.join(os.getcwd(), "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1"),
         ]
         target_dirs = [
             cmds.internalVar(userBitmapsDir=True),

@@ -275,6 +275,10 @@ global proc atk__install()
     for ($retimeIcon in $retimeIcons)
     {
         string $retimeSrc = $installDir + "icon/" + $retimeIcon;
+        if (!atk__fileExists($retimeSrc))
+        {
+            $retimeSrc = $installDir + "animation tool kit scripts/Add-Remove-Inbetweens_1_0_1/" + $retimeIcon;
+        }
         if (atk__fileExists($retimeSrc))
         {
             atk__copyFile($retimeSrc, $iconsDir);
