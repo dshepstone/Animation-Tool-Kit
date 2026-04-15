@@ -925,21 +925,19 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
         if not icon.isNull():
             return icon
 
-        pref_icons = os.path.join(cmds.internalVar(userPrefDir=True), "icons", icon_name)
-        if os.path.exists(pref_icons):
-            icon = QtGui.QIcon(pref_icons)
-            if not icon.isNull():
-                return icon
+        module_dir = os.path.dirname(__file__)
+        candidate_paths = [
+            os.path.join(cmds.internalVar(userPrefDir=True), "icons", icon_name),
+            os.path.join(module_dir, "icons", icon_name),
+            os.path.normpath(os.path.join(module_dir, "..", "icon", icon_name)),
+            os.path.normpath(os.path.join(module_dir, "..", "..", "icon", icon_name)),
+            os.path.join(os.getcwd(), "icon", icon_name),
+        ]
 
-        repo_icons = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "icon", icon_name))
-        if os.path.exists(repo_icons):
-            icon = QtGui.QIcon(repo_icons)
-            if not icon.isNull():
-                return icon
-
-        pkg_icons = os.path.join(os.path.dirname(__file__), "icons", icon_name)
-        if os.path.exists(pkg_icons):
-            icon = QtGui.QIcon(pkg_icons)
+        for icon_path in candidate_paths:
+            if not os.path.exists(icon_path):
+                continue
+            icon = QtGui.QIcon(icon_path)
             if not icon.isNull():
                 return icon
 
