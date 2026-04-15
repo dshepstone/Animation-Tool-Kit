@@ -924,11 +924,6 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
 
     def _retime_icon(self, icon_name):
         """Return a QIcon for the retime arrow buttons from Maya prefs icon folders."""
-        for icon_ref in (icon_name, ":/{}".format(icon_name), "icons/{}".format(icon_name)):
-            icon = QtGui.QIcon(icon_ref)
-            if not icon.isNull():
-                return icon
-
         candidate_paths = [
             os.path.join(cmds.internalVar(userBitmapsDir=True), icon_name),
             os.path.join(cmds.internalVar(userPrefDir=True), "icons", icon_name),
@@ -937,7 +932,15 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
         for icon_path in candidate_paths:
             if not os.path.exists(icon_path):
                 continue
-            icon = QtGui.QIcon(icon_path)
+            pixmap = QtGui.QPixmap(icon_path)
+            if pixmap.isNull():
+                continue
+            icon = QtGui.QIcon(pixmap)
+            if not icon.isNull():
+                return icon
+
+        for icon_ref in (icon_name, ":/{}".format(icon_name), "icons/{}".format(icon_name)):
+            icon = QtGui.QIcon(icon_ref)
             if not icon.isNull():
                 return icon
 
@@ -988,8 +991,7 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
                         continue
                     os.makedirs(target_dir, exist_ok=True)
                     dst_path = os.path.join(target_dir, icon_name)
-                    if not os.path.exists(dst_path):
-                        shutil.copy2(src_path, dst_path)
+                    shutil.copy2(src_path, dst_path)
                 except Exception:
                     pass
 
