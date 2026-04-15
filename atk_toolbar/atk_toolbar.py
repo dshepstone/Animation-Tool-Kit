@@ -923,36 +923,16 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
         self.right_btn.clicked.connect(lambda: self._apply(1))
 
     def _retime_icon(self, icon_name):
-        """Return a QIcon for the retime arrow buttons, with safe fallbacks."""
+        """Return a QIcon for the retime arrow buttons from Maya prefs icon folders."""
         for icon_ref in (icon_name, ":/{}".format(icon_name), "icons/{}".format(icon_name)):
             icon = QtGui.QIcon(icon_ref)
             if not icon.isNull():
                 return icon
 
-        module_dir = os.path.dirname(__file__)
         candidate_paths = [
             os.path.join(cmds.internalVar(userBitmapsDir=True), icon_name),
             os.path.join(cmds.internalVar(userPrefDir=True), "icons", icon_name),
-            os.path.join(module_dir, "icons", icon_name),
-            os.path.normpath(os.path.join(module_dir, "..", "icon", icon_name)),
-            os.path.normpath(os.path.join(module_dir, "..", "..", "icon", icon_name)),
-            os.path.normpath(
-                os.path.join(
-                    module_dir, "..", "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1", icon_name
-                )
-            ),
-            os.path.join(os.getcwd(), "icon", icon_name),
-            os.path.join(
-                os.getcwd(), "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1", icon_name
-            ),
         ]
-        for entry in sys.path:
-            if not entry:
-                continue
-            candidate_paths.append(os.path.join(entry, "icon", icon_name))
-            candidate_paths.append(
-                os.path.join(entry, "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1", icon_name)
-            )
 
         for icon_path in candidate_paths:
             if not os.path.exists(icon_path):
@@ -964,18 +944,29 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
         return QtGui.QIcon()
 
     def _ensure_retime_icons_installed(self):
-        """Copy re-time arrow PNGs into Maya user icons folders when available."""
+        """Copy re-time arrow PNGs into Maya user prefs icon folders when available."""
         module_dir = os.path.dirname(__file__)
+        add_remove_dir = None
+        if self._mod is not None:
+            add_remove_dir = os.path.dirname(getattr(self._mod, "__file__", "") or "")
+
         source_roots = [
+            add_remove_dir,
             os.path.join(module_dir, "icons"),
             os.path.normpath(os.path.join(module_dir, "..", "icon")),
             os.path.normpath(os.path.join(module_dir, "..", "..", "icon")),
-            os.path.join(os.getcwd(), "icon"),
-            os.path.normpath(
-                os.path.join(module_dir, "..", "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1")
-            ),
+            os.path.normpath(os.path.join(module_dir, "..", "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1")),
             os.path.join(os.getcwd(), "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1"),
+            os.path.join(os.getcwd(), "icon"),
         ]
+        for entry in sys.path:
+            if not entry:
+                continue
+            source_roots.append(
+                os.path.join(entry, "animation tool kit scripts", "Add-Remove-Inbetweens_1_0_1")
+            )
+            source_roots.append(os.path.join(entry, "icon"))
+
         target_dirs = [
             cmds.internalVar(userBitmapsDir=True),
             os.path.join(cmds.internalVar(userPrefDir=True), "icons"),
