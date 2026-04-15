@@ -901,7 +901,7 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
         self.left_btn.setFixedSize(22, 22)
         self.left_btn.setIcon(self._retime_icon("ReTimeArrowLeft.png"))
         self.left_btn.setIconSize(QtCore.QSize(14, 14))
-        self.left_btn.setText("")
+        self.left_btn.setText("" if not self.left_btn.icon().isNull() else "◀")
         layout.addWidget(self.left_btn)
 
         self.right_btn = QtWidgets.QToolButton()
@@ -909,7 +909,7 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
         self.right_btn.setFixedSize(22, 22)
         self.right_btn.setIcon(self._retime_icon("ReTimeArrowRight.png"))
         self.right_btn.setIconSize(QtCore.QSize(14, 14))
-        self.right_btn.setText("")
+        self.right_btn.setText("" if not self.right_btn.icon().isNull() else "▶")
         layout.addWidget(self.right_btn)
 
         self.frames_spin = QtWidgets.QSpinBox()
@@ -924,9 +924,10 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
 
     def _retime_icon(self, icon_name):
         """Return a QIcon for the retime arrow buttons, with safe fallbacks."""
-        icon = QtGui.QIcon(icon_name)
-        if not icon.isNull():
-            return icon
+        for icon_ref in (icon_name, ":/{}".format(icon_name), "icons/{}".format(icon_name)):
+            icon = QtGui.QIcon(icon_ref)
+            if not icon.isNull():
+                return icon
 
         module_dir = os.path.dirname(__file__)
         candidate_paths = [
@@ -937,6 +938,10 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
             os.path.normpath(os.path.join(module_dir, "..", "..", "icon", icon_name)),
             os.path.join(os.getcwd(), "icon", icon_name),
         ]
+        for entry in sys.path:
+            if not entry:
+                continue
+            candidate_paths.append(os.path.join(entry, "icon", icon_name))
 
         for icon_path in candidate_paths:
             if not os.path.exists(icon_path):
