@@ -367,6 +367,24 @@ global proc atk__install()
     else
         warning("ATK Installer: Bookmarks package not found (skipped): " + $bookmarksSrc);
 
+    // Tangent Tools is a package — copy from tangent_tools/src/tangent_tools
+    string $tangentToolsSrc = $toolsBase + "tangent_tools/src/tangent_tools";
+    if (`filetest -d $tangentToolsSrc`)
+    {
+        string $tangentToolsDst = $scriptsDir + "tangent_tools/";
+        string $copyTangentPy = "";
+        $copyTangentPy += "import os, shutil\n";
+        $copyTangentPy += "src = r\"" + $tangentToolsSrc + "\"\n";
+        $copyTangentPy += "dst = r\"" + $tangentToolsDst + "\"\n";
+        $copyTangentPy += "if os.path.exists(dst):\n";
+        $copyTangentPy += "    shutil.rmtree(dst)\n";
+        $copyTangentPy += "shutil.copytree(src, dst)\n";
+        $copyTangentPy += "print('  Copied package: tangent_tools')\n";
+        python($copyTangentPy);
+    }
+    else
+        warning("ATK Installer: Tangent Tools package not found (skipped): " + $tangentToolsSrc);
+
     // ---- 4. Copy tool icons → userBitmapsDir ----------------------------------
     print "// Copying tool icons:\n";
     string $toolIcons[] = {
@@ -385,7 +403,11 @@ global proc atk__install()
         "xform_copy_past_2_0_0/xform_copy_paste.png",
         "selection_set_2_0_4/selectionSet.png",
         "diget_mirror_2_5_5/mirror.png",
-        "Bookmarks/icons/Bookmark.png"
+        "Bookmarks/icons/Bookmark.png",
+        "tangent_tools/curveTool.png",
+        "tangent_tools/tangent_icons/AutoSpline.png",
+        "tangent_tools/tangent_icons/Linear.png",
+        "tangent_tools/tangent_icons/stepped.png"
     };
     for ($relPath in $toolIcons)
     {

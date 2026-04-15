@@ -446,6 +446,9 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 btn = self._make_tool_btn(tool, icon_sz, show_tips)
                 self._button_map[tool["id"]] = btn
                 layout.addWidget(btn)
+                if tool["id"] == "tangent_tools":
+                    for tangent_btn in self._make_tangent_quick_buttons(icon_sz, show_tips):
+                        layout.addWidget(tangent_btn)
                 prev_group = tool["group"]
 
             layout.addStretch()
@@ -484,6 +487,8 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 btn = self._make_tool_btn(tool, icon_sz, show_tips)
                 self._button_map[tool["id"]] = btn
                 tool_widgets.append(btn)
+                if tool["id"] == "tangent_tools":
+                    tool_widgets.extend(self._make_tangent_quick_buttons(icon_sz, show_tips))
                 prev_group = tool["group"]
 
             # Respect workspace alignment preference while keeping the slider
@@ -557,6 +562,47 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             lambda pos, t=tool, b=btn, inst=installed: self._tool_context_menu(t, b, pos, inst)
         )
         return btn
+
+    def _make_tangent_quick_buttons(self, icon_sz, show_tips):
+        tangents = (
+            ("auto_legacy", "AutoSpline.png", "Auto Spline (Legacy)"),
+            ("linear", "Linear.png", "Linear"),
+            ("stepped", "stepped.png", "Stepped"),
+        )
+        installed = atk_loader.is_tool_installed("tangent_tools")
+        buttons = []
+        for kind, icon_file, label in tangents:
+            btn = QtWidgets.QToolButton()
+            btn.setFixedSize(icon_sz + 8, icon_sz + 8)
+            if installed:
+                icon = atk_icons.load_or_generate_icon(
+                    icon_file, "tween", "timing", icon_sz
+                )
+                btn.setStyleSheet(_BTN_STYLE_NORMAL)
+                btn.clicked.connect(
+                    lambda checked=False, tangent_kind=kind: self._set_tangent_quick(tangent_kind)
+                )
+            else:
+                icon = atk_icons.make_warning_icon(icon_sz)
+                btn.setStyleSheet(_BTN_STYLE_NORMAL + "QToolButton { opacity: 0.5; }")
+                btn.setEnabled(False)
+            btn.setIcon(icon)
+            btn.setIconSize(QtCore.QSize(icon_sz, icon_sz))
+            if show_tips:
+                tip = "<b>{}</b><br>Set selected keys to {} tangents.".format(label, label)
+                if not installed:
+                    tip += "<br><i style='color:#ff6666;'>Tangent Tools not installed</i>"
+                btn.setToolTip(tip)
+            buttons.append(btn)
+        return buttons
+
+    @staticmethod
+    def _set_tangent_quick(kind):
+        try:
+            core = importlib.import_module("tangent_tools.core")
+            core.set_tangent_type(kind)
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: failed to apply tangent '{}': {}".format(kind, exc))
 
 
     @staticmethod

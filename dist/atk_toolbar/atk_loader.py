@@ -48,6 +48,17 @@ TOOL_REGISTRY = [
         "version":   "1.0.1",
     },
     {
+        "id":        "tangent_tools",
+        "label":     "Tangent Tools",
+        "tooltip":   "Graph Editor curve tools for tangents and interpolation",
+        "module":    "tangent_tools.main",
+        "launch_fn": "launch",
+        "icon_file": "curveTool.png",
+        "icon_key":  "tween",
+        "group":     "timing",
+        "version":   "1.0.0",
+    },
+    {
         "id":        "tween_machine",
         "label":     "TweenMachine",
         "tooltip":   "Create in-between poses on selected keys and controls",
