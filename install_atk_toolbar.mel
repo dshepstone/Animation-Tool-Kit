@@ -270,6 +270,23 @@ global proc atk__install()
         print ("// Icon    -> " + $iconsDir + "gearIcon.png\n");
     }
 
+    // Copy re-time arrow icons used by the inline frame stepper
+    // Prefer Add-Remove-Inbetweens folder icons; fall back to top-level icon folder.
+    string $retimeIcons[] = {"ReTimeArrowLeft.png", "ReTimeArrowRight.png"};
+    for ($retimeIcon in $retimeIcons)
+    {
+        string $retimeSrc = $installDir + "animation tool kit scripts/Add-Remove-Inbetweens_1_0_1/" + $retimeIcon;
+        if (!atk__fileExists($retimeSrc))
+        {
+            $retimeSrc = $installDir + "icon/" + $retimeIcon;
+        }
+        if (atk__fileExists($retimeSrc))
+        {
+            atk__copyFile($retimeSrc, $iconsDir);
+            print ("// Icon    -> " + $iconsDir + $retimeIcon + "\n");
+        }
+    }
+
     // Tool folders live under "animation tool kit scripts/" next to this installer
     string $toolsBase = $installDir + "animation tool kit scripts/";
 
