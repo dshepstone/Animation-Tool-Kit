@@ -894,15 +894,19 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
         layout.setSpacing(4)
 
         self.left_btn = QtWidgets.QToolButton()
-        self.left_btn.setText("←")
         self.left_btn.setToolTip("Remove frames on selected curves")
         self.left_btn.setFixedSize(22, 22)
+        self.left_btn.setIcon(self._retime_icon("ReTimeArrowLeft.png"))
+        self.left_btn.setIconSize(QtCore.QSize(14, 14))
+        self.left_btn.setText("")
         layout.addWidget(self.left_btn)
 
         self.right_btn = QtWidgets.QToolButton()
-        self.right_btn.setText("→")
         self.right_btn.setToolTip("Insert frames on selected curves")
         self.right_btn.setFixedSize(22, 22)
+        self.right_btn.setIcon(self._retime_icon("ReTimeArrowRight.png"))
+        self.right_btn.setIconSize(QtCore.QSize(14, 14))
+        self.right_btn.setText("")
         layout.addWidget(self.right_btn)
 
         self.frames_spin = QtWidgets.QSpinBox()
@@ -914,6 +918,32 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
 
         self.left_btn.clicked.connect(lambda: self._apply(-1))
         self.right_btn.clicked.connect(lambda: self._apply(1))
+
+    def _retime_icon(self, icon_name):
+        """Return a QIcon for the retime arrow buttons, with safe fallbacks."""
+        icon = QtGui.QIcon(icon_name)
+        if not icon.isNull():
+            return icon
+
+        pref_icons = os.path.join(cmds.internalVar(userPrefDir=True), "icons", icon_name)
+        if os.path.exists(pref_icons):
+            icon = QtGui.QIcon(pref_icons)
+            if not icon.isNull():
+                return icon
+
+        repo_icons = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "icon", icon_name))
+        if os.path.exists(repo_icons):
+            icon = QtGui.QIcon(repo_icons)
+            if not icon.isNull():
+                return icon
+
+        pkg_icons = os.path.join(os.path.dirname(__file__), "icons", icon_name)
+        if os.path.exists(pkg_icons):
+            icon = QtGui.QIcon(pkg_icons)
+            if not icon.isNull():
+                return icon
+
+        return QtGui.QIcon()
 
     def _apply(self, direction):
         if self._mod is None:

@@ -270,6 +270,18 @@ global proc atk__install()
         print ("// Icon    -> " + $iconsDir + "gearIcon.png\n");
     }
 
+    // Copy re-time arrow icons used by the inline frame stepper
+    string $retimeIcons[] = {"ReTimeArrowLeft.png", "ReTimeArrowRight.png"};
+    for ($retimeIcon in $retimeIcons)
+    {
+        string $retimeSrc = $installDir + "icon/" + $retimeIcon;
+        if (atk__fileExists($retimeSrc))
+        {
+            atk__copyFile($retimeSrc, $iconsDir);
+            print ("// Icon    -> " + $iconsDir + $retimeIcon + "\n");
+        }
+    }
+
     // Tool folders live under "animation tool kit scripts/" next to this installer
     string $toolsBase = $installDir + "animation tool kit scripts/";
 
