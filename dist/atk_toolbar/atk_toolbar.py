@@ -26,6 +26,7 @@ Right-click context menu per button
 import os
 import sys
 import importlib
+import shutil
 
 import maya.cmds as cmds
 import maya.mel as mel
@@ -893,6 +894,8 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
         layout.setContentsMargins(2, 0, 2, 0)
         layout.setSpacing(4)
 
+        self._ensure_retime_icons_installed()
+
         self.left_btn = QtWidgets.QToolButton()
         self.left_btn.setToolTip("Remove frames on selected curves")
         self.left_btn.setFixedSize(22, 22)
@@ -927,6 +930,7 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
 
         module_dir = os.path.dirname(__file__)
         candidate_paths = [
+            os.path.join(cmds.internalVar(userBitmapsDir=True), icon_name),
             os.path.join(cmds.internalVar(userPrefDir=True), "icons", icon_name),
             os.path.join(module_dir, "icons", icon_name),
             os.path.normpath(os.path.join(module_dir, "..", "icon", icon_name)),
@@ -942,6 +946,41 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
                 return icon
 
         return QtGui.QIcon()
+
+    def _ensure_retime_icons_installed(self):
+        """Copy re-time arrow PNGs into Maya user icons folders when available."""
+        module_dir = os.path.dirname(__file__)
+        source_roots = [
+            os.path.join(module_dir, "icons"),
+            os.path.normpath(os.path.join(module_dir, "..", "icon")),
+            os.path.normpath(os.path.join(module_dir, "..", "..", "icon")),
+            os.path.join(os.getcwd(), "icon"),
+        ]
+        target_dirs = [
+            cmds.internalVar(userBitmapsDir=True),
+            os.path.join(cmds.internalVar(userPrefDir=True), "icons"),
+        ]
+
+        for icon_name in ("ReTimeArrowLeft.png", "ReTimeArrowRight.png"):
+            src_path = None
+            for root in source_roots:
+                candidate = os.path.join(root, icon_name)
+                if os.path.exists(candidate):
+                    src_path = candidate
+                    break
+            if not src_path:
+                continue
+
+            for target_dir in target_dirs:
+                try:
+                    if not target_dir:
+                        continue
+                    os.makedirs(target_dir, exist_ok=True)
+                    dst_path = os.path.join(target_dir, icon_name)
+                    if not os.path.exists(dst_path):
+                        shutil.copy2(src_path, dst_path)
+                except Exception:
+                    pass
 
     def _apply(self, direction):
         if self._mod is None:
