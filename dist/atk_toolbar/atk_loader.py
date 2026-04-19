@@ -202,6 +202,17 @@ TOOL_REGISTRY = [
         "version":   "2.0.4",
     },
     {
+        "id":        "playblast_creator",
+        "label":     "Playblast Creator",
+        "tooltip":   "Create playblasts with shot masks, custom encoding and presets",
+        "module":    "playblast_creator_ui",
+        "launch_fn": "show_ui",
+        "icon_file": "playblast_creator_icon.png",
+        "icon_key":  "playblast",
+        "group":     "pipeline",
+        "version":   "2.0.4",
+    },
+    {
         "id":        "studio_library",
         "label":     "Studio Library",
         "tooltip":   "Manage poses and animation clips in a visual library",
