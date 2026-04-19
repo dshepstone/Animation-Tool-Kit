@@ -213,6 +213,17 @@ TOOL_REGISTRY = [
         "version":   "2.21.1",
     },
     {
+        "id":        "playblast_creator",
+        "label":     "Playblast Creator",
+        "tooltip":   "Render preview playblasts with shot masks and presets",
+        "module":    "playblast_creator_ui",
+        "launch_fn": "show_ui",
+        "icon_file": "playblast_creator_icon.png",
+        "icon_key":  "snap",
+        "group":     "pipeline",
+        "version":   "2.0.4",
+    },
+    {
         "id":        "user_directory_check",
         "label":     "User Directory Check",
         "tooltip":   "Review Maya user directories and verify that key paths exist",
@@ -259,6 +270,21 @@ def setup_paths():
     parent_dir = os.path.dirname(pkg_dir)
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
+
+    # Playblast Creator ships into a versioned sub-folder that mirrors the
+    # standalone installer layout (scripts/playblast_creator/PBC_v2_0_4/).
+    # Put it on sys.path so "import playblast_creator_ui" resolves and add
+    # it to MAYA_PLUG_IN_PATH so cmds.loadPlugin("playblast_creator.py")
+    # finds the bundled plug-in by short name.
+    pbc_dir = os.path.join(scripts_dir, "playblast_creator", "PBC_v2_0_4")
+    if os.path.isdir(pbc_dir):
+        if pbc_dir not in sys.path:
+            sys.path.insert(0, pbc_dir)
+        plug_in_path = os.environ.get("MAYA_PLUG_IN_PATH", "")
+        if pbc_dir not in plug_in_path.split(os.pathsep):
+            os.environ["MAYA_PLUG_IN_PATH"] = (
+                pbc_dir if not plug_in_path else plug_in_path + os.pathsep + pbc_dir
+            )
 
 
 # ---------------------------------------------------------------------------

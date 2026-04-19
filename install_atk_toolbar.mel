@@ -400,6 +400,39 @@ global proc atk__install()
     else
         warning("ATK Installer: Tangent Tools package not found (skipped): " + $tangentToolsSrc);
 
+    // Playblast Creator v2.0.4 — matches the standalone installer layout so
+    // the plug-in file and UI resolve the same way whether the toolbar or
+    // the drag-and-drop installer copied them in.
+    string $pbcSrcDir = $toolsBase + "Playblast_Creator";
+    if (`filetest -d $pbcSrcDir`)
+    {
+        string $pbcDstDir = $scriptsDir + "playblast_creator/PBC_v2_0_4/";
+        string $pbcFiles[] = {
+            "playblast_creator.py",
+            "playblast_creator_ui.py",
+            "playblast_creator_presets.py"
+        };
+        for ($relPbc in $pbcFiles)
+        {
+            string $pbcFullSrc = $pbcSrcDir + "/" + $relPbc;
+            if (atk__fileExists($pbcFullSrc))
+                atk__copyFile($pbcFullSrc, $pbcDstDir);
+            else
+                warning("ATK Installer: Playblast Creator file not found (skipped): " + $pbcFullSrc);
+        }
+
+        string $pbcIconSrc = $pbcSrcDir + "/playblast_creator_icon.png";
+        if (atk__fileExists($pbcIconSrc))
+        {
+            atk__copyFile($pbcIconSrc, $iconsDir);
+            print ("// Icon    -> " + $iconsDir + "playblast_creator_icon.png\n");
+        }
+        else
+            warning("ATK Installer: Playblast Creator icon not found (skipped).");
+    }
+    else
+        warning("ATK Installer: Playblast Creator folder not found (skipped): " + $pbcSrcDir);
+
     // ---- 4. Copy tool icons → userBitmapsDir ----------------------------------
     print "// Copying tool icons:\n";
     string $toolIcons[] = {
