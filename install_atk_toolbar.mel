@@ -308,7 +308,10 @@ global proc atk__install()
         "xform_copy_past_2_0_0/xform_copy_paste.py",
         "selection_set_2_0_4/SmartSelectSets_v2.py",
         "diget_mirror_2_5_5/digetMirrorControl_v2_2_5.py",
-        "user_directory_check_1_0_0/user_directory_check.py"
+        "user_directory_check_1_0_0/user_directory_check.py",
+        "Playblast_Creator/playblast_creator.py",
+        "Playblast_Creator/playblast_creator_ui.py",
+        "Playblast_Creator/playblast_creator_presets.py"
     };
     for ($relScript in $toolScripts)
     {
@@ -423,7 +426,8 @@ global proc atk__install()
         "tangent_tools/curveTool.png",
         "tangent_tools/tangent_icons/AutoSpline.png",
         "tangent_tools/tangent_icons/Linear.png",
-        "tangent_tools/tangent_icons/stepped.png"
+        "tangent_tools/tangent_icons/stepped.png",
+        "Playblast_Creator/playblast_creator_icon.png"
     };
     for ($relPath in $toolIcons)
     {
