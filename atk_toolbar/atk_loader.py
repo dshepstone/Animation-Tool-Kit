@@ -205,7 +205,7 @@ TOOL_REGISTRY = [
         "id":        "playblast_creator",
         "label":     "Playblast Creator",
         "tooltip":   "Create playblasts with overlays and project-ready output options",
-        "module":    "playblast_creator.playblast_creator_latest",
+        "module":    "playblast_creator_latest",
         "launch_fn": "launch",
         "icon_file": "playblast_creator_icon.png",
         "icon_key":  "library",
@@ -265,6 +265,9 @@ def setup_paths():
     scripts_dir = cmds.internalVar(userScriptDir=True)
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
+    playblast_scripts_dir = os.path.join(scripts_dir, "playblast_creator")
+    if os.path.isdir(playblast_scripts_dir) and playblast_scripts_dir not in sys.path:
+        sys.path.insert(0, playblast_scripts_dir)
 
     # The atk_toolbar package directory itself
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
@@ -316,6 +319,9 @@ def launch_tool(tool_id):
     reload_on_launch = bool(tool.get("reload_on_launch", False))
 
     try:
+        if tool_id == "playblast_creator":
+            _ensure_playblast_creator_plugin_loaded()
+
         if module_name not in sys.modules:
             mod = importlib.import_module(module_name)
         else:
@@ -358,6 +364,38 @@ def launch_tool(tool_id):
             )
     except Exception as exc:
         cmds.warning("ATK Toolbar: error launching '{}': {}".format(tool_id, exc))
+
+
+def _ensure_playblast_creator_plugin_loaded():
+    """Load Playblast Creator command plug-in if it is not already loaded."""
+    known_plugin_names = ["playblast_creator.py", "playblast_creator"]
+    for plugin_name in known_plugin_names:
+        try:
+            if cmds.pluginInfo(plugin_name, q=True, loaded=True):
+                return
+        except Exception:
+            continue
+
+    scripts_dir = cmds.internalVar(userScriptDir=True)
+    plugin_candidates = [
+        os.path.join(scripts_dir, "playblast_creator", "PBC_v2_0_4", "playblast_creator.py"),
+        "playblast_creator.py",
+        "playblast_creator",
+    ]
+
+    for plugin_target in plugin_candidates:
+        try:
+            cmds.loadPlugin(plugin_target, quiet=True)
+        except Exception:
+            continue
+        for plugin_name in known_plugin_names:
+            try:
+                if cmds.pluginInfo(plugin_name, q=True, loaded=True):
+                    return
+            except Exception:
+                continue
+
+    cmds.warning("ATK Toolbar: Playblast Creator plug-in could not be loaded.")
 
 
 def is_tool_installed(tool_id):
