@@ -197,21 +197,20 @@ global proc atk__install()
     string $pkgFolder   = "atk_toolbar";
     string $iconFile    = "ATK_icon.png";
     string $shelfLabel  = "ATK";
-    string $annotation  = "ATK_TOOLBAR_SHELF_BUTTON — Open the Animation Tool Kit Toolbar";
+    string $annotation  = "ATK_TOOLBAR_SHELF_BUTTON — Toggle the Animation Tool Kit Toolbar on/off";
 
+    // Shelf button command: toggle the toolbar visibility on/off without
+    // reloading the package, so workspaceControl state is preserved between
+    // clicks.  On first click after a session restart (module not yet loaded)
+    // the import will run and toggle() will create the toolbar for us.
     string $pyCmd = "";
-    $pyCmd += "import sys, importlib\n";
+    $pyCmd += "import sys\n";
     $pyCmd += "import maya.cmds as cmds\n";
     $pyCmd += "scripts_dir = cmds.internalVar(userScriptDir=True)\n";
     $pyCmd += "if scripts_dir not in sys.path:\n";
     $pyCmd += "    sys.path.insert(0, scripts_dir)\n";
-    $pyCmd += "cmds.optionVar(sv=('atk_toolbar_orientation', 'horizontal'))\n";
-    $pyCmd += "for name in list(sys.modules):\n";
-    $pyCmd += "    if name == 'atk_toolbar' or name.startswith('atk_toolbar.'):\n";
-    $pyCmd += "        sys.modules.pop(name, None)\n";
     $pyCmd += "import atk_toolbar.atk_toolbar as _atk\n";
-    $pyCmd += "importlib.reload(_atk)\n";
-    $pyCmd += "_atk.show()\n";
+    $pyCmd += "_atk.toggle()\n";
 
     // ---- Locate installer directory --------------------------------------------
     string $installDir = atk__getInstallerDir("atk__install");

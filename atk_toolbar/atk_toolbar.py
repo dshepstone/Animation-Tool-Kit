@@ -1169,3 +1169,21 @@ def is_visible():
     if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
         return bool(cmds.workspaceControl(WORKSPACE_NAME, q=True, visible=True))
     return False
+
+
+def toggle():
+    """Toggle the toolbar visibility on or off.
+
+    Bound to the ATK shelf button so a single click hides the toolbar when it
+    is showing and restores it when it is hidden.  The underlying
+    workspaceControl and all installed tool scripts remain in place — only the
+    UI is shown or hidden.
+    """
+    if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
+        if bool(cmds.workspaceControl(WORKSPACE_NAME, q=True, visible=True)):
+            cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=False)
+        else:
+            cmds.workspaceControl(WORKSPACE_NAME, edit=True, restore=True)
+            cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=True)
+    else:
+        show()
