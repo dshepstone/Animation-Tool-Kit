@@ -243,6 +243,20 @@ global proc atk__install()
     // ---- 1. Copy atk_toolbar package (.py files) → userScriptDir/atk_toolbar/ --
     print "// Copying toolbar package files:\n";
     string $dstPkgDir = $scriptsDir + $pkgFolder + "/";
+
+    // Purge stale atk_toolbar bytecode from any previous install.  Without
+    // this, Python can re-use a cached atk_loader.cpython-*.pyc whose
+    // TOOL_REGISTRY predates this release and tool entries added by newer
+    // versions (e.g. Playblast Creator) silently disappear from the strip.
+    string $cleanPy = "";
+    $cleanPy += "import os, shutil\n";
+    $cleanPy += "dst_dir = r\"" + $dstPkgDir + "\"\n";
+    $cleanPy += "cache_dir = os.path.join(dst_dir, '__pycache__')\n";
+    $cleanPy += "if os.path.isdir(cache_dir):\n";
+    $cleanPy += "    shutil.rmtree(cache_dir, ignore_errors=True)\n";
+    $cleanPy += "    print('  Cleared stale bytecode:', cache_dir)\n";
+    python($cleanPy);
+
     atk__copyPyDir($srcPkgDir, $dstPkgDir);
     print ("// Package -> " + $dstPkgDir + "\n");
 
@@ -523,6 +537,14 @@ global proc atk__install()
     $launchPy += "import atk_toolbar.atk_toolbar as _atk\n";
     $launchPy += "importlib.reload(_atk)\n";
     $launchPy += "_atk.show()\n";
+    // Diagnostic: list the tool ids that actually made it into the loaded
+    // TOOL_REGISTRY. If Playblast Creator is missing from the strip after
+    // an upgrade, check this line in the Script Editor to confirm whether
+    // the new atk_loader.py was picked up or an old cached version is in
+    // use.
+    $launchPy += "from atk_toolbar import atk_loader as _atk_loader\n";
+    $launchPy += "_registered = [t['id'] for t in _atk_loader.TOOL_REGISTRY]\n";
+    $launchPy += "print('// ATK Toolbar registered tools: {0}'.format(_registered))\n";
     python($launchPy);
 
     // ---- Done -----------------------------------------------------------------
