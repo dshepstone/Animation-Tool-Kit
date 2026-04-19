@@ -2445,6 +2445,9 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
 
         self.camera_select_cmb = QtWidgets.QComboBox()
         self.camera_select_cmb.setMinimumWidth(combo_box_min_width)
+        self.camera_select_refresh_btn = QtWidgets.QPushButton("Refresh")
+        self.camera_select_refresh_btn.setMaximumWidth(int(80 * scale_value))
+        self.camera_select_refresh_btn.setFixedHeight(button_height)
         self.camera_select_hide_defaults_cb = QtWidgets.QCheckBox("Hide defaults")
         self.refresh_cameras()
 
@@ -3830,6 +3833,7 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         self.clear_btn.clicked.connect(self.clear_output_log)
 
         self.camera_select_hide_defaults_cb.toggled.connect(self.refresh_cameras)
+        self.camera_select_refresh_btn.clicked.connect(self.refresh_cameras)
         self.encoding_container_cmb.currentIndexChanged.connect(self.refresh_encoding_codecs)
         self.encoding_container_cmb.currentIndexChanged.connect(self.update_filename_preview)
         self.encoding_container_cmb.currentIndexChanged.connect(self.refresh_sound_status)
@@ -4146,6 +4150,7 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         camera_row = QtWidgets.QHBoxLayout()
         camera_row.setSpacing(6)
         camera_row.addWidget(self.camera_select_cmb)
+        camera_row.addWidget(self.camera_select_refresh_btn)
         camera_row.addWidget(self.camera_select_hide_defaults_cb)
         camera_row.addStretch()
         camera_body.addLayout(camera_row)
@@ -4587,6 +4592,10 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         self.camera_select_cmb.setToolTip(
             "Camera to render from. 'Active' uses whichever viewport "
             "camera is currently focused when the playblast runs."
+        )
+        self.camera_select_refresh_btn.setToolTip(
+            "Rescan the current scene and rebuild the camera list "
+            "(use after creating, renaming, or deleting cameras)."
         )
         self.camera_select_hide_defaults_cb.setToolTip(
             "Hide Maya's built-in cameras (persp, top, front, side) "
