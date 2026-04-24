@@ -6,11 +6,13 @@ This repository contains a Maya Python utility that helps animators quickly add 
 
 ### Key Features
 
-* **Target & Range controls** – operate on the keyed attributes of the current selection or the entire scene. Toggle **Use Time Range** to work on the highlighted time slider range or the playback range with ripple-style retiming for keys past the range.
-* **Amount section** – choose how many frames to affect via the spin box or the large ▲/▼ buttons for inserting or removing blank frames.
-* **Set Inbetween utility** – select keys in the time slider and insert the desired number of blank frames between them, with automatic ripple of later keys on those curves and any selected controls.
-* **Apply & Safety tools** – reuse the most recent insert/remove choice through the Apply button, keep the operation undo-friendly, and optionally close the window after applying.
-* **Contextual help** – a built-in help dialog explains every control, keyboard shortcut, and the difference between inserting and removing blank frames.
+* **Modern dockable panel** – the UI is hosted in a Maya `workspaceControl`, so it can float, dock into any pane, or be tabbed alongside existing Maya panels.
+* **Compact card-based layout** – three focused sections (Scope, Insert/Remove Frames, Key Spacing) with segmented controls and colour-coded action buttons keep the window small and easy to move.
+* **Scope segmented control** – switch between **Selected** objects and **All Keyed** curves with one click. Toggle **Use Time Range (ripple)** to work on the highlighted time slider range with ripple retiming.
+* **Insert / Remove Frames** – pick an amount and click ▲ Insert or ▼ Remove; every operation is a single undo step.
+* **Key Spacing (Ripple)** – select keys in the time slider and redistribute them to an even interval (0=consecutive, 2=every other frame, etc.), rippling later keys so timing is preserved.
+* **Menu bar with HTML Help** – the top-level **Help** menu opens a dedicated Help/How To window (rendered as HTML) with sections for How To, Keyboard Shortcuts and About.
+* **Status feedback** – inline status line plus Maya heads-up messages for every action.
 
 ### Installation
 
@@ -56,28 +58,29 @@ You can also add the Python command to a hotkey in Maya's Hotkey Editor for inst
 The tool provides several ways to manipulate animation timing:
 
 **Insert/Remove Frames:**
-1. Choose **Selected objects** or **All keyed in scene** to define the retiming scope.
-2. Leave **Use Time Range** off to affect keys at and after the current time, or enable it to operate on the highlighted time slider range (or playback range) with ripple adjustments to later keys.
-3. Set the number of frames to insert or remove using the spin box.
-4. Press the **▲** button to insert (push keys forward) or **▼** button to remove (pull keys backward).
-5. Use the **Apply** button to repeat the last insert/remove action.
+1. In the **Scope** card, click **Selected** or **All Keyed** to define the retiming scope.
+2. Leave **Use Time Range (ripple)** off to affect keys at and after the current time, or enable it to operate on the highlighted time slider range (or playback range) with ripple adjustments to later keys.
+3. Set the number of **Frames** in the spin box.
+4. Press **▲ Insert** to push keys forward or **▼ Remove** to pull keys backward.
 
-**Set Inbetween Spacing:**
-1. Select keyframes in Maya's time slider (highlight the frames you want to space).
-2. Set the **Inbetweens** value:
-   - `0` = keeps keys on consecutive frames (ones)
-   - `1` = adds one blank frame between each key
-   - `2` = adds two blank frames between each key
-   - etc.
-3. Click **Set Inbetween** to apply the spacing.
-4. Any keys after the selection on those curves—and on currently selected controls—will ripple to preserve timing.
+**Key Spacing (Ripple):**
+1. Select keyframes in Maya's time slider (highlight the frames you want to re-space).
+2. Set the **Spacing** value:
+   - `0` = keys on consecutive frames (ones)
+   - `2` = every other frame (interval of 2)
+   - `n` = interval of `n` frames between keys
+3. Click **Apply** to redistribute the selected keys; later keys on those curves ripple to preserve timing.
+
+**Docking & Help:**
+- Drag the panel's title bar onto any Maya dock area to dock or tab it.
+- Open **Help → How To...** for the full HTML how-to guide, **Help → Keyboard Shortcuts**, or **Help → About**.
+- Use **Tools → Reset to Defaults** to return every control to its default state.
 
 **Additional Features:**
 - Each operation wraps in a single undo chunk (Ctrl+Z/Cmd+Z to undo)
 - Tangents and curve shapes are preserved
 - Locked or non-keyable channels are gracefully skipped
 - **Keyboard shortcuts**: Ctrl/Cmd+↑ to insert, Ctrl/Cmd+↓ to remove
-- Click the **?** button for built-in help and detailed explanations
 
 ### Technical Details
 
