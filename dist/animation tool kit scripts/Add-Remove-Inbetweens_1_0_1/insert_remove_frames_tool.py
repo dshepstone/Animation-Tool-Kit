@@ -25,6 +25,7 @@ Usage notes:
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Type, TypeVar
 
 from maya import cmds, mel  # type: ignore[import-not-found]  # pylint: disable=import-error
@@ -111,6 +112,24 @@ def _maya_main_window() -> QtWidget:
     if ptr is None:
         raise RuntimeError("Unable to locate Maya main window.")
     return _wrap_instance(int(ptr), QtWidgets.QWidget)
+
+
+def _tool_icon(icon_name: str) -> "QtGui.QIcon":
+    """Resolve a tool icon from Maya prefs or the packaged script folder."""
+
+    candidate_paths = [
+        os.path.join(cmds.internalVar(userBitmapsDir=True), icon_name),
+        os.path.join(cmds.internalVar(userPrefDir=True), "icons", icon_name),
+        os.path.join(os.path.dirname(__file__), icon_name),
+    ]
+
+    for icon_path in candidate_paths:
+        if not os.path.exists(icon_path):
+            continue
+        icon = QtGui.QIcon(icon_path)
+        if not icon.isNull():
+            return icon
+    return QtGui.QIcon()
 
 
 def _option_var_name(key: str) -> str:
@@ -421,6 +440,7 @@ class InsertRemoveFramesUI(QtWidgets.QDialog):
         super().__init__(parent or _maya_main_window())
         self.setObjectName("InsertRemoveFramesUI")
         self.setWindowTitle(self.WINDOW_TITLE)
+        self.setWindowIcon(_tool_icon("add_Remove.png"))
         self.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
         self.setMinimumWidth(self.MIN_WIDTH)
         self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)

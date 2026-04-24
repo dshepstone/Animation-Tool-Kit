@@ -42,7 +42,7 @@ TOOL_REGISTRY = [
         "tooltip":   "Insert or remove frames while rippling keys downstream",
         "module":    "insert_remove_frames_tool",
         "launch_fn": "show",
-        "icon_file": "add-remove.png",
+        "icon_file": "add_Remove.png",
         "icon_key":  "frames",
         "group":     "timing",
         "version":   "1.0.1",

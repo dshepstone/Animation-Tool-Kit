@@ -455,7 +455,7 @@ global proc atk__install()
         "inbetweener_2_0_2/inbetweener.png",
         "tweenMachine/python/icons/tm3-ShelfIcon.png",
         "inbetweener_2_0_2/defaultPose.png",
-        "Add-Remove-Inbetweens_1_0_1/add-remove.png",
+        "Add-Remove-Inbetweens_1_0_1/add_Remove.png",
         "noise_generator_1_0_0/noise_generator_icon.png",
         "onion-skin-tool_2_1_0/onionSkinIcon.png",
         "WireShape_Tool_1_0_0/Shape_Icon.png",
