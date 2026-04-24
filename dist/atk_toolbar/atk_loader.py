@@ -45,7 +45,7 @@ TOOL_REGISTRY = [
         "icon_file": "add_Remove.png",
         "icon_key":  "frames",
         "group":     "timing",
-        "version":   "1.0.1",
+        "version":   "1.0.2",
     },
     {
         "id":        "tangent_tools",
