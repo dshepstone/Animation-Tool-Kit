@@ -1,26 +1,10 @@
 """Add/Remove Inbetweens Maya tool.
 
-This utility offers a compact Maya Qt window that helps animators quickly
-insert or remove blocks of empty time, or fan selected keys onto an even
-spacing, all while preserving animation spacing. The interface exposes:
-
-* **Target & Range** – operate on selected controls or every animated curve in
-  the scene, optionally constrained to the highlighted or playback range.
-* **Amount** – choose how many frames to insert or remove using the spin box or
-  the large arrow buttons.
-* **Key Spacing (Ripple)** – adjust selected keys to match a target spacing
-  interval (0=consecutive frames, 2=every other frame, etc.) while rippling
-  downstream keys.
-* **Apply & Safety** – re-run the most recent insert/remove operation, wrapped
-  in a single undo step, with an optional auto-close toggle.
-* **Help footer** – contextual guidance describing each control and workflow.
-
-Usage notes:
-    Select controls or choose "All keyed in scene". Set Frames. Click ▲ to
-    insert or ▼ to remove. Optionally enable "Use Time Range" to operate on the
-    highlighted or playback range with ripple. Use "Key Spacing (Ripple)" after
-    selecting keys in the time slider to adjust them to a target spacing interval
-    (e.g., 0 for consecutive frames, 2 for every other frame).
+A compact, dockable Maya tool that helps animators insert or remove blocks of
+empty time, or fan selected keys onto an even spacing, all while preserving
+animation spacing. The interface is hosted inside a Maya ``workspaceControl``
+so it can float or be docked anywhere in the Maya UI, and features a top-level
+menu bar exposing an HTML-based Help/How To window.
 """
 
 from __future__ import annotations
@@ -413,17 +397,97 @@ def ripple_spacing_on_selected_keys(
     return True, changed
 
 
-class InsertRemoveFramesUI(QtWidgets.QDialog):
+WORKSPACE_CONTROL_NAME = "InsertRemoveFramesWorkspaceControl"
+# ``workspaceControl -uiScript`` is evaluated in the same language context
+# that created the control. We register it from Python via ``cmds``, so the
+# script runs as Python — no ``python("...")`` MEL wrapper.
+WORKSPACE_CONTROL_UI_SCRIPT = (
+    "import insert_remove_frames_tool as irft; "
+    "irft._restore_workspace_control()"
+)
+
+
+MODERN_STYLE = """
+QWidget#InsertRemoveFramesUI {
+    background: palette(window);
+}
+QFrame#Card {
+    background: palette(base);
+    border: 1px solid rgba(255, 255, 255, 25);
+    border-radius: 6px;
+}
+QLabel#SectionTitle {
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: palette(bright-text);
+    padding: 0px;
+}
+QLabel#SectionHint {
+    color: rgba(200, 200, 200, 160);
+}
+QPushButton#PrimaryAction {
+    background: #4a6fa5;
+    color: white;
+    border: 1px solid #365684;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-weight: 600;
+}
+QPushButton#PrimaryAction:hover { background: #5a82bc; }
+QPushButton#PrimaryAction:pressed { background: #3d5d8c; }
+QPushButton#DangerAction {
+    background: #a5533a;
+    color: white;
+    border: 1px solid #7d3e2c;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-weight: 600;
+}
+QPushButton#DangerAction:hover { background: #bd6349; }
+QPushButton#DangerAction:pressed { background: #8a432e; }
+QPushButton#AccentAction {
+    background: #3d8b6a;
+    color: white;
+    border: 1px solid #2d6750;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-weight: 600;
+}
+QPushButton#AccentAction:hover { background: #4ba57f; }
+QPushButton#AccentAction:pressed { background: #306e54; }
+QToolButton#SegmentButton {
+    padding: 4px 10px;
+    border: 1px solid rgba(255,255,255,35);
+    background: palette(button);
+}
+QToolButton#SegmentButton:checked {
+    background: #4a6fa5;
+    color: white;
+    border: 1px solid #365684;
+}
+QSpinBox { padding: 3px 4px; }
+"""
+
+
+class InsertRemoveFramesUI(QtWidgets.QWidget):
+    """Modern, compact UI for the Add/Remove Inbetweens tool.
+
+    Designed to sit inside a Maya ``workspaceControl`` so it can float freely
+    or be docked alongside any other Maya panel. All verbose guidance has been
+    moved out of the panel itself and into a Help menu that opens an HTML
+    How To window, keeping the tool window tight and unobtrusive.
+    """
+
     WINDOW_TITLE = "Add/Remove Inbetweens"
-    MIN_WIDTH = 340
+    MIN_WIDTH = 280
 
     def __init__(self, parent: Optional[QtWidget] = None) -> None:
-        super().__init__(parent or _maya_main_window())
+        super().__init__(parent)
         self.setObjectName("InsertRemoveFramesUI")
         self.setWindowTitle(self.WINDOW_TITLE)
-        self.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
         self.setMinimumWidth(self.MIN_WIDTH)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        self.setStyleSheet(MODERN_STYLE)
+        self._help_dialog: Optional[QtWidgets.QDialog] = None
 
         self._build_ui()
         self._restore_settings()
@@ -431,135 +495,169 @@ class InsertRemoveFramesUI(QtWidgets.QDialog):
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
         main_layout = QtWidgets.QVBoxLayout(self)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # Target & Range
-        target_group = QtWidgets.QGroupBox("Target && Range", self)
-        target_layout = QtWidgets.QVBoxLayout(target_group)
-        target_layout.setSpacing(6)
+        self._build_menu_bar(main_layout)
 
-        self.selected_radio = QtWidgets.QRadioButton("Selected objects", target_group)
-        self.scene_radio = QtWidgets.QRadioButton("All keyed in scene", target_group)
-        target_layout.addWidget(self.selected_radio)
-        target_layout.addWidget(self.scene_radio)
+        content = QtWidgets.QWidget(self)
+        content_layout = QtWidgets.QVBoxLayout(content)
+        content_layout.setContentsMargins(8, 6, 8, 8)
+        content_layout.setSpacing(8)
 
-        self.range_checkbox = QtWidgets.QCheckBox("Use Time Range", target_group)
-        target_layout.addWidget(self.range_checkbox)
+        content_layout.addWidget(self._build_target_card())
+        content_layout.addWidget(self._build_frames_card())
+        content_layout.addWidget(self._build_spacing_card())
 
-        target_helper = QtWidgets.QLabel(
-            "Choose the animation scope for insert/remove operations. "
-            "Selected objects limits edits to highlighted controls; All keyed in "
-            "scene processes every animated curve. Enable Use Time Range to operate "
-            "on the time slider selection (or playback range) and ripple keys after it.",
-            target_group,
-        )
-        target_helper.setWordWrap(True)
-        target_font = target_helper.font()
-        target_font.setPointSizeF(target_font.pointSizeF() - 1)
-        target_helper.setFont(target_font)
-        target_layout.addWidget(target_helper)
+        self.status_label = QtWidgets.QLabel("", content)
+        self.status_label.setObjectName("SectionHint")
+        status_font = self.status_label.font()
+        status_font.setPointSizeF(status_font.pointSizeF() - 1)
+        self.status_label.setFont(status_font)
+        self.status_label.setAlignment(QtCore.Qt.AlignCenter)
+        content_layout.addWidget(self.status_label)
 
-        main_layout.addWidget(target_group)
+        content_layout.addStretch(1)
 
-        # Amount section
-        amount_group = QtWidgets.QGroupBox("Insert / Remove Frames", self)
-        amount_layout = QtWidgets.QVBoxLayout(amount_group)
-        amount_layout.setSpacing(8)
-
-        frames_layout = QtWidgets.QHBoxLayout()
-        frames_layout.setSpacing(6)
-        frames_label = QtWidgets.QLabel("Frames:", amount_group)
-        self.frames_spinbox = QtWidgets.QSpinBox(amount_group)
-        self.frames_spinbox.setRange(1, 1000)
-        self.frames_spinbox.setValue(1)
-        self.frames_spinbox.setKeyboardTracking(False)
-        self.frames_spinbox.setButtonSymbols(QtWidgets.QAbstractSpinBox.PlusMinus)
-        frames_layout.addWidget(frames_label)
-        frames_layout.addWidget(self.frames_spinbox, 1)
-        amount_layout.addLayout(frames_layout)
-
-        arrows_layout = QtWidgets.QHBoxLayout()
-        arrows_layout.setSpacing(10)
-        self.insert_button = QtWidgets.QPushButton("▲ Insert Frames", amount_group)
-        self.insert_button.setMinimumHeight(36)
-        self.insert_button.setToolTip(
-            "Insert blank frames: pushes keys forward from current time or selected range."
-        )
-        self.remove_button = QtWidgets.QPushButton("▼ Remove Frames", amount_group)
-        self.remove_button.setMinimumHeight(36)
-        self.remove_button.setToolTip(
-            "Remove frames: pulls keys backward from current time or selected range."
-        )
-        arrows_layout.addWidget(self.insert_button, 1)
-        arrows_layout.addWidget(self.remove_button, 1)
-        amount_layout.addLayout(arrows_layout)
-
-        helper_label = QtWidgets.QLabel(
-            "Insert shifts keys forward to create empty frames. Remove shifts keys "
-            "backward to close gaps. The action starts at the current time, or uses "
-            "the highlighted time range when Use Time Range is enabled.",
-            amount_group,
-        )
-        helper_label.setWordWrap(True)
-        font = helper_label.font()
-        font.setPointSizeF(font.pointSizeF() - 1)
-        helper_label.setFont(font)
-        amount_layout.addWidget(helper_label)
-
-        main_layout.addWidget(amount_group)
-
-        # Key Spacing section
-        inbetween_group = QtWidgets.QGroupBox("Key Spacing (Ripple)", self)
-        inbetween_layout = QtWidgets.QVBoxLayout(inbetween_group)
-        inbetween_layout.setSpacing(8)
-
-        inbetween_row = QtWidgets.QHBoxLayout()
-        inbetween_row.setSpacing(6)
-        inbetween_label = QtWidgets.QLabel("Spacing Amount:", inbetween_group)
-        self.inbetween_spinbox = QtWidgets.QSpinBox(inbetween_group)
-        self.inbetween_spinbox.setRange(0, 1000)
-        self.inbetween_spinbox.setValue(2)
-        self.inbetween_spinbox.setKeyboardTracking(False)
-        self.inbetween_spinbox.setButtonSymbols(QtWidgets.QAbstractSpinBox.PlusMinus)
-        inbetween_row.addWidget(inbetween_label)
-        inbetween_row.addWidget(self.inbetween_spinbox, 1)
-        inbetween_layout.addLayout(inbetween_row)
-
-        self.apply_spacing_button = QtWidgets.QPushButton(
-            "Apply Spacing", inbetween_group
-        )
-        self.apply_spacing_button.setMinimumHeight(32)
-        self.apply_spacing_button.setToolTip(
-            "Adjust selected keys to match the target spacing interval."
-        )
-        inbetween_layout.addWidget(self.apply_spacing_button)
-
-        inbetween_helper = QtWidgets.QLabel(
-            "Select keys in the time slider first. Apply Spacing redistributes the "
-            "selected keys to the target interval and ripples later keys on those "
-            "curves (0=consecutive, 2=every other frame, etc.).",
-            inbetween_group,
-        )
-        inbetween_helper.setWordWrap(True)
-        helper_font = inbetween_helper.font()
-        helper_font.setPointSizeF(helper_font.pointSizeF() - 1)
-        inbetween_helper.setFont(helper_font)
-        inbetween_layout.addWidget(inbetween_helper)
-
-        main_layout.addWidget(inbetween_group)
-
-        # Footer help
-        footer_layout = QtWidgets.QHBoxLayout()
-        footer_layout.addStretch(1)
-        self.help_button = QtWidgets.QToolButton(self)
-        self.help_button.setText("?")
-        self.help_button.setToolTip("About this tool")
-        footer_layout.addWidget(self.help_button)
-        main_layout.addLayout(footer_layout)
+        main_layout.addWidget(content)
 
         self._create_shortcuts()
         self._connect_signals()
+
+    def _build_menu_bar(self, main_layout: QtWidgets.QVBoxLayout) -> None:
+        self.menu_bar = QtWidgets.QMenuBar(self)
+        self.menu_bar.setNativeMenuBar(False)
+
+        edit_menu = self.menu_bar.addMenu("Tools")
+        self.reset_action = edit_menu.addAction("Reset to Defaults")
+
+        help_menu = self.menu_bar.addMenu("Help")
+        self.how_to_action = help_menu.addAction("How To...")
+        self.shortcuts_action = help_menu.addAction("Keyboard Shortcuts")
+        help_menu.addSeparator()
+        self.about_action = help_menu.addAction("About")
+
+        main_layout.setMenuBar(self.menu_bar)
+
+    def _build_card(self, title: str) -> Tuple[QtWidgets.QFrame, QtWidgets.QVBoxLayout]:
+        card = QtWidgets.QFrame(self)
+        card.setObjectName("Card")
+        card.setFrameShape(QtWidgets.QFrame.StyledPanel)
+
+        card_layout = QtWidgets.QVBoxLayout(card)
+        card_layout.setContentsMargins(8, 6, 8, 8)
+        card_layout.setSpacing(6)
+
+        title_label = QtWidgets.QLabel(title, card)
+        title_label.setObjectName("SectionTitle")
+        card_layout.addWidget(title_label)
+        return card, card_layout
+
+    def _build_target_card(self) -> QtWidgets.QFrame:
+        card, layout = self._build_card("Scope")
+
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.setSpacing(0)
+        self.mode_group = QtWidgets.QButtonGroup(card)
+        self.mode_group.setExclusive(True)
+
+        self.selected_button = QtWidgets.QToolButton(card)
+        self.selected_button.setObjectName("SegmentButton")
+        self.selected_button.setText("Selected")
+        self.selected_button.setCheckable(True)
+        self.selected_button.setToolTip("Operate on anim curves of selected objects.")
+        self.selected_button.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
+        )
+
+        self.scene_button = QtWidgets.QToolButton(card)
+        self.scene_button.setObjectName("SegmentButton")
+        self.scene_button.setText("All Keyed")
+        self.scene_button.setCheckable(True)
+        self.scene_button.setToolTip("Operate on every animated curve in the scene.")
+        self.scene_button.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
+        )
+
+        self.mode_group.addButton(self.selected_button, 0)
+        self.mode_group.addButton(self.scene_button, 1)
+        mode_row.addWidget(self.selected_button)
+        mode_row.addWidget(self.scene_button)
+        layout.addLayout(mode_row)
+
+        self.range_checkbox = QtWidgets.QCheckBox("Use Time Range (ripple)", card)
+        self.range_checkbox.setToolTip(
+            "Operate on the time-slider highlight (or playback range) and\n"
+            "ripple later keys so spacing is preserved."
+        )
+        layout.addWidget(self.range_checkbox)
+
+        return card
+
+    def _build_frames_card(self) -> QtWidgets.QFrame:
+        card, layout = self._build_card("Insert / Remove Frames")
+
+        frames_row = QtWidgets.QHBoxLayout()
+        frames_row.setSpacing(6)
+        frames_label = QtWidgets.QLabel("Frames", card)
+        self.frames_spinbox = QtWidgets.QSpinBox(card)
+        self.frames_spinbox.setRange(1, 1000)
+        self.frames_spinbox.setValue(1)
+        self.frames_spinbox.setKeyboardTracking(False)
+        self.frames_spinbox.setAlignment(QtCore.Qt.AlignRight)
+        self.frames_spinbox.setButtonSymbols(QtWidgets.QAbstractSpinBox.PlusMinus)
+        frames_row.addWidget(frames_label)
+        frames_row.addWidget(self.frames_spinbox, 1)
+        layout.addLayout(frames_row)
+
+        buttons_row = QtWidgets.QHBoxLayout()
+        buttons_row.setSpacing(6)
+        self.remove_button = QtWidgets.QPushButton("▼  Remove", card)
+        self.remove_button.setObjectName("DangerAction")
+        self.remove_button.setMinimumHeight(30)
+        self.remove_button.setToolTip(
+            "Shift keys backward (Ctrl/Cmd+↓)."
+        )
+        self.insert_button = QtWidgets.QPushButton("▲  Insert", card)
+        self.insert_button.setObjectName("PrimaryAction")
+        self.insert_button.setMinimumHeight(30)
+        self.insert_button.setToolTip(
+            "Shift keys forward to create blank frames (Ctrl/Cmd+↑)."
+        )
+        buttons_row.addWidget(self.remove_button, 1)
+        buttons_row.addWidget(self.insert_button, 1)
+        layout.addLayout(buttons_row)
+
+        return card
+
+    def _build_spacing_card(self) -> QtWidgets.QFrame:
+        card, layout = self._build_card("Key Spacing (Ripple)")
+
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(6)
+        row.addWidget(QtWidgets.QLabel("Spacing", card))
+
+        self.inbetween_spinbox = QtWidgets.QSpinBox(card)
+        self.inbetween_spinbox.setRange(0, 1000)
+        self.inbetween_spinbox.setValue(2)
+        self.inbetween_spinbox.setKeyboardTracking(False)
+        self.inbetween_spinbox.setAlignment(QtCore.Qt.AlignRight)
+        self.inbetween_spinbox.setButtonSymbols(QtWidgets.QAbstractSpinBox.PlusMinus)
+        self.inbetween_spinbox.setToolTip(
+            "0 = consecutive frames, 2 = every other frame, etc."
+        )
+        row.addWidget(self.inbetween_spinbox, 1)
+
+        self.apply_spacing_button = QtWidgets.QPushButton("Apply", card)
+        self.apply_spacing_button.setObjectName("AccentAction")
+        self.apply_spacing_button.setMinimumHeight(26)
+        self.apply_spacing_button.setToolTip(
+            "Redistribute selected keys to match the target spacing interval."
+        )
+        row.addWidget(self.apply_spacing_button)
+        layout.addLayout(row)
+
+        return card
 
     def _create_shortcuts(self) -> None:
         for sequence, direction in (("Ctrl+Up", 1), ("Meta+Up", 1), ("Ctrl+Down", -1), ("Meta+Down", -1)):
@@ -572,29 +670,49 @@ class InsertRemoveFramesUI(QtWidgets.QDialog):
         self.apply_spacing_button.clicked.connect(
             lambda: self._on_ripple_spacing_clicked(1)
         )
-        self.help_button.clicked.connect(self._show_help)
-        self.selected_radio.toggled.connect(self._save_settings)
-        self.scene_radio.toggled.connect(self._save_settings)
+        self.how_to_action.triggered.connect(self._show_how_to)
+        self.shortcuts_action.triggered.connect(self._show_shortcuts)
+        self.about_action.triggered.connect(self._show_about)
+        self.reset_action.triggered.connect(self._reset_defaults)
+        self.mode_group.buttonToggled.connect(lambda *_: self._save_settings())
         self.range_checkbox.toggled.connect(self._save_settings)
         self.frames_spinbox.valueChanged.connect(self._save_settings)
         self.inbetween_spinbox.valueChanged.connect(self._save_settings)
+
+    # ------------------------------------------------------------- helpers
+    def _is_scene_mode(self) -> bool:
+        return self.scene_button.isChecked()
 
     # ---------------------------------------------------------------- logic
     def _restore_settings(self) -> None:
         mode = _get_option_var_string("mode", "selected")
         if mode == "scene":
-            self.scene_radio.setChecked(True)
+            self.scene_button.setChecked(True)
         else:
-            self.selected_radio.setChecked(True)
+            self.selected_button.setChecked(True)
         self.range_checkbox.setChecked(_get_option_var_bool("use_range", False))
         self.frames_spinbox.setValue(_get_option_var_int("frames", 1))
         self.inbetween_spinbox.setValue(_get_option_var_int("inbetweens", 2))
 
     def _save_settings(self) -> None:
-        _set_option_var_string("mode", "scene" if self.scene_radio.isChecked() else "selected")
+        _set_option_var_string("mode", "scene" if self._is_scene_mode() else "selected")
         _set_option_var_bool("use_range", self.range_checkbox.isChecked())
         _set_option_var_int("frames", self.frames_spinbox.value())
         _set_option_var_int("inbetweens", self.inbetween_spinbox.value())
+
+    def _reset_defaults(self) -> None:
+        self.selected_button.setChecked(True)
+        self.range_checkbox.setChecked(False)
+        self.frames_spinbox.setValue(1)
+        self.inbetween_spinbox.setValue(2)
+        self._save_settings()
+        self._set_status("Defaults restored.", ok=True)
+
+    def _set_status(self, message: str, ok: bool = True) -> None:
+        color = "#a0ff7a" if ok else "#ffaf00"
+        self.status_label.setText(
+            f"<span style='color:{color}'>{message}</span>"
+        )
 
     def _on_arrow_clicked(self, direction: int) -> None:
         self._apply_shift(direction)
@@ -603,15 +721,18 @@ class InsertRemoveFramesUI(QtWidgets.QDialog):
         self.frames_spinbox.interpretText()
         self.frames_spinbox.clearFocus()
         frames = self.frames_spinbox.value()
-        mode = "scene" if self.scene_radio.isChecked() else "selected"
+        mode = "scene" if self._is_scene_mode() else "selected"
         use_range = self.range_checkbox.isChecked()
 
         curves = gather_anim_curves(mode)
         if not curves:
-            if mode == "selected":
-                _show_headsup("<span style='color:#ffaf00'>No keyed objects selected.</span>")
-            else:
-                _show_headsup("<span style='color:#ffaf00'>No animation curves found.</span>")
+            warning = (
+                "No keyed objects selected."
+                if mode == "selected"
+                else "No animation curves found."
+            )
+            _show_headsup(f"<span style='color:#ffaf00'>{warning}</span>")
+            self._set_status(warning, ok=False)
             return
 
         delta = frames * direction
@@ -620,16 +741,21 @@ class InsertRemoveFramesUI(QtWidgets.QDialog):
             changed = shift_keys(curves, delta, use_range)
         except Exception as exc:  # pragma: no cover - Maya specific
             cmds.warning(f"Insert/Remove Blank Frames failed: {exc}")
+            self._set_status(f"Error: {exc}", ok=False)
             return
 
         if not changed:
-            _show_headsup("<span style='color:#ffaf00'>No keys in the chosen scope/range.</span>")
+            warning = "No keys in the chosen scope/range."
+            _show_headsup(f"<span style='color:#ffaf00'>{warning}</span>")
+            self._set_status(warning, ok=False)
             return
 
         self._save_settings()
 
         action = "Inserted" if direction > 0 else "Removed"
-        _show_headsup(f"<span style='color:#a0ff7a'>{action} {frames} frame(s).</span>")
+        message = f"{action} {frames} frame(s)."
+        _show_headsup(f"<span style='color:#a0ff7a'>{message}</span>")
+        self._set_status(message, ok=True)
 
     def _on_ripple_spacing_clicked(self, direction: int) -> None:
         self.inbetween_spinbox.interpretText()
@@ -643,62 +769,230 @@ class InsertRemoveFramesUI(QtWidgets.QDialog):
             )
         except Exception as exc:  # pragma: no cover - Maya specific
             cmds.warning(f"Key Spacing failed: {exc}")
+            self._set_status(f"Error: {exc}", ok=False)
             return
 
         if not valid:
-            _show_headsup(
-                "<span style='color:#ffaf00'>Select at least two keyed frames to space.</span>"
-            )
+            warning = "Select at least two keyed frames to space."
+            _show_headsup(f"<span style='color:#ffaf00'>{warning}</span>")
+            self._set_status(warning, ok=False)
             return
 
         if not changed:
-            _show_headsup(
-                "<span style='color:#a0ff7a'>No keys were spaced.</span>"
-            )
+            note = "No keys needed spacing."
+            _show_headsup(f"<span style='color:#a0ff7a'>{note}</span>")
+            self._set_status(note, ok=True)
             return
 
         _set_option_var_int("inbetweens", spacing_amount)
-        interval_desc = "consecutive frames" if spacing_amount == 0 else f"interval of {spacing_amount}"
-        _show_headsup(
-            f"<span style='color:#a0ff7a'>Applied spacing: {interval_desc}.</span>"
+        interval_desc = (
+            "consecutive frames" if spacing_amount == 0 else f"interval of {spacing_amount}"
         )
+        message = f"Applied spacing: {interval_desc}."
+        _show_headsup(f"<span style='color:#a0ff7a'>{message}</span>")
+        self._set_status(message, ok=True)
 
-    def _show_help(self) -> None:
-        message = (
-            "<b>Insert</b> shifts keys forward, creating blank space. "
-            "<b>Remove</b> shifts keys backward, collapsing space.<br><br>"
-            "<u>Controls</u><br>"
-            "&bull; <b>Selected objects</b> limits edits to the highlighted DAG nodes.<br>"
-            "&bull; <b>All keyed in scene</b> processes every anim curve in the file.<br>"
-            "&bull; <b>Use Time Range</b> uses the time-slider highlight or playback range "
-            "and ripples keys that follow it.<br>"
-            "&bull; <b>Frames</b> sets how many frames to insert or remove.<br>"
-            "&bull; <b>Insert/Remove Frames</b> buttons perform the operation immediately.<br>"
-            "&bull; <b>Key Spacing (Ripple)</b> adjusts selected keys to match a target "
-            "spacing interval (0=consecutive, 2=every other frame, etc.) while "
-            "rippling later keys on those curves.<br><br>"
-            "Keyboard shortcuts: Ctrl/Cmd+Up = Insert, Ctrl/Cmd+Down = Remove."
-        )
-        QtWidgets.QMessageBox.information(self, "Add/Remove Inbetweens", message)
+    # ------------------------------------------------------------- help UI
+    def _show_how_to(self) -> None:
+        self._open_help_dialog("How To", _HOW_TO_HTML)
 
+    def _show_shortcuts(self) -> None:
+        self._open_help_dialog("Keyboard Shortcuts", _SHORTCUTS_HTML)
+
+    def _show_about(self) -> None:
+        self._open_help_dialog("About", _ABOUT_HTML)
+
+    def _open_help_dialog(self, title: str, html: str) -> None:
+        if self._help_dialog is None:
+            self._help_dialog = _HelpDialog(self)
+        self._help_dialog.set_content(title, html)
+        self._help_dialog.show()
+        self._help_dialog.raise_()
+        self._help_dialog.activateWindow()
+
+    # ------------------------------------------------------------------ qt
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802
         self._save_settings()
+        if self._help_dialog is not None:
+            self._help_dialog.close()
         super().closeEvent(event)
+
+
+class _HelpDialog(QtWidgets.QDialog):
+    """HTML Help window with a sidebar of sections."""
+
+    def __init__(self, parent: Optional[QtWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Add/Remove Inbetweens — Help")
+        self.setMinimumSize(520, 420)
+        self.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        self.section_list = QtWidgets.QListWidget(self)
+        self.section_list.setFixedWidth(140)
+        self.section_list.addItem("How To")
+        self.section_list.addItem("Keyboard Shortcuts")
+        self.section_list.addItem("About")
+
+        self.text_view = QtWidgets.QTextBrowser(self)
+        self.text_view.setOpenExternalLinks(True)
+
+        layout.addWidget(self.section_list)
+        layout.addWidget(self.text_view, 1)
+
+        self.section_list.currentRowChanged.connect(self._on_section_changed)
+
+    def _on_section_changed(self, row: int) -> None:
+        if row == 0:
+            self.text_view.setHtml(_HOW_TO_HTML)
+        elif row == 1:
+            self.text_view.setHtml(_SHORTCUTS_HTML)
+        elif row == 2:
+            self.text_view.setHtml(_ABOUT_HTML)
+
+    def set_content(self, title: str, html: str) -> None:
+        self.setWindowTitle(f"Add/Remove Inbetweens — {title}")
+        mapping = {"How To": 0, "Keyboard Shortcuts": 1, "About": 2}
+        row = mapping.get(title, 0)
+        self.section_list.blockSignals(True)
+        self.section_list.setCurrentRow(row)
+        self.section_list.blockSignals(False)
+        self.text_view.setHtml(html)
+
+
+_HOW_TO_HTML = """
+<html><body style="font-family: sans-serif; line-height: 1.5;">
+<h2 style="margin-top:0;">How To Use</h2>
+<p>The <b>Add/Remove Inbetweens</b> tool lets you insert or remove blocks of
+empty time and redistribute keys onto an even spacing &mdash; without losing
+tangents or breaking the shape of your curves.</p>
+
+<h3>1. Insert or Remove Frames</h3>
+<ol>
+  <li>Pick a <b>Scope</b>:
+    <ul>
+      <li><b>Selected</b> &mdash; only anim curves on the selected controls.</li>
+      <li><b>All Keyed</b> &mdash; every animated curve in the scene.</li>
+    </ul>
+  </li>
+  <li>Optionally enable <b>Use Time Range (ripple)</b> to operate on the
+      highlighted time-slider range (or playback range) and ripple later keys
+      so downstream spacing is preserved.</li>
+  <li>Enter the number of <b>Frames</b>.</li>
+  <li>Click <b style="color:#5a82bc;">&#9650; Insert</b> to push keys forward
+      or <b style="color:#bd6349;">&#9660; Remove</b> to pull them back.</li>
+</ol>
+
+<h3>2. Key Spacing (Ripple)</h3>
+<ol>
+  <li>Select the frames you want to re-space in Maya&rsquo;s time slider.</li>
+  <li>Set <b>Spacing</b>:
+    <ul>
+      <li><code>0</code> &mdash; keys on consecutive frames.</li>
+      <li><code>2</code> &mdash; every other frame.</li>
+      <li><code>n</code> &mdash; interval of <code>n</code> frames between keys.</li>
+    </ul>
+  </li>
+  <li>Click <b style="color:#4ba57f;">Apply</b>. Later keys on the same curves
+      ripple to preserve timing.</li>
+</ol>
+
+<h3>Tips</h3>
+<ul>
+  <li>Every operation is a single undo step (<code>Ctrl/Cmd+Z</code>).</li>
+  <li>Tangents and curve shapes are preserved; locked channels are skipped.</li>
+  <li>The panel can be docked into Maya&rsquo;s interface &mdash; drag the
+      title bar onto any dock area.</li>
+</ul>
+</body></html>
+"""
+
+_SHORTCUTS_HTML = """
+<html><body style="font-family: sans-serif; line-height: 1.6;">
+<h2 style="margin-top:0;">Keyboard Shortcuts</h2>
+<table cellpadding="6" style="border-collapse:collapse;">
+  <tr><td><b>Ctrl + &#8593;</b> &nbsp;/&nbsp; <b>Cmd + &#8593;</b></td>
+      <td>Insert frames</td></tr>
+  <tr><td><b>Ctrl + &#8595;</b> &nbsp;/&nbsp; <b>Cmd + &#8595;</b></td>
+      <td>Remove frames</td></tr>
+  <tr><td><b>Ctrl + Z</b> &nbsp;/&nbsp; <b>Cmd + Z</b></td>
+      <td>Undo the last insert / remove / spacing operation</td></tr>
+</table>
+<p>All shortcuts work whenever the tool window or any of its widgets have
+keyboard focus.</p>
+</body></html>
+"""
+
+_ABOUT_HTML = """
+<html><body style="font-family: sans-serif; line-height: 1.5;">
+<h2 style="margin-top:0;">About</h2>
+<p><b>Add/Remove Inbetweens</b> &mdash; a compact, dockable Maya tool that
+helps animators retime shots by inserting blank frames, removing frames,
+or fanning keys onto an even spacing.</p>
+<p>Created by <b>David Shepstone</b>.</p>
+<p>Compatible with Maya 2020 &ndash; 2026+, on Windows, macOS and Linux.</p>
+</body></html>
+"""
+
+
+def _restore_workspace_control() -> None:
+    """Rebuild the UI inside the existing workspaceControl on session restore."""
+
+    global _window
+    _window = InsertRemoveFramesUI()
+
+    workspace_ptr = omui.MQtUtil.findControl(WORKSPACE_CONTROL_NAME)
+    if workspace_ptr is None:
+        return
+
+    workspace_widget = _wrap_instance(int(workspace_ptr), QtWidgets.QWidget)
+    layout = workspace_widget.layout()
+    if layout is None:
+        layout = QtWidgets.QVBoxLayout(workspace_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+    layout.addWidget(_window)
 
 
 _window: Optional[InsertRemoveFramesUI] = None
 
 
 def show() -> InsertRemoveFramesUI:
-    """Display the Add/Remove Inbetweens window."""
+    """Display the Add/Remove Inbetweens window inside a Maya workspaceControl.
 
-    global _window
-    if _window is None or not _window.isVisible():
-        _window = InsertRemoveFramesUI()
-    _window.show()
-    _window.raise_()
-    _window.activateWindow()
-    return _window
+    Using ``workspaceControl`` means the panel can be freely floated, docked,
+    tabbed with other panels, and is automatically restored by Maya on the
+    next session via the registered ``uiScript``. Any existing control (even
+    a broken/empty one left over from a prior failed load) is deleted first
+    to guarantee the UI always rebuilds cleanly.
+    """
+
+    if cmds.workspaceControl(WORKSPACE_CONTROL_NAME, exists=True):
+        try:
+            cmds.deleteUI(WORKSPACE_CONTROL_NAME, control=True)
+        except RuntimeError:
+            pass
+
+    cmds.workspaceControl(
+        WORKSPACE_CONTROL_NAME,
+        label=InsertRemoveFramesUI.WINDOW_TITLE,
+        retain=False,
+        floating=True,
+        initialWidth=320,
+        initialHeight=380,
+        minimumWidth=InsertRemoveFramesUI.MIN_WIDTH,
+        uiScript=WORKSPACE_CONTROL_UI_SCRIPT,
+    )
+
+    # Defensive fallback: if Maya somehow didn't run the uiScript (rare, but
+    # can happen if the module was renamed), build the UI manually.
+    if _window is None:
+        _restore_workspace_control()
+
+    return _window  # type: ignore[return-value]
 
 
 __all__ = [
