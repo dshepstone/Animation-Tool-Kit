@@ -10,7 +10,6 @@
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library. If not, see <http://www.gnu.org/licenses/>.
 
-from studiovendor import six
 from studiovendor.Qt import QtWidgets
 
 
@@ -48,7 +47,7 @@ class Menu(QtWidgets.QMenu):
 
         :rtype: QtWidgets.QAction
         """
-        if isinstance(before, six.string_types):
+        if isinstance(before, str):
             before = self.findAction(before)
 
         return QtWidgets.QMenu.insertAction(self, before, *args)
@@ -62,7 +61,7 @@ class Menu(QtWidgets.QMenu):
         
         :rtype: QtWidgets.QAction
         """
-        if isinstance(before,  six.string_types):
+        if isinstance(before,  str):
             before = self.findAction(before)
 
         QtWidgets.QMenu.insertMenu(self, before, menu)
@@ -75,7 +74,7 @@ class Menu(QtWidgets.QMenu):
 
         :rtype: QtWidgets.QAction
         """
-        if isinstance(before, six.string_types):
+        if isinstance(before, str):
             before = self.findAction(before)
 
         return QtWidgets.QMenu.insertSeparator(self, before)

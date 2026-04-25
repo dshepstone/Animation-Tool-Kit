@@ -68,8 +68,6 @@ import mutils
 import logging
 import traceback
 
-from studiovendor import six
-
 try:
     import maya.cmds
 except ImportError:
@@ -157,7 +155,7 @@ class MirrorTable(mutils.TransferObject):
         """
         mirrorPlane = mirrorPlane or MirrorPlane.YZ
 
-        if isinstance(mirrorPlane, six.string_types):
+        if isinstance(mirrorPlane, str):
 
             if mirrorPlane.lower() == "yz":
                 mirrorPlane = MirrorPlane.YZ
@@ -213,7 +211,7 @@ class MirrorTable(mutils.TransferObject):
         :type reSides: str or list[str]
         :rtype: str
         """
-        if isinstance(reSides, six.string_types):
+        if isinstance(reSides, str):
             reSides = reSides.split("|")
 
         # Compile the list of regular expressions into a re.object

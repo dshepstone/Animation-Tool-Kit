@@ -10,7 +10,6 @@
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library. If not, see <http://www.gnu.org/licenses/>.
 
-from studiovendor import six
 from studiovendor.Qt import QtCore
 from studiovendor.Qt import QtWidgets
 
@@ -212,7 +211,7 @@ class StatusWidget(QtWidgets.QFrame):
             self._button.hide()
 
         if message:
-            self._label.setText(six.text_type(message))
+            self._label.setText(str(message))
             self._timer.stop()
             self._timer.start(msecs)
         else:

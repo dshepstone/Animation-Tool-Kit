@@ -12,7 +12,6 @@
 
 import logging
 
-from studiovendor import six
 from studiovendor.Qt import QtGui
 from studiovendor.Qt import QtCore
 from studiovendor.Qt import QtWidgets
@@ -220,7 +219,7 @@ class MenuBarWidget(QtWidgets.QToolBar):
         """
         action.setParent(self)
 
-        if isinstance(before, six.string_types):
+        if isinstance(before, str):
             before = self.findAction(before)
 
         action = QtWidgets.QToolBar.insertAction(self, before, action)

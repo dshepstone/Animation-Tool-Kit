@@ -12,7 +12,6 @@
 
 from .themesmenu import Theme
 
-from studiovendor import six
 from studiovendor.Qt import QtCore
 from studiovendor.Qt import QtWidgets
 
@@ -578,7 +577,7 @@ class MessageBox(QtWidgets.QDialog):
         :type text: str
         :rtype: None 
         """
-        text = six.text_type(text)
+        text = str(text)
         self._message.setText(text)
 
     def inputText(self):

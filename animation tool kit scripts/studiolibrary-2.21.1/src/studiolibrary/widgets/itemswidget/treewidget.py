@@ -16,8 +16,6 @@ from functools import partial
 from studiovendor.Qt import QtGui
 from studiovendor.Qt import QtCore
 from studiovendor.Qt import QtWidgets
-from studiovendor import six
-
 import studioqt
 
 from .groupitem import GroupItem
@@ -386,7 +384,7 @@ class TreeWidget(ItemViewMixin, QtWidgets.QTreeWidget):
         :type value: bool
         :rtype: None
         """
-        if isinstance(column, six.string_types):
+        if isinstance(column, str):
             column = self.columnFromLabel(column)
 
         label = self.labelFromColumn(column)

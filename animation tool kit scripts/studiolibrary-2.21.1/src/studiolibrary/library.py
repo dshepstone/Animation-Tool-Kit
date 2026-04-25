@@ -17,7 +17,6 @@ import time
 import logging
 import collections
 
-from studiovendor import six
 from studiovendor.Qt import QtCore
 
 import studiolibrary
@@ -884,14 +883,14 @@ class Library(QtCore.QObject):
             for key, cond, value in filters:
 
                 if key == '*':
-                    itemValue = six.text_type(data)
+                    itemValue = str(data)
                 else:
                     itemValue = data.get(key)
 
-                if isinstance(value, six.string_types):
+                if isinstance(value, str):
                     value = value.lower()
 
-                if isinstance(itemValue, six.string_types):
+                if isinstance(itemValue, str):
                     itemValue = itemValue.lower()
 
                 if not itemValue:

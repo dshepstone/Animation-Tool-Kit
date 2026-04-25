@@ -10,7 +10,6 @@
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library. If not, see <http://www.gnu.org/licenses/>.
 
-from studiovendor import six
 from studiovendor.Qt import QtGui
 
 import studioqt
@@ -28,7 +27,7 @@ class Pixmap(QtGui.QPixmap):
         :type color: QtGui.QColor
         :rtype: None
         """
-        if isinstance(color, six.string_types):
+        if isinstance(color, str):
             color = studioqt.Color.fromString(color)
 
         if not self.isNull():

@@ -13,8 +13,6 @@
 from studiovendor.Qt import QtGui
 from studiovendor.Qt import QtCore
 from studiovendor.Qt import QtWidgets
-from studiovendor import six
-
 import studioqt
 import studiolibrary
 
@@ -447,7 +445,7 @@ class Theme(QtCore.QObject):
 
         :type color: studioqt.Color | QtGui.QColor
         """
-        if isinstance(color, six.string_types):
+        if isinstance(color, str):
             color = studioqt.Color.fromString(color)
 
         if isinstance(color, QtGui.QColor):
@@ -463,7 +461,7 @@ class Theme(QtCore.QObject):
 
         :type color: studioqt.Color | QtGui.QColor
         """
-        if isinstance(color, six.string_types):
+        if isinstance(color, str):
             color = studioqt.Color.fromString(color)
 
         if isinstance(color, QtGui.QColor):
