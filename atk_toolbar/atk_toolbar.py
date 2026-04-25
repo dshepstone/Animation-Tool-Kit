@@ -759,7 +759,57 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
         for key in self.SLIDER_TYPES:
             self.slider_type_combo.addItem(key)
         self.slider_type_combo.setToolTip("Choose Inbetweener slider mode")
-        self.slider_type_combo.setFixedWidth(54)
+        self.slider_type_combo.setFixedWidth(58)
+        self.slider_type_combo.setCursor(QtCore.Qt.PointingHandCursor)
+        self.slider_type_combo.setStyleSheet(
+            "QComboBox {"
+            "  background: rgba(40,42,48,220);"
+            "  color: #f5f5f5;"
+            "  border: 1px solid rgba(255,255,255,28);"
+            "  border-radius: 6px;"
+            "  padding: 2px 4px 2px 8px;"
+            "  font-weight: bold;"
+            "}"
+            "QComboBox:hover {"
+            "  background: rgba(58,62,70,235);"
+            "  border: 1px solid rgba(255,255,255,60);"
+            "}"
+            "QComboBox:on {"
+            "  background: rgba(70,75,84,240);"
+            "  border: 1px solid rgba(100,180,255,140);"
+            "}"
+            "QComboBox:focus {"
+            "  border: 1px solid rgba(100,180,255,160);"
+            "}"
+            "QComboBox::drop-down {"
+            "  subcontrol-origin: padding;"
+            "  subcontrol-position: top right;"
+            "  width: 16px;"
+            "  border: none;"
+            "}"
+            "QComboBox::down-arrow {"
+            "  image: none;"
+            "  width: 0px;"
+            "  height: 0px;"
+            "  border-left: 4px solid transparent;"
+            "  border-right: 4px solid transparent;"
+            "  border-top: 5px solid #cfd2d6;"
+            "  margin-right: 4px;"
+            "}"
+            "QComboBox::down-arrow:hover {"
+            "  border-top: 5px solid #ffffff;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            "  background: #2a2c30;"
+            "  color: #e8e9ec;"
+            "  border: 1px solid #45474c;"
+            "  border-radius: 6px;"
+            "  padding: 4px;"
+            "  outline: 0;"
+            "  selection-background-color: rgba(100,180,255,70);"
+            "  selection-color: #ffffff;"
+            "}"
+        )
         main.addWidget(self.slider_type_combo)
 
         self.slider = self._vt.VertexTickedSlider(QtCore.Qt.Horizontal, label_text="LT")

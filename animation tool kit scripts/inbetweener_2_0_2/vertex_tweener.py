@@ -1479,97 +1479,124 @@ class VertexTickedSlider(QtWidgets.QSlider):
         self.setTickPosition(QtWidgets.QSlider.NoTicks)
 
     def paintEvent(self, event):
-        super(VertexTickedSlider, self).paintEvent(event)
+        # Skip the default Qt slider draw; we render the entire control ourselves
+        # so the stock groove/handle don't compete with the modern visuals.
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
 
         opt = QtWidgets.QStyleOptionSlider()
         self.initStyleOption(opt)
         groove = self.style().subControlRect(QtWidgets.QStyle.CC_Slider, opt, QtWidgets.QStyle.SC_SliderGroove, self)
 
         s_min, s_max = self.minimum(), self.maximum()
-        s_range = float(s_max - s_min)
+        s_range = float(s_max - s_min) or 1.0
+        cy = groove.center().y()
 
-        # Draw ticks every 10%
+        # Mode accent palette
+        if self.is_world:
+            accent = QtGui.QColor(255, 215, 0)
+            accent_dark = QtGui.QColor(200, 160, 0)
+            text_on_accent = QtGui.QColor(40, 40, 40)
+        elif self.is_tw:
+            accent = QtGui.QColor(100, 180, 255)
+            accent_dark = QtGui.QColor(60, 120, 200)
+            text_on_accent = QtGui.QColor(255, 255, 255)
+        else:
+            accent = QtGui.QColor(176, 176, 176)
+            accent_dark = QtGui.QColor(110, 110, 110)
+            text_on_accent = QtGui.QColor(255, 255, 255)
+
+        # Modern thin pill track
+        track_h = 4.0
+        track_rect = QtCore.QRectF(
+            groove.left(), cy - track_h / 2.0,
+            groove.width(), track_h,
+        )
+        track_grad = QtGui.QLinearGradient(track_rect.topLeft(), track_rect.bottomLeft())
+        track_grad.setColorAt(0.0, QtGui.QColor(28, 28, 30))
+        track_grad.setColorAt(1.0, QtGui.QColor(52, 54, 60))
+        painter.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 90), 1))
+        painter.setBrush(track_grad)
+        painter.drawRoundedRect(track_rect, track_h / 2.0, track_h / 2.0)
+
+        # Tick marks: clean notches at 0/50/100, refined dots between
         for val in range(s_min, s_max + 1, 10):
             x = groove.left() + ((val - s_min) / s_range * groove.width())
-            y = groove.center().y()
+            is_active_pos = (val == self.value())
+            is_major = (val % 50 == 0)
 
-            # Color Logic
-            if self.is_world:
-                # Gold/Yellow for World Tweener
-                if val == self.value():
-                    color = QtGui.QColor(255, 215, 0)  # Bright gold for current
-                else:
-                    color = QtGui.QColor(200, 160, 0)  # Darker gold for others
-            elif self.is_tw and (val < 0 or val > 100):
-                # Red/Orange for Local Tweener overshoots
-                color = QtGui.QColor(255, 80, 80) if val == self.value() else QtGui.QColor(255, 140, 60)
+            if self.is_tw and not self.is_world and (val < 0 or val > 100):
+                tick_color = QtGui.QColor(255, 80, 80) if is_active_pos else QtGui.QColor(255, 140, 60)
             else:
-                # Blue/Grey for normal range and BN
-                color = QtGui.QColor(100, 180, 255) if val == self.value() else QtGui.QColor(150, 150, 150)
+                tick_color = accent if is_active_pos else QtGui.QColor(122, 126, 134)
 
-            painter.setBrush(color)
-            painter.setPen(QtCore.Qt.NoPen)
-            # Make 0, 50, 100 slightly larger
-            size = 5 if val % 50 == 0 else 3
-            painter.drawEllipse(QtCore.QPointF(x, y), size, size)
+            if is_major:
+                pen = QtGui.QPen(tick_color.lighter(115), 1.6)
+                pen.setCapStyle(QtCore.Qt.RoundCap)
+                painter.setPen(pen)
+                painter.drawLine(QtCore.QPointF(x, cy - 6), QtCore.QPointF(x, cy + 6))
+            else:
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.setBrush(tick_color)
+                painter.drawEllipse(QtCore.QPointF(x, cy), 2.0, 2.0)
 
-        # Draw keyed-position tick (bright green diamond)
+        # Keyed-position diamond with soft halo
         if self.keyed_value is not None:
             kx = groove.left() + ((self.keyed_value - s_min) / s_range * groove.width())
-            ky = groove.center().y()
-            keyed_color = QtGui.QColor(0, 230, 120)  # Bright green
-            painter.setBrush(keyed_color)
+            halo = QtGui.QRadialGradient(QtCore.QPointF(kx, cy), 12)
+            halo.setColorAt(0.0, QtGui.QColor(0, 230, 120, 110))
+            halo.setColorAt(1.0, QtGui.QColor(0, 230, 120, 0))
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(halo)
+            painter.drawEllipse(QtCore.QPointF(kx, cy), 12, 12)
+
+            painter.setBrush(QtGui.QColor(0, 230, 120))
             painter.setPen(QtGui.QPen(QtGui.QColor(0, 180, 90), 1))
             diamond = QtGui.QPolygonF([
-                QtCore.QPointF(kx, ky - 7),
-                QtCore.QPointF(kx + 5, ky),
-                QtCore.QPointF(kx, ky + 7),
-                QtCore.QPointF(kx - 5, ky),
+                QtCore.QPointF(kx, cy - 6),
+                QtCore.QPointF(kx + 4.5, cy),
+                QtCore.QPointF(kx, cy + 6),
+                QtCore.QPointF(kx - 4.5, cy),
             ])
             painter.drawPolygon(diamond)
 
-        # Draw label box at handle position (this becomes the visual handle)
+        # Modern handle pill (soft shadow + gradient + inner highlight)
         if self.label_text:
-            # Calculate handle position based on current value
             current_val = self.value()
             handle_x = groove.left() + ((current_val - s_min) / s_range * groove.width())
-            handle_y = groove.center().y()
 
-            # Draw box at handle position
-            box_width = 35
-            box_height = 20
-            # Clamp box position to stay within widget bounds (with 5px margin)
-            margin = 5
-            box_x = handle_x - box_width/2
-            box_x = max(margin, min(box_x, self.width() - box_width - margin))
-            box_rect = QtCore.QRectF(box_x, handle_y - box_height/2, box_width, box_height)
+            box_w, box_h = 36.0, 22.0
+            margin = 4.0
+            bx = handle_x - box_w / 2.0
+            bx = max(margin, min(bx, self.width() - box_w - margin))
+            box_rect = QtCore.QRectF(bx, cy - box_h / 2.0, box_w, box_h)
 
-            # Box color based on slider type
-            if self.is_world:
-                box_color = QtGui.QColor(255, 215, 0, 230)  # Gold with transparency
-                text_color = QtGui.QColor(40, 40, 40)  # Dark text
-                border_color = QtGui.QColor(200, 160, 0)  # Darker gold border
-            elif self.is_tw:
-                box_color = QtGui.QColor(100, 180, 255, 230)  # Blue with transparency
-                text_color = QtGui.QColor(255, 255, 255)  # White text
-                border_color = QtGui.QColor(60, 120, 200)  # Darker blue border
-            else:
-                box_color = QtGui.QColor(150, 150, 150, 230)  # Grey with transparency
-                text_color = QtGui.QColor(255, 255, 255)  # White text
-                border_color = QtGui.QColor(100, 100, 100)  # Darker grey border
+            shadow_rect = box_rect.translated(0, 1.5)
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QColor(0, 0, 0, 95))
+            painter.drawRoundedRect(shadow_rect, 7, 7)
 
-            # Draw border
-            painter.setPen(QtGui.QPen(border_color, 2))
-            painter.setBrush(box_color)
-            painter.drawRoundedRect(box_rect, 4, 4)
+            grad = QtGui.QLinearGradient(box_rect.topLeft(), box_rect.bottomLeft())
+            grad.setColorAt(0.0, accent.lighter(115))
+            grad.setColorAt(1.0, accent_dark)
+            painter.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 110), 1))
+            painter.setBrush(grad)
+            painter.drawRoundedRect(box_rect, 7, 7)
 
-            # Draw text
-            painter.setPen(text_color)
+            inner = box_rect.adjusted(1, 1, -1, -1)
+            shine = QtGui.QLinearGradient(inner.topLeft(), inner.bottomLeft())
+            shine.setColorAt(0.0, QtGui.QColor(255, 255, 255, 70))
+            shine.setColorAt(0.5, QtGui.QColor(255, 255, 255, 0))
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(shine)
+            painter.drawRoundedRect(inner, 6, 6)
+
+            painter.setPen(text_on_accent)
             font = QtGui.QFont()
             font.setPointSize(10)
             font.setBold(True)
+            font.setLetterSpacing(QtGui.QFont.PercentageSpacing, 102)
             painter.setFont(font)
             painter.drawText(box_rect, QtCore.Qt.AlignCenter, self.label_text)
 
