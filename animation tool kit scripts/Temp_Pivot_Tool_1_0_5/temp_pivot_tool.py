@@ -1295,418 +1295,301 @@ def _build_ui(parent_layout: str) -> None:
         except RuntimeError:
             pass
 
-    main_scroll = cmds.scrollLayout(
-        childResizable=True,
-        horizontalScrollBarThickness=0,
-        verticalScrollBarThickness=8
-    )
-
     main_layout = cmds.columnLayout(
         adjustableColumn=True,
-        rowSpacing=0,
-        columnAttach=("both", 8)
+        rowSpacing=8,
+        columnAttach=("both", 10)
     )
 
     # ==========================================
-    # HEADER
+    # HEADER STRIP
     # ==========================================
-
-    cmds.separator(height=10, style="none")
-
+    cmds.separator(height=4, style="none")
     cmds.rowLayout(
-        numberOfColumns=3,
+        numberOfColumns=4,
         adjustableColumn=2,
-        columnWidth3=(10, 240, 60),
-        columnAttach3=("left", "left", "right")
+        columnWidth4=(8, 390, 90, 90),
+        columnAttach4=("left", "both", "right", "right")
     )
-    cmds.canvas(width=4, height=40, rgbValue=UI_COLORS["accent"])
+    cmds.canvas(width=6, height=42, rgbValue=UI_COLORS["accent"])
     cmds.columnLayout(adjustableColumn=True)
+    cmds.text(label="Temp Pivot Tool", font="boldLabelFont", align="left", height=20)
     cmds.text(
-        label="  Temp Pivot Tool",
-        font="boldLabelFont",
-        align="left",
-        height=22
-    )
-    cmds.text(
-        label="  Non-destructive pivot system for animation  |  v7",
+        label="Non-destructive pivot workflow  |  v7",
         align="left",
         font="smallPlainLabelFont",
         height=16
     )
     cmds.setParent("..")
-    cmds.text(label="", align="right")
-    cmds.setParent("..")  # rowLayout
-
-    cmds.separator(height=8, style="in")
-
-    # ==========================================
-    # WORKFLOW GUIDE
-    # ==========================================
-
-    cmds.frameLayout(
-        label="  Quick Guide",
-        collapsable=True,
-        collapse=False,
-        marginWidth=6,
-        marginHeight=6
-    )
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=1)
-
-    _steps = [
-        ("1", "Select a rig control", UI_COLORS["stage1"]),
-        ("2", "Click  Create Pivot Locator  — pivot null created", UI_COLORS["stage1"]),
-        ("3", "Move pivot to desired rotation point  (D key / Insert)", (0.55, 0.55, 0.58)),
-        ("4", "Click  Complete Setup  — constraint is live", UI_COLORS["stage2"]),
-        ("5", "Rotate the Pivot Null — control orbits the pivot", UI_COLORS["success"]),
-        ("6", "Toggle OFF when done — control free to move", UI_COLORS["off_state"]),
-    ]
-    for _num, _txt, _col in _steps:
-        _row = cmds.rowLayout(
-            numberOfColumns=2,
-            adjustableColumn=2,
-            columnWidth2=(20, 1),
-            columnAttach2=("both", "both"),
-            columnOffset2=(0, 4)
-        )
-        cmds.text(
-            label=_num,
-            align="center",
-            width=20,
-            height=19,
-            font="smallBoldLabelFont",
-            backgroundColor=_col
-        )
-        cmds.text(
-            label=f"  {_txt}",
-            align="left",
-            height=19,
-            font="smallPlainLabelFont"
-        )
-        cmds.setParent("..")  # rowLayout
-    cmds.setParent("..")  # columnLayout
-    cmds.setParent("..")  # frameLayout
-
-    cmds.separator(height=6, style="none")
-
-    # ==========================================
-    # STATUS / RIG DETAILS
-    # ==========================================
-
-    cmds.frameLayout(
-        label="  Current Status",
-        collapsable=False,
-        marginWidth=6,
-        marginHeight=8
-    )
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-
-    # State badge + description row
-    _state_row = cmds.rowLayout(
-        numberOfColumns=2,
-        adjustableColumn=2,
-        columnWidth2=(72, 10),
-        columnAttach2=("both", "both"),
-        columnOffset2=(0, 6)
-    )
     state_indicator = cmds.button(
         label="READY",
-        width=68,
-        height=30,
+        width=82,
+        height=28,
         backgroundColor=UI_COLORS["off_state"],
         enable=False
     )
     selection_text = cmds.text(
-        label="  Select a rig control to begin",
-        align="left",
+        label="Select a rig control to begin",
+        align="right",
         font="smallPlainLabelFont"
     )
-    cmds.setParent("..")  # _state_row
-
-    # Pivot vs Control detail table
+    cmds.setParent("..")
     cmds.separator(height=4, style="in")
 
-    _detail_row = cmds.rowLayout(
-        numberOfColumns=4,
-        adjustableColumn=4,
-        columnWidth4=(14, 96, 14, 10),
-        columnAttach4=("both", "both", "both", "both"),
-        columnOffset4=(0, 0, 0, 4)
+    # ==========================================
+    # TABS
+    # ==========================================
+    tabs = cmds.tabLayout(innerMarginWidth=8, innerMarginHeight=8)
+
+    # ---------- Workflow tab ----------
+    workflow_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+    split_row = cmds.rowLayout(
+        numberOfColumns=2,
+        adjustableColumn=1,
+        columnWidth2=(390, 200),
+        columnAttach2=("both", "both"),
+        columnOffset2=(0, 8)
     )
-    # Left colour bar - pivot
-    cmds.canvas(width=4, height=38, rgbValue=UI_COLORS["pivot_label"])
-    cmds.columnLayout(adjustableColumn=False, rowSpacing=2)
+
+    # Left side - stage flow
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+    cmds.frameLayout(label="  Stage Workflow", collapsable=False, marginWidth=8, marginHeight=8)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+
     cmds.text(
-        label="Temp Pivot Null",
-        align="left",
-        width=92,
-        font="smallBoldLabelFont",
-        height=16
-    )
-    pivot_detail_text = cmds.text(
-        label="  —",
-        align="left",
-        width=92,
-        font="smallPlainLabelFont",
-        height=18
-    )
-    cmds.setParent("..")
-    # Right colour bar - control
-    cmds.canvas(width=4, height=38, rgbValue=UI_COLORS["ctrl_label"])
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
-    cmds.text(
-        label="Original Control",
+        label="1) Select Control",
         align="left",
         font="smallBoldLabelFont",
         height=16
     )
-    control_detail_text = cmds.text(
-        label="  —",
-        align="left",
-        font="smallPlainLabelFont",
-        height=18
-    )
-    cmds.setParent("..")
-    cmds.setParent("..")  # _detail_row
-
-    cmds.setParent("..")  # columnLayout
-    cmds.setParent("..")  # frameLayout
-
-    cmds.separator(height=6, style="none")
-
-    # ==========================================
-    # STAGE 1
-    # ==========================================
-
-    cmds.frameLayout(
-        label="  Stage 1  —  Create Pivot Locator",
-        collapsable=True,
-        collapse=False,
-        marginWidth=6,
-        marginHeight=8
-    )
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
     cmds.text(
-        label="Select a rig control, then click the button below.\n"
-              "The tool enters pivot-adjust mode automatically.",
+        label="Pick a rig control in the viewport.",
         align="left",
         font="smallPlainLabelFont",
-        height=32,
-        wordWrap=True
+        height=16
+    )
+
+    cmds.separator(height=4, style="none")
+    cmds.text(
+        label="2) Create Pivot Locator",
+        align="left",
+        font="smallBoldLabelFont",
+        height=16
     )
     create_pivot_btn = cmds.button(
-        label="  Create Pivot Locator",
-        height=38,
+        label="Create Pivot Locator",
+        height=36,
         backgroundColor=UI_COLORS["stage1"],
         annotation=TOOLTIPS["create_pivot_btn"]
     )
-    cmds.setParent("..")
-    cmds.setParent("..")
 
     cmds.separator(height=6, style="none")
-
-    # ==========================================
-    # STAGE 2
-    # ==========================================
-
-    cmds.frameLayout(
-        label="  Stage 2  —  Complete Setup",
-        collapsable=True,
-        collapse=False,
-        marginWidth=6,
-        marginHeight=8
-    )
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
     cmds.text(
-        label="After positioning the pivot, click Complete Setup.\n"
-              "This bakes the offset and creates the constraint.",
+        label="3) Position Pivot",
+        align="left",
+        font="smallBoldLabelFont",
+        height=16
+    )
+    cmds.text(
+        label="Use D + Insert to reposition pivot to desired orbit point.",
         align="left",
         font="smallPlainLabelFont",
-        height=32,
-        wordWrap=True
+        height=18
+    )
+
+    cmds.separator(height=6, style="none")
+    cmds.text(
+        label="4) Complete Setup",
+        align="left",
+        font="smallBoldLabelFont",
+        height=16
     )
     complete_setup_btn = cmds.button(
-        label="  Complete Setup",
-        height=38,
+        label="Complete Setup",
+        height=36,
         backgroundColor=UI_COLORS["stage2"],
         annotation=TOOLTIPS["complete_setup_btn"]
     )
     cmds.setParent("..")
     cmds.setParent("..")
+    cmds.setParent("..")
 
-    cmds.separator(height=6, style="none")
-
-    # ==========================================
-    # PIVOT CONTROLS
-    # ==========================================
-
-    cmds.frameLayout(
-        label="  Pivot Controls",
-        collapsable=True,
-        collapse=False,
-        marginWidth=6,
-        marginHeight=8
+    # Right side - live context panel
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+    cmds.frameLayout(label="  Live Context", collapsable=False, marginWidth=8, marginHeight=8)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+    cmds.text(label="Current Selection", align="left", font="smallBoldLabelFont", height=16)
+    selection_text = cmds.text(
+        label="Select a rig control to begin",
+        align="left",
+        font="smallPlainLabelFont",
+        height=20
     )
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+    cmds.separator(height=4, style="in")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnWidth2=(74, 1), columnAttach2=("left", "both"))
+    cmds.text(label="Pivot Null:", align="left", font="smallBoldLabelFont", height=18)
+    pivot_detail_text = cmds.text(label="—", align="left", font="smallPlainLabelFont", height=18)
+    cmds.setParent("..")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2, columnWidth2=(74, 1), columnAttach2=("left", "both"))
+    cmds.text(label="Control:", align="left", font="smallBoldLabelFont", height=18)
+    control_detail_text = cmds.text(label="—", align="left", font="smallPlainLabelFont", height=18)
+    cmds.setParent("..")
+    cmds.separator(height=4, style="in")
+    cmds.text(
+        label="Tip: Double-click a rig in Controls tab to toggle it quickly.",
+        align="left",
+        wordWrap=True,
+        font="smallPlainLabelFont",
+        height=34
+    )
+    cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.setParent("..")  # split row
 
+    # Primary action in workflow tab
+    cmds.frameLayout(label="  Primary Action", collapsable=False, marginWidth=8, marginHeight=8)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
     toggle_btn = cmds.button(
         label="Toggle ON / OFF",
         height=38,
         backgroundColor=UI_COLORS["success"],
         annotation=TOOLTIPS["toggle_btn"]
     )
-
-    key_btn = cmds.button(
-        label="Key Control",
-        height=30,
-        annotation=TOOLTIPS["key_btn"]
-    )
-
-    cmds.separator(height=6, style="in")
-
     cmds.text(
-        label="Navigate to:",
+        label="Use Toggle ON to orbit around pivot and OFF when moving the control.",
         align="left",
-        font="smallBoldLabelFont",
-        height=16
+        font="smallPlainLabelFont",
+        height=18
     )
+    cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.setParent("..")  # workflow tab
 
+    # ---------- Controls tab ----------
+    controls_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+
+    cmds.frameLayout(label="  Pivot Controls", collapsable=False, marginWidth=8, marginHeight=8)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+    key_btn = cmds.button(label="Key Control", height=32, annotation=TOOLTIPS["key_btn"])
     _nav_row = cmds.rowLayout(
         numberOfColumns=2,
         adjustableColumn=1,
         columnWidth2=(1, 1),
         columnAttach2=("both", "both"),
-        columnOffset2=(0, 3)
+        columnOffset2=(0, 4)
     )
-    select_pivot_btn = cmds.button(
-        label="Select Pivot Null",
-        height=28,
-        annotation=TOOLTIPS["select_pivot_btn"]
-    )
-    select_control_btn = cmds.button(
-        label="Select Control",
-        height=28,
-        annotation=TOOLTIPS["select_control_btn"]
-    )
-    cmds.setParent("..")  # _nav_row
-
-    cmds.separator(height=4, style="none")
-
+    select_pivot_btn = cmds.button(label="Select Pivot Null", height=30, annotation=TOOLTIPS["select_pivot_btn"])
+    select_control_btn = cmds.button(label="Select Control", height=30, annotation=TOOLTIPS["select_control_btn"])
+    cmds.setParent("..")
     delete_btn = cmds.button(
         label="Delete Pivot Rig",
-        height=28,
+        height=30,
         backgroundColor=UI_COLORS["error"],
         annotation=TOOLTIPS["delete_btn"]
     )
-
     cmds.setParent("..")
     cmds.setParent("..")
 
-    cmds.separator(height=6, style="none")
-
-    # ==========================================
-    # ACTIVE PIVOT RIGS TABLE
-    # ==========================================
-
-    cmds.frameLayout(
-        label="  Active Pivot Rigs",
-        collapsable=True,
-        collapse=False,
-        marginWidth=6,
-        marginHeight=8
-    )
+    cmds.frameLayout(label="  Active Pivot Rigs", collapsable=False, marginWidth=8, marginHeight=8)
     cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
-
-    # Column header
     _list_hdr = cmds.rowLayout(
         numberOfColumns=3,
         adjustableColumn=2,
-        columnWidth3=(38, 10, 36),
-        columnAttach3=("both", "both", "both"),
-        columnOffset3=(0, 0, 0)
+        columnWidth3=(44, 10, 36),
+        columnAttach3=("both", "both", "both")
     )
-    cmds.text(
-        label="Status",
-        align="center",
-        width=38,
-        height=18,
-        font="smallBoldLabelFont",
-        backgroundColor=UI_COLORS["section_bg"]
-    )
-    cmds.text(
-        label="  Temp Pivot Null   \u2192   Original Control",
-        align="left",
-        height=18,
-        font="smallBoldLabelFont",
-        backgroundColor=UI_COLORS["section_bg"]
-    )
-    cmds.text(
-        label="",
-        align="right",
-        width=36,
-        height=18,
-        backgroundColor=UI_COLORS["section_bg"]
-    )
-    cmds.setParent("..")  # _list_hdr
-
-    rig_list = cmds.textScrollList(
-        height=120,
-        allowMultiSelection=False,
-        font="fixedWidthFont"
-    )
-
+    cmds.text(label="State", align="center", width=44, height=18, font="smallBoldLabelFont")
+    cmds.text(label="  Pivot Null  →  Control", align="left", height=18, font="smallBoldLabelFont")
+    cmds.text(label="", align="right", width=36, height=18)
+    cmds.setParent("..")
+    rig_list = cmds.textScrollList(height=170, allowMultiSelection=False, font="fixedWidthFont")
     _list_btns = cmds.rowLayout(
         numberOfColumns=3,
         adjustableColumn=2,
-        columnWidth3=(70, 10, 90),
+        columnWidth3=(72, 10, 100),
         columnAttach3=("both", "both", "both"),
-        columnOffset3=(0, 3, 3)
+        columnOffset3=(0, 4, 4)
     )
-    refresh_btn = cmds.button(label="Refresh", height=26)
-    toggle_list_btn = cmds.button(label="Toggle Selected", height=26)
-    delete_list_btn = cmds.button(label="Delete Selected", height=26)
-    cmds.setParent("..")  # _list_btns
+    refresh_btn = cmds.button(label="Refresh", height=28)
+    toggle_list_btn = cmds.button(label="Toggle Selected", height=28)
+    delete_list_btn = cmds.button(label="Delete Selected", height=28)
+    cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.setParent("..")  # controls tab
 
+    # ---------- Options tab ----------
+    options_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+    cmds.frameLayout(label="  Options", collapsable=False, marginWidth=8, marginHeight=8)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+    cmds.checkBox(label="Auto-key while rotating pivot", value=True, enable=False)
+    cmds.checkBox(label="Warn when control has constraints", value=True, enable=False)
+    cmds.optionMenu(label="UI Density", enable=False)
+    cmds.menuItem(label="Comfortable (default)")
+    cmds.menuItem(label="Compact")
     cmds.text(
-        label="  Click a row to select pivot in viewport.  Double-click to toggle.",
+        label="Options are reserved for a future update. Current behavior is unchanged.",
         align="left",
+        wordWrap=True,
         font="smallPlainLabelFont",
-        height=16
+        height=36
+    )
+    cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.setParent("..")
+
+    # ---------- Help tab ----------
+    help_tab = cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+    cmds.frameLayout(label="  Quick Start", collapsable=False, marginWidth=8, marginHeight=8)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=3)
+    for idx, step in enumerate([
+        "Select a rig control.",
+        "Click Create Pivot Locator.",
+        "Move pivot using D + Insert.",
+        "Click Complete Setup.",
+        "Toggle ON to animate orbit, OFF to move control freely."
+    ], start=1):
+        cmds.text(label=f"{idx}. {step}", align="left", font="smallPlainLabelFont", height=18)
+    cmds.separator(height=4, style="in")
+    cmds.text(
+        label="Tip: In Active Pivot Rigs, click to select and double-click to toggle.",
+        align="left",
+        wordWrap=True,
+        font="smallPlainLabelFont",
+        height=32
+    )
+    cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.setParent("..")
+
+    cmds.tabLayout(
+        tabs,
+        edit=True,
+        tabLabel=[
+            (workflow_tab, "Workflow"),
+            (controls_tab, "Controls"),
+            (options_tab, "Options"),
+            (help_tab, "Help"),
+        ]
     )
 
-    cmds.setParent("..")  # columnLayout
-    cmds.setParent("..")  # frameLayout
-
-    cmds.separator(height=6, style="none")
-
-    # ==========================================
-    # OUTPUT LOG
-    # ==========================================
-
-    cmds.frameLayout(
-        label="  Output Log",
-        collapsable=True,
-        collapse=True,
-        marginWidth=6,
-        marginHeight=6
-    )
+    # Output log + close footer (outside tabs)
+    cmds.frameLayout(label="  Output Log", collapsable=True, collapse=True, marginWidth=8, marginHeight=6)
     log_field = cmds.scrollField(
-        height=80,
+        height=78,
         editable=False,
         wordWrap=True,
         text="Ready. Select a control and click 'Create Pivot Locator'."
     )
     cmds.setParent("..")
-
-    cmds.separator(height=8, style="none")
-
     close_btn = cmds.button(
         label="Close Tool",
-        height=26,
+        height=28,
         backgroundColor=(0.42, 0.42, 0.42),
         annotation="Close the Temp Pivot Tool window."
     )
-
-    cmds.separator(height=10, style="none")
+    cmds.separator(height=4, style="none")
 
     # ==========================================
     # CALLBACKS
@@ -2239,9 +2122,9 @@ def show() -> None:
             label=WINDOW_TITLE,
             retain=True,
             floating=True,
-            initialWidth=360,
-            initialHeight=720,
-            minimumWidth=320,
+            initialWidth=620,
+            initialHeight=560,
+            minimumWidth=560,
             uiScript="import temp_pivot_tool; temp_pivot_tool._rebuild_workspace_ui()",
         )
 
@@ -2269,8 +2152,8 @@ def show() -> None:
         sizeable=True,
         minimizeButton=True,
         maximizeButton=False,
-        width=360,
-        height=720
+        width=620,
+        height=560
     )
 
     _build_ui(window)
