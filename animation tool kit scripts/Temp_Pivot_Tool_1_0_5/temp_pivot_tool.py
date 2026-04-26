@@ -1495,24 +1495,16 @@ def _build_ui(parent_layout: str) -> None:
         height=16
     )
 
-    cmds.rowLayout(
-        numberOfColumns=2,
-        adjustableColumn=1,
-        columnWidth2=(1, 1),
-        columnAttach2=("both", "both"),
-        columnOffset2=(0, 4)
-    )
     select_pivot_btn = cmds.button(
-        label="Pivot Null",
+        label="Select Pivot Null",
         height=26,
         annotation=TOOLTIPS["select_pivot_btn"]
     )
     select_control_btn = cmds.button(
-        label="Control",
+        label="Select Control",
         height=26,
         annotation=TOOLTIPS["select_control_btn"]
     )
-    cmds.setParent("..")  # nav_row
 
     cmds.separator(height=10, style="in")
 
