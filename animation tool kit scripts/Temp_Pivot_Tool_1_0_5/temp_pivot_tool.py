@@ -1384,8 +1384,7 @@ def _build_ui(parent_layout: str) -> None:
 
     body = cmds.paneLayout(
         configuration="vertical2",
-        paneSize=[(1, 32, 100), (2, 68, 100)],
-        separatorThickness=4
+        paneSize=[(1, 32, 100), (2, 68, 100)]
     )
 
     # ============== LEFT SIDEBAR ===============
@@ -1402,8 +1401,7 @@ def _build_ui(parent_layout: str) -> None:
         label="READY",
         height=44,
         backgroundColor=UI_COLORS["off_state"],
-        enable=False,
-        font="boldLabelFont"
+        enable=False
     )
 
     selection_text = cmds.text(
@@ -1559,7 +1557,6 @@ def _build_ui(parent_layout: str) -> None:
         label="Create Pivot Locator",
         height=42,
         backgroundColor=UI_COLORS["stage1"],
-        font="boldLabelFont",
         annotation=TOOLTIPS["create_pivot_btn"]
     )
     cmds.setParent("..")
@@ -1585,7 +1582,6 @@ def _build_ui(parent_layout: str) -> None:
         label="Complete Setup",
         height=42,
         backgroundColor=UI_COLORS["stage2"],
-        font="boldLabelFont",
         annotation=TOOLTIPS["complete_setup_btn"]
     )
     cmds.setParent("..")
