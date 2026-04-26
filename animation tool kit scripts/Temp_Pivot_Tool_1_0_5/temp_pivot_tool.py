@@ -1543,16 +1543,26 @@ def _build_ui(parent_layout: str) -> None:
         marginWidth=8,
         marginHeight=8
     )
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
     cmds.text(
-        label="Select a rig control in the viewport, then click below.\n"
-              "The tool will enter pivot-adjust mode automatically —\n"
-              "move the locator to your desired rotation point.",
+        label="Select a rig control in the viewport.",
         align="left",
         font="smallPlainLabelFont",
-        height=58,
-        wordWrap=True
+        height=18
     )
+    cmds.text(
+        label="Pivot-adjust mode activates automatically —",
+        align="left",
+        font="smallPlainLabelFont",
+        height=18
+    )
+    cmds.text(
+        label="move the locator to your desired pivot point.",
+        align="left",
+        font="smallPlainLabelFont",
+        height=18
+    )
+    cmds.separator(height=4, style="none")
     create_pivot_btn = cmds.button(
         label="Create Pivot Locator",
         height=42,
@@ -1568,16 +1578,26 @@ def _build_ui(parent_layout: str) -> None:
         marginWidth=8,
         marginHeight=8
     )
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
     cmds.text(
-        label="After positioning the pivot, click below to bake the\n"
-              "offset and create the parent constraint. Auto-key is\n"
-              "enabled so animation is captured as you rotate.",
+        label="After positioning the pivot, click below.",
         align="left",
         font="smallPlainLabelFont",
-        height=58,
-        wordWrap=True
+        height=18
     )
+    cmds.text(
+        label="Bakes the offset and creates the constraint.",
+        align="left",
+        font="smallPlainLabelFont",
+        height=18
+    )
+    cmds.text(
+        label="Auto-key captures animation as you rotate.",
+        align="left",
+        font="smallPlainLabelFont",
+        height=18
+    )
+    cmds.separator(height=4, style="none")
     complete_setup_btn = cmds.button(
         label="Complete Setup",
         height=42,
