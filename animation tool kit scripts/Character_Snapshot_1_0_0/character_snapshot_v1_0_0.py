@@ -1039,8 +1039,8 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
         hdr.setSectionResizeMode(self.COL_EXCL,    QtWidgets.QHeaderView.Fixed)
         self.table.setColumnWidth(self.COL_STATUS, 28)
         self.table.setColumnWidth(self.COL_ARROW,  22)
-        self.table.setColumnWidth(self.COL_PICK,   130)
-        self.table.setColumnWidth(self.COL_EXCL,   80)
+        self.table.setColumnWidth(self.COL_PICK,   170)
+        self.table.setColumnWidth(self.COL_EXCL,   110)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
@@ -1150,8 +1150,11 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
                 seen.add(leaf)
                 seen.add(p_leaf)
             else:
-                base = leaf.split(":")[-1].lower()
-                if (left_token.lower() in base) or (right_token.lower() in base):
+                # Word-boundary token matching: only flag as unpaired if the
+                # control actually has 'lf' or 'rt' as a delimited segment.
+                # Centre / unique controls (e.g. ac_cn_jaw, spine, head) have
+                # no mirror partner by design and are silently skipped.
+                if _has_side_token(ctrl, left_token) or _has_side_token(ctrl, right_token):
                     rows.append({
                         "status":      self.STATUS_UNPAIRED,
                         "source":      leaf,
@@ -1249,15 +1252,27 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
                 prt_item.setForeground(QtGui.QColor("#666"))
             self.table.setItem(row, self.COL_PARTNER, prt_item)
 
+        # Compact stylesheet for inline cell buttons — overrides the dialog-wide
+        # QPushButton padding (5px 14px) which clips small labels in narrow cells.
+        cell_btn_qss = (
+            "QPushButton {"
+            "  padding: 2px 6px; min-height: 22px; min-width: 0px;"
+            "  font-size: 11px;"
+            "}"
+        )
+
         if rd["editable"]:
             pick_w   = QtWidgets.QWidget()
             pick_lay = QtWidgets.QHBoxLayout(pick_w)
             pick_lay.setContentsMargins(2, 2, 2, 2)
-            pick_lay.setSpacing(3)
+            pick_lay.setSpacing(4)
             btn_src = QtWidgets.QPushButton("⊕ Src")
             btn_prt = QtWidgets.QPushButton("⊕ Prt")
-            btn_src.setFixedHeight(22)
-            btn_prt.setFixedHeight(22)
+            for b in (btn_src, btn_prt):
+                b.setStyleSheet(cell_btn_qss)
+                b.setFixedHeight(22)
+                b.setMinimumWidth(72)
+                b.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             pick_lay.addWidget(btn_src)
             pick_lay.addWidget(btn_prt)
             btn_src.clicked.connect(lambda _c=False, r=row: self._pick_from_selection(r, True))
@@ -1273,7 +1288,10 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
         else:
             btn = QtWidgets.QPushButton("Exclude")
             btn.clicked.connect(lambda _c=False, leaf=rd["source"]: self._toggle_excluded(leaf, True))
+        btn.setStyleSheet(cell_btn_qss)
         btn.setFixedHeight(22)
+        btn.setMinimumWidth(96)
+        btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         excl_lay.addWidget(btn)
         self.table.setCellWidget(row, self.COL_EXCL, excl_w)
 
@@ -1597,6 +1615,63 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         left_lay.setContentsMargins(0, 0, 0, 0)
         left_lay.setSpacing(6)
 
+        # ---- Naming Convention group — used for NEW snapshots ----
+        # The user must specify the rig's left/right tokens before clicking
+        # "New from Selection" so the snapshot can correctly classify each
+        # control. Controls that contain neither token are treated as unique
+        # (middle) and require no mirror partner.
+        naming_grp = QtWidgets.QGroupBox("Naming Convention  (used for new snapshots)")
+        naming_grp.setStyleSheet(
+            "QGroupBox { border-color: #6a5a8a; }"
+            "QGroupBox::title { color: #c0a0e0; background-color: #3a2f4a; }"
+        )
+        naming_form = QtWidgets.QFormLayout(naming_grp)
+        naming_form.setLabelAlignment(QtCore.Qt.AlignRight)
+        naming_form.setSpacing(4)
+
+        self.new_left_token_le  = QtWidgets.QLineEdit("lf")
+        self.new_left_token_le.setPlaceholderText("lf")
+        self.new_left_token_le.setToolTip(
+            "Left-side naming token used in this rig's control names.\n"
+            "Example: 'lf' matches ac_lf_handIK, ac_lf_footIK, …\n"
+            "Common alternatives: L, l, left, _L_"
+        )
+        self.new_right_token_le = QtWidgets.QLineEdit("rt")
+        self.new_right_token_le.setPlaceholderText("rt")
+        self.new_right_token_le.setToolTip(
+            "Right-side naming token used in this rig's control names.\n"
+            "Example: 'rt' matches ac_rt_handIK, ac_rt_footIK, …\n"
+            "Common alternatives: R, r, right, _R_"
+        )
+        self.new_mirror_axis_cb = QtWidgets.QComboBox()
+        self.new_mirror_axis_cb.addItems(["X", "Y", "Z"])
+        self.new_mirror_axis_cb.setToolTip(
+            "World axis across which the rig is mirrored.\n"
+            "Most bipedal rigs mirror across X."
+        )
+
+        token_row = QtWidgets.QHBoxLayout()
+        token_row.setSpacing(4)
+        token_row.addWidget(QtWidgets.QLabel("Left:"))
+        token_row.addWidget(self.new_left_token_le)
+        token_row.addWidget(QtWidgets.QLabel("Right:"))
+        token_row.addWidget(self.new_right_token_le)
+        token_row.addWidget(QtWidgets.QLabel("Axis:"))
+        token_row.addWidget(self.new_mirror_axis_cb)
+        naming_form.addRow(token_row)
+
+        hint = QtWidgets.QLabel(
+            "<span style='color:#888;font-size:10px;'>"
+            "Set these <b>before</b> clicking <i>New from Selection</i>. "
+            "Controls without either token are treated as unique and need "
+            "no mirror partner."
+            "</span>"
+        )
+        hint.setWordWrap(True)
+        naming_form.addRow(hint)
+
+        left_lay.addWidget(naming_grp)
+
         list_header = QtWidgets.QLabel("<b>Stored Character Snapshots</b>")
         left_lay.addWidget(list_header)
 
@@ -1819,6 +1894,14 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         idx = self.mirror_axis_cb.findText(snap.mirror_axis or "X")
         self.mirror_axis_cb.setCurrentIndex(idx if idx >= 0 else 0)
 
+        # Sync the left-panel "Naming Convention" inputs so the user can
+        # re-snapshot or create a sibling snapshot using the same tokens
+        # without having to retype them.
+        self.new_left_token_le.setText(snap.left_token or "lf")
+        self.new_right_token_le.setText(snap.right_token or "rt")
+        nidx = self.new_mirror_axis_cb.findText(snap.mirror_axis or "X")
+        self.new_mirror_axis_cb.setCurrentIndex(nidx if nidx >= 0 else 0)
+
         n_ctrls   = snap.control_count()
         n_pairs   = snap.pair_count()
         n_manual  = len(snap.manual_pairs)
@@ -1873,33 +1956,61 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         if prefix != DEFAULT_PREFIX:
             rig_name = prefix.split(":")[-1]
 
+        # Tokens / mirror axis specified by the user in the Naming Convention
+        # group at the top of the left panel. These drive auto-pairing for
+        # NEW snapshots; existing snapshots keep their previously-stored values
+        # unless the user opts to override.
+        ui_left  = self.new_left_token_le.text().strip()  or "lf"
+        ui_right = self.new_right_token_le.text().strip() or "rt"
+        ui_axis  = self.new_mirror_axis_cb.currentText()  or "X"
+
         existing = load_snapshot(prefix)
         if existing is not None:
             box = QtWidgets.QMessageBox(self)
             box.setWindowTitle("Snapshot Exists")
             box.setText(
-                "A snapshot already exists for '{}' with {} controls.\n"
-                "Replace it with a fresh capture of {} controls?".format(
-                    prefix, existing.control_count(), len(ctrl_list)
+                "A snapshot already exists for '{}' with {} controls.\n\n"
+                "Replace      —  capture fresh, using the Naming Convention "
+                "tokens currently set in the UI ({} / {} / {}).\n"
+                "Keep Tokens  —  capture fresh, but preserve the existing "
+                "snapshot's tokens ({} / {} / {}).\n"
+                "Cancel       —  do nothing.".format(
+                    prefix, existing.control_count(),
+                    ui_left, ui_right, ui_axis,
+                    existing.left_token, existing.right_token, existing.mirror_axis,
                 )
             )
-            replace_btn = box.addButton("Replace", QtWidgets.QMessageBox.AcceptRole)
-            cancel_btn  = box.addButton("Cancel",  QtWidgets.QMessageBox.RejectRole)
+            replace_btn = box.addButton("Replace (use UI tokens)",
+                                        QtWidgets.QMessageBox.AcceptRole)
+            keep_btn    = box.addButton("Keep Tokens",
+                                        QtWidgets.QMessageBox.ActionRole)
+            cancel_btn  = box.addButton("Cancel",
+                                        QtWidgets.QMessageBox.RejectRole)
             box.setDefaultButton(replace_btn)
             box.exec()
-            if box.clickedButton() is cancel_btn:
+            clicked = box.clickedButton()
+            if clicked is cancel_btn:
                 return
-            # Preserve user-entered metadata across re-snapshot
-            rig_name      = existing.rig_name      or rig_name
+
+            # Preserve metadata that doesn't depend on naming tokens
+            rig_name      = existing.rig_name    or rig_name
             description   = existing.description
-            left_token    = existing.left_token
-            right_token   = existing.right_token
-            mirror_axis   = existing.mirror_axis
             manual_pairs  = dict(existing.manual_pairs)
             excluded      = list(existing.excluded_controls)
+
+            if clicked is keep_btn:
+                left_token  = existing.left_token
+                right_token = existing.right_token
+                mirror_axis = existing.mirror_axis
+            else:
+                left_token, right_token, mirror_axis = ui_left, ui_right, ui_axis
         else:
-            description, left_token, right_token, mirror_axis = "", "lf", "rt", "X"
-            manual_pairs, excluded = {}, []
+            description    = ""
+            left_token     = ui_left
+            right_token    = ui_right
+            mirror_axis    = ui_axis
+            manual_pairs   = {}
+            excluded       = []
 
         snap = CharacterSnapshot.build(
             ctrl_list, prefix=prefix, rig_name=rig_name,
@@ -2178,9 +2289,15 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
             "<h4>① Create a Snapshot</h4>"
             "<ol>"
             "<li>Reference the rig into your scene.</li>"
+            "<li>In the <b>Naming Convention</b> group, enter the rig's left "
+            "and right tokens (e.g. <tt>lf</tt> / <tt>rt</tt>, or <tt>L</tt> / "
+            "<tt>R</tt>) and pick the mirror axis. Controls whose names "
+            "contain neither token are treated as <i>unique</i> and will "
+            "not be paired or shown in the Manual Pair Editor.</li>"
             "<li>Select <i>any single</i> controller on the rig.</li>"
             "<li>Click <b>◉ New from Selection</b> — every controller sharing the "
-            "same namespace prefix is captured automatically.</li>"
+            "same namespace prefix is captured automatically and classified "
+            "as left / right / unique using the tokens you specified.</li>"
             "</ol>"
             "<h4>② Edit Metadata</h4>"
             "<p>Fill in the <b>Rig Name</b>, <b>Description</b>, and mirror tokens / axis "
