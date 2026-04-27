@@ -1,5 +1,7 @@
 /*
-Mirror Controls Installer (v2.3.0)
+Mirror Controls Installer (v2.3.1)
+The script and folder names retain the v2_3_0 suffix from the previous release;
+only the in-app version label and shelf annotation are bumped to 2.3.1.
 Drag and drop this file into Maya's viewport to install Mirror Controls.
 Compatible with Maya 2025+
 
@@ -71,7 +73,7 @@ global proc mirrorControlsInstall() {
     $pyCmd += "cmds.shelfButton(\n";
     $pyCmd += "    parent=current_shelf,\n";
     $pyCmd += "    label='Mirror Controls',\n";
-    $pyCmd += "    annotation='Launch Mirror Controls v2.3.0',\n";
+    $pyCmd += "    annotation='Launch Mirror Controls v2.3.1',\n";
     $pyCmd += "    image='mirror.png',\n";
     $pyCmd += "    command=launch_cmd,\n";
     $pyCmd += "    sourceType='python',\n";
@@ -79,8 +81,8 @@ global proc mirrorControlsInstall() {
     $pyCmd += "\n";
 
     $pyCmd += "importlib.invalidate_caches()\n";
-    $pyCmd += "cmds.confirmDialog(title='Install Complete', message='Mirror Controls v2.3.0 installed!\\n\\nScript: ' + dst_script + '\\nIcon: ' + dst_icon + '\\n\\nA shelf button has been added to your current shelf.', button=['OK'])\n";
-    $pyCmd += "cmds.inViewMessage(amg='<hl>Mirror Controls v2.3.0</hl> installed!', pos='midCenter', fade=True)\n";
+    $pyCmd += "cmds.confirmDialog(title='Install Complete', message='Mirror Controls v2.3.1 installed!\\n\\nScript: ' + dst_script + '\\nIcon: ' + dst_icon + '\\n\\nA shelf button has been added to your current shelf.', button=['OK'])\n";
+    $pyCmd += "cmds.inViewMessage(amg='<hl>Mirror Controls v2.3.1</hl> installed!', pos='midCenter', fade=True)\n";
 
     python($pyCmd);
 }

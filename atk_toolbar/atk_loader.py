@@ -199,7 +199,7 @@ TOOL_REGISTRY = [
         "icon_file": "mirror.png",
         "icon_key":  "mirror",
         "group":     "rigging",
-        "version":   "2.3.0",
+        "version":   "2.3.1",
     },
     {
         "id":        "saveplus",

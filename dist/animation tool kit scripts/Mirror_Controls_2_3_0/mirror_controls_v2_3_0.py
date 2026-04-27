@@ -37,6 +37,18 @@ Authors:
     Updated by: David Shepstone
 
 Version:
+    2.3.1 - Mirror Controls now relies exclusively on the Character Snapshot
+            tool for snapshot data. The legacy RigSnapshot fallback has been
+            removed from runtime mirroring, the prefix combobox, the snapshot
+            status label and the ± Flip Sign button. The ± Flip Sign button
+            now stores per-control sign overrides inside the Character
+            Snapshot's metadata (under 'mirror_controls_flip_signs'); when a
+            flipped control is mirrored its translate / rotate values are
+            inverted before any rule or heuristic decides copy / negate, so
+            the partner control receives the opposite sign on those channels.
+            Selecting Flip Sign without a Character Snapshot for the rig now
+            shows a clear reminder with a one-click launcher for the
+            Character Snapshot tool.
     2.3.0 - Renamed tool from "digetMirrorControl" to "Mirror Controls".
             Integrated with the Animation Tool Kit Character Snapshot tool: when a
             Character Snapshot exists for the selected rig prefix it is used as the
@@ -272,17 +284,34 @@ def _try_import_character_snapshot():
         return None
 
 
+# Key under which Mirror Controls stores its per-rig flip-sign overrides
+# inside the CharacterSnapshot.metadata dict. The list contains leaf names of
+# controls whose mirror sign should be inverted on translate/rotate axes.
+_CS_META_FLIP_SIGNS = "mirror_controls_flip_signs"
+
+
 class _CharacterSnapshotAdapter(object):
     """Thin wrapper that lets a CharacterSnapshot stand in for a RigSnapshot.
 
-    Exposes the subset of RigSnapshot's interface that mirror_control() and
-    mirror_pair() touch:
-      - manual_pairs       (dict, read directly)
-      - excluded_controls  (list, read directly)
+    Exposes the subset of RigSnapshot's interface that mirror_control(),
+    mirror_pair() and flip_sign_rules() touch:
+      - manual_pairs           (dict, read directly)
+      - excluded_controls      (list, read directly)
       - get_manual_partner(ctrl)
       - is_excluded(ctrl)
-      - get_rule(ctrl, attr)  — always returns None so the heuristic runs
-      - controls           (empty dict; CharacterSnapshots have no rule data)
+      - get_rule(ctrl, attr)   — always returns None so the heuristic runs
+      - controls               (empty dict; CharacterSnapshots have no rule data)
+      - is_flip_sign(ctrl)     — True if the user has marked this ctrl as
+                                  sign-flipped via the ± Flip Sign button
+      - toggle_flip_sign(ctrl) — flips that bit and marks the snapshot dirty
+      - save()                 — writes the wrapped CharacterSnapshot back to
+                                  the scene store (used after flip-sign edits)
+
+    Flip-sign overrides are stored as a list of leaf names inside
+    CharacterSnapshot.metadata[_CS_META_FLIP_SIGNS]. When mirror_pair runs it
+    inverts the control's translate/rotate input value before any rule or
+    heuristic logic runs — that effectively flips the sign of whatever the
+    mirror code would have written to the partner control.
     """
 
     def __init__(self, char_snapshot):
@@ -295,6 +324,16 @@ class _CharacterSnapshotAdapter(object):
         # Empty so RigSnapshot.get_rule() pattern (ctrl_data is None → None)
         # returns None for every (ctrl, attr) pair, deferring to the heuristic.
         self.controls          = {}
+        # Read flip-sign overrides; tolerate missing or malformed metadata.
+        meta = getattr(char_snapshot, "metadata", None) or {}
+        raw  = meta.get(_CS_META_FLIP_SIGNS, [])
+        if isinstance(raw, list):
+            self._flip_signs = set(raw)
+        else:
+            self._flip_signs = set()
+        self._dirty = False
+
+    # -- Snapshot-rule interface (RigSnapshot-shaped) ----------------------
 
     def get_manual_partner(self, ctrl):
         return self._cs.get_manual_partner(ctrl)
@@ -306,6 +345,57 @@ class _CharacterSnapshotAdapter(object):
         # CharacterSnapshots don't store per-attribute rules — let the
         # axis-vector heuristic decide copy vs negate.
         return None
+
+    # -- Flip-sign interface ----------------------------------------------
+
+    def is_flip_sign(self, ctrl):
+        """Return True if ctrl's translate/rotate signs should be inverted."""
+        return ctrl.split("|")[-1] in self._flip_signs
+
+    def toggle_flip_sign(self, ctrl):
+        """Flip this control's sign-override bit. Returns the new state."""
+        leaf = ctrl.split("|")[-1]
+        if leaf in self._flip_signs:
+            self._flip_signs.discard(leaf)
+            new_state = False
+        else:
+            self._flip_signs.add(leaf)
+            new_state = True
+        self._dirty = True
+        return new_state
+
+    def list_attribute_names(self, ctrl):
+        """Return the attribute names recorded for ctrl in the CharacterSnapshot.
+
+        CharacterSnapshot stores attributes as a flat list, not a dict — this
+        helper returns that list so flip_sign_rules() can iterate it.
+        """
+        leaf = ctrl.split("|")[-1]
+        cs_ctrls = self._cs.controls
+        # Try direct hit first (full DAG path), then leaf lookup.
+        if ctrl in cs_ctrls:
+            return list(cs_ctrls[ctrl].get("attributes", []))
+        for k, v in cs_ctrls.items():
+            if k.split("|")[-1] == leaf:
+                return list(v.get("attributes", []))
+        return []
+
+    # -- Persistence -------------------------------------------------------
+
+    def save(self):
+        """Persist any flip-sign edits back to the scene snapshot."""
+        if not self._dirty:
+            return
+        meta = self._cs.metadata if isinstance(self._cs.metadata, dict) else {}
+        meta[_CS_META_FLIP_SIGNS] = sorted(self._flip_signs)
+        self._cs.metadata = meta
+        try:
+            self._cs.save_to_scene()
+            self._dirty = False
+        except Exception as exc:
+            om.MGlobal.displayError(
+                "[Mirror Controls] Failed to persist flip-sign overrides: {}".format(exc)
+            )
 
 
 def _load_character_snapshot_for(prefix):
@@ -319,6 +409,17 @@ def _load_character_snapshot_for(prefix):
         return cs_mod.load_snapshot(prefix)
     except Exception:
         return None
+
+
+def _list_character_snapshot_prefixes():
+    """Return the list of stored CharacterSnapshot prefixes, or []."""
+    cs_mod = _try_import_character_snapshot()
+    if cs_mod is None:
+        return []
+    try:
+        return list(cs_mod.list_prefixes())
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -2192,7 +2293,7 @@ class MirrorControls(QtWidgets.QDialog):
 
     def __init__(self, parent=maya_main_window()):
         super().__init__(parent)
-        self.setWindowTitle("Mirror Controls  v2.3.0")
+        self.setWindowTitle("Mirror Controls  v2.3.1")
         flags = self.windowFlags()
         flags ^= QtCore.Qt.WindowMinimizeButtonHint
         flags ^= QtCore.Qt.WindowMaximizeButtonHint
@@ -2571,12 +2672,12 @@ class MirrorControls(QtWidgets.QDialog):
         return txt
 
     def _refresh_prefix_combobox(self):
-        """Re-populate the prefix combobox from stored snapshots."""
+        """Re-populate the prefix combobox from Character Snapshot prefixes."""
         old = self.prefix_cb.currentText()
         self.prefix_cb.blockSignals(True)
         self.prefix_cb.clear()
 
-        prefixes = RigSnapshot.list_prefixes()
+        prefixes = _list_character_snapshot_prefixes()
         if not prefixes:
             self.prefix_cb.addItem("(none)")
         else:
@@ -2936,25 +3037,28 @@ class MirrorControls(QtWidgets.QDialog):
 
     def _refresh_snapshot_status(self):
         prefix = self._active_prefix or self.get_active_prefix()
-        snap = RigSnapshot.load_from_scene(prefix) if prefix else RigSnapshot.load_from_scene()
-        if snap is None:
+        cs_snap = _load_character_snapshot_for(prefix) if prefix else None
+        if cs_snap is None:
             self.snapshot_status_label.setText(
-                "<span style='color:#888888;'>⚠  No snapshot — using axis heuristic</span>"
+                "<span style='color:#888888;'>⚠  No Character Snapshot "
+                "— using axis heuristic</span>"
             )
-        else:
-            n_ctrls = len(snap.controls)
-            n_pairs = sum(
-                1 for d in snap.controls.values()
-                if d.get("partner") and d.get("side") == "left"
-                   and snap.controls.get(d["partner"]) is not None
+            return
+
+        n_ctrls = cs_snap.control_count() if hasattr(cs_snap, "control_count") \
+                  else len(cs_snap.controls)
+        n_pairs = cs_snap.pair_count() if hasattr(cs_snap, "pair_count") else 0
+        n_flips = len((cs_snap.metadata or {}).get(_CS_META_FLIP_SIGNS, []))
+        pfx_label = prefix if prefix and prefix != DEFAULT_PREFIX else "(scene)"
+        flip_part = "  ·  {} sign-flip{}".format(
+            n_flips, "s" if n_flips != 1 else ""
+        ) if n_flips else ""
+        self.snapshot_status_label.setText(
+            "<span style='color:#80c080;'>✔  <b>{}</b> — "
+            "{} controls, {} pairs  (axis: {}){}</span>".format(
+                pfx_label, n_ctrls, n_pairs, cs_snap.mirror_axis, flip_part
             )
-            pfx_label = prefix if prefix and prefix != DEFAULT_PREFIX else "(scene)"
-            self.snapshot_status_label.setText(
-                "<span style='color:#80c080;'>✔  <b>{}</b> — "
-                "{} controls, {} pairs  (axis: {})</span>".format(
-                    pfx_label, n_ctrls, n_pairs, snap.mirror_axis
-                )
-            )
+        )
 
     # ------------------------------------------------------------------
     # Getters
@@ -3240,8 +3344,25 @@ class MirrorControls(QtWidgets.QDialog):
             mirror_axis, x_dom, y_dom, z_dom
         )
 
+        # Per-control sign-flip override (Character Snapshot only).
+        # When the user clicks "± Flip Sign Rules" the leaf is added to the
+        # snapshot's flip-sign list. We invert the source value for translate
+        # and rotate channels here so every downstream code path (snapshot
+        # rule or heuristic fallback) automatically writes the opposite sign
+        # to the partner control. Scale and custom channels are left alone.
+        flip_this_ctrl = bool(
+            snapshot is not None
+            and getattr(snapshot, "is_flip_sign", None)
+            and snapshot.is_flip_sign(ctrl)
+        )
+
         for attr, value in data[ctrl].items():
             target = "{}.{}".format(partner, attr)
+
+            if flip_this_ctrl:
+                attr_lc = attr.lower()
+                if attr_lc.startswith("translate") or attr_lc.startswith("rotate"):
+                    value = -value
 
             # --- Snapshot path ---
             if snapshot is not None:
@@ -3509,31 +3630,29 @@ class MirrorControls(QtWidgets.QDialog):
     # ------------------------------------------------------------------
 
     def _load_snapshot_for_mirroring(self, prefix):
-        """Return a snapshot-shaped object for *prefix*, or None.
+        """Return a CharacterSnapshot adapter for *prefix*, or None.
 
-        Resolution order:
-          1.  Character Snapshot (Animation Tool Kit) — wrapped in
-              _CharacterSnapshotAdapter so the rest of the mirror code can
-              treat it like a RigSnapshot.
-          2.  Legacy RigSnapshot stored on this tool's scene node.
-          3.  None — caller is expected to prompt the user.
+        Mirror Controls now relies exclusively on the Animation Tool Kit
+        Character Snapshot. The legacy RigSnapshot path is no longer consulted
+        — capture or import a Character Snapshot via the Character Snapshot
+        tool to give Mirror Controls authoritative pair / exclusion / sign
+        data. Returns None when no Character Snapshot exists for *prefix*; the
+        caller is expected to prompt the user.
         """
-        if prefix:
-            cs_snap = _load_character_snapshot_for(prefix)
-            if cs_snap is not None:
-                om.MGlobal.displayInfo(
-                    "[Mirror Controls] Using Character Snapshot for '{}'.".format(prefix)
-                )
-                return _CharacterSnapshotAdapter(cs_snap)
-
-        rig_snap = (RigSnapshot.load_from_scene(prefix)
-                    if prefix else RigSnapshot.load_from_scene())
-        return rig_snap
+        if not prefix:
+            return None
+        cs_snap = _load_character_snapshot_for(prefix)
+        if cs_snap is None:
+            return None
+        om.MGlobal.displayInfo(
+            "[Mirror Controls] Using Character Snapshot for '{}'.".format(prefix)
+        )
+        return _CharacterSnapshotAdapter(cs_snap)
 
     def _prompt_create_character_snapshot(self, prefix):
-        """Show the "no snapshot" reminder. Return True if mirroring should
-        continue with the heuristic, False if the user cancelled or asked to
-        open the Character Snapshot tool instead.
+        """Show the "no Character Snapshot" reminder. Return True if mirroring
+        should continue (with the axis-vector heuristic), False if the user
+        cancelled or asked to open the Character Snapshot tool instead.
         """
         label = prefix if prefix and prefix != DEFAULT_PREFIX else "the selected rig"
         cs_mod = _try_import_character_snapshot()
@@ -3546,13 +3665,13 @@ class MirrorControls(QtWidgets.QDialog):
         message = (
             "<p>No <b>Character Snapshot</b> was found for "
             "<b>{}</b>.</p>"
-            "<p>Mirror Controls uses a Character Snapshot of the rig "
-            "(captured at rest pose) for accurate side detection, manual "
-            "pair overrides and exclusions.</p>"
-            "<p>Please create a Character Snapshot before mirroring for "
-            "accurate results. You can continue without one — the tool "
-            "will fall back to the axis-vector heuristic, which may "
-            "misfire on rigs with non-standard naming or geometry.</p>"
+            "<p>Mirror Controls uses the Character Snapshot tool as the "
+            "source of manual pairs, exclusions and sign-flip overrides for "
+            "the rig. Please create a Character Snapshot for this rig "
+            "before mirroring for accurate results.</p>"
+            "<p>You can continue without a snapshot — the tool will fall "
+            "back to the axis-vector heuristic, which may misfire on rigs "
+            "with non-standard naming or geometry.</p>"
         ).format(label)
         box.setText(message)
 
@@ -3614,11 +3733,16 @@ class MirrorControls(QtWidgets.QDialog):
 
     def flip_sign_rules(self):
         """
-        Toggle copy ↔ negate for all transform attributes on the currently
-        selected controls.  Useful when a control mirrors with the wrong sign
-        due to how the rig was built (e.g. negated axes on one side).
+        Toggle the per-control sign-flip override for the currently selected
+        controls. When a control is flipped, Mirror Controls inverts the
+        source value for translate/rotate channels before mirroring — useful
+        when a rig setup causes a particular control to mirror with the wrong
+        sign.
 
-        Requires a snapshot to be present. Changes are saved immediately.
+        Overrides are stored in the Character Snapshot's metadata (under
+        'mirror_controls_flip_signs'). Mirror Controls relies exclusively on
+        the Character Snapshot tool, so a Character Snapshot must exist for
+        the selected rig.
         """
         sel = cmds.ls(selection=True, long=True)
         if not sel:
@@ -3629,81 +3753,76 @@ class MirrorControls(QtWidgets.QDialog):
             )
             return
 
-        prefix = _detect_prefix(sel[0])
-        snap = RigSnapshot.load_from_scene(prefix)
-        if snap is None:
-            QtWidgets.QMessageBox.warning(
-                self, "No Snapshot",
-                "No snapshot found for '{}'.\n\n"
-                "Use  ◉ Take Snapshot  first, then try again.".format(prefix)
+        prefix   = _detect_prefix(sel[0])
+        snapshot = self._load_snapshot_for_mirroring(prefix)
+        if snapshot is None:
+            label = prefix if prefix and prefix != DEFAULT_PREFIX else "the selected rig"
+            cs_mod = _try_import_character_snapshot()
+
+            box = QtWidgets.QMessageBox(self)
+            box.setWindowTitle("Mirror Controls — No Character Snapshot")
+            box.setIcon(QtWidgets.QMessageBox.Warning)
+            box.setTextFormat(QtCore.Qt.RichText)
+            box.setText(
+                "<p>No <b>Character Snapshot</b> was found for "
+                "<b>{}</b>.</p>"
+                "<p>The ± Flip Sign override is stored on the Character "
+                "Snapshot for the rig, so a snapshot must exist before sign "
+                "overrides can be saved.</p>".format(label)
             )
+            open_btn   = box.addButton("Open Character Snapshot…",
+                                       QtWidgets.QMessageBox.AcceptRole)
+            open_btn.setEnabled(cs_mod is not None)
+            cancel_btn = box.addButton("Cancel", QtWidgets.QMessageBox.RejectRole)
+            box.setDefaultButton(open_btn if cs_mod is not None else cancel_btn)
+            box.exec()
+            if box.clickedButton() is open_btn and cs_mod is not None:
+                try:
+                    cs_mod.show_dialog()
+                except Exception as exc:
+                    om.MGlobal.displayError(
+                        "[Mirror Controls] Could not launch Character Snapshot: {}".format(exc)
+                    )
             return
 
-        # Snapshot control keys may be stored as full DAG paths (common when
-        # snapshots are built from long names), while current selection is also
-        # long DAG. Older data may contain short leaf names. Build a lookup so
-        # selected controls can match either representation.
-        snap_key_by_leaf = {}
-        for snap_key in snap.controls.keys():
-            leaf_key = snap_key.split("|")[-1]
-            snap_key_by_leaf.setdefault(leaf_key, snap_key)
-
-        flipped = []
+        flipped_on  = []
+        flipped_off = []
         for ctrl in sel:
             leaf = ctrl.split("|")[-1]
-            ctrl_key = ctrl if ctrl in snap.controls else snap_key_by_leaf.get(leaf)
-            if ctrl_key is None:
-                # Fallback for short/namespace-qualified selections.
-                resolved = _resolve_long(ctrl)
-                resolved_leaf = resolved.split("|")[-1]
-                ctrl_key = (
-                    resolved
-                    if resolved in snap.controls
-                    else snap_key_by_leaf.get(resolved_leaf)
-                )
+            new_state = snapshot.toggle_flip_sign(ctrl)
+            label = leaf.split(":")[-1] if ":" in leaf else leaf
+            (flipped_on if new_state else flipped_off).append(label)
 
-            ctrl_data = snap.controls.get(ctrl_key) if ctrl_key else None
-            if ctrl_data is None:
-                continue
-            attrs = ctrl_data.get("attributes", {})
-            changed = False
-            for attr_name, attr_info in attrs.items():
-                rule = attr_info.get("rule", RULE_COPY)
-                if rule == RULE_COPY:
-                    attr_info["rule"] = RULE_NEGATE
-                    attr_info["user_override"] = True
-                    changed = True
-                elif rule == RULE_NEGATE:
-                    attr_info["rule"] = RULE_COPY
-                    attr_info["user_override"] = True
-                    changed = True
-                # RULE_IGNORE stays ignored
-            if changed:
-                flipped.append(leaf.split(":")[-1] if ":" in leaf else leaf)
+        snapshot.save()
+        self._refresh_snapshot_status()
 
-        if flipped:
-            snap.save_to_scene(prefix)
-            self._refresh_snapshot_status()
-            om.MGlobal.displayInfo(
-                "[Mirror Controls] Flipped sign rules for {} control{}: {}".format(
-                    len(flipped), "s" if len(flipped) != 1 else "",
-                    ", ".join(flipped[:15]) + ("…" if len(flipped) > 15 else "")
-                )
+        total = len(flipped_on) + len(flipped_off)
+        om.MGlobal.displayInfo(
+            "[Mirror Controls] Toggled flip-sign on {} control{} ({} on, {} off).".format(
+                total, "s" if total != 1 else "", len(flipped_on), len(flipped_off)
             )
-            QtWidgets.QMessageBox.information(
-                self, "Sign Rules Flipped",
-                "Toggled copy ↔ negate on {} control{}:\n\n{}{}".format(
-                    len(flipped), "s" if len(flipped) != 1 else "",
-                    "\n".join("  •  {}".format(n) for n in flipped[:20]),
-                    "\n  … and {} more".format(len(flipped) - 20) if len(flipped) > 20 else "",
-                )
-            )
-        else:
-            QtWidgets.QMessageBox.information(
-                self, "No Changes",
-                "None of the selected controls were found in the snapshot.\n\n"
-                "Make sure you have taken a snapshot that includes these controls."
-            )
+        )
+
+        sections = []
+        if flipped_on:
+            sections.append("<b>Sign flipped on:</b><br>" +
+                            "<br>".join("  •  {}".format(n) for n in flipped_on[:20]) +
+                            ("<br>  … and {} more".format(len(flipped_on) - 20)
+                             if len(flipped_on) > 20 else ""))
+        if flipped_off:
+            sections.append("<b>Sign restored on:</b><br>" +
+                            "<br>".join("  •  {}".format(n) for n in flipped_off[:20]) +
+                            ("<br>  … and {} more".format(len(flipped_off) - 20)
+                             if len(flipped_off) > 20 else ""))
+
+        info = QtWidgets.QMessageBox(self)
+        info.setWindowTitle("Sign Flip Toggled")
+        info.setIcon(QtWidgets.QMessageBox.Information)
+        info.setTextFormat(QtCore.Qt.RichText)
+        info.setText("<br><br>".join(sections) if sections else
+                     "No controls were toggled.")
+        info.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        info.exec()
 
     # ------------------------------------------------------------------
     # Help
@@ -3802,7 +3921,7 @@ class MirrorControls(QtWidgets.QDialog):
     def show_about(self):
         about_text = (
             "<h3>Mirror Controls</h3>"
-            "<p style='color:#8ab4f8;'>Version 2.3.0</p>"
+            "<p style='color:#8ab4f8;'>Version 2.3.1</p>"
             "<p style='color:#888; font-size:10px;'>Formerly digetMirrorControl</p>"
             "<hr>"
 
@@ -3813,6 +3932,21 @@ class MirrorControls(QtWidgets.QDialog):
             "<tr><td style='color:#90c890;'>Updated by:</td>"
             "<td>David Shepstone</td></tr>"
             "</table>"
+
+            "<h4>What's New in 2.3.1</h4>"
+            "<ul>"
+            "<li><b>Character Snapshot is the sole snapshot source</b> — the "
+            "legacy RigSnapshot fallback has been removed from runtime "
+            "mirroring, the prefix combobox, the status label and the ± "
+            "Flip Sign button.</li>"
+            "<li><b>± Flip Sign now stores per-control overrides</b> in the "
+            "Character Snapshot's metadata. Flipped controls have their "
+            "translate / rotate values inverted before mirroring, so the "
+            "partner control receives the opposite sign on those channels.</li>"
+            "<li><b>Cleaner reminder popup</b> — clicking ± Flip Sign without "
+            "a Character Snapshot for the rig now offers a one-click launcher "
+            "for the Character Snapshot tool.</li>"
+            "</ul>"
 
             "<h4>What's New in 2.3.0</h4>"
             "<ul>"
