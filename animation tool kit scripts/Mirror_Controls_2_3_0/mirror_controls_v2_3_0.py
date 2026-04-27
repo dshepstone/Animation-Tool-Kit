@@ -2669,7 +2669,44 @@ class MirrorControls(QtWidgets.QDialog):
         txt = self.prefix_cb.currentText()
         if not txt or txt == "(none)":
             return None
+        if txt == "(no namespace)":
+            return DEFAULT_PREFIX
         return txt
+
+    def _resolve_prefix_for_controls(self, controls):
+        """
+        Resolve the Character Snapshot prefix for *controls*.
+
+        Priority:
+          1) Namespace detected from selection (fast path).
+          2) Active combobox prefix (if it has a stored snapshot).
+          3) Scan stored snapshots and find one that contains the selected
+             control name(s), matching both full key and leaf key.
+        """
+        controls = controls or []
+        if not controls:
+            return self._active_prefix or self.get_active_prefix()
+
+        detected = _detect_prefix(controls[0])
+        if _load_character_snapshot_for(detected) is not None:
+            return detected
+
+        active = self._active_prefix or self.get_active_prefix()
+        if active and _load_character_snapshot_for(active) is not None:
+            return active
+
+        leaves = {c.split("|")[-1] for c in controls}
+        prefixes = _list_character_snapshot_prefixes()
+        for pfx in prefixes:
+            snap = _load_character_snapshot_for(pfx)
+            if snap is None:
+                continue
+            ctrl_keys = set((snap.controls or {}).keys())
+            ctrl_leaves = {k.split("|")[-1] for k in ctrl_keys}
+            if leaves & ctrl_keys or leaves & ctrl_leaves:
+                return pfx
+
+        return detected
 
     def _refresh_prefix_combobox(self):
         """Re-populate the prefix combobox from Character Snapshot prefixes."""
@@ -2689,6 +2726,18 @@ class MirrorControls(QtWidgets.QDialog):
             idx = self.prefix_cb.findText(old)
             if idx >= 0:
                 self.prefix_cb.setCurrentIndex(idx)
+            else:
+                # If no previous selection, try to auto-select the rig under
+                # the current viewport selection.
+                sel = cmds.ls(selection=True, long=True) or []
+                auto_prefix = self._resolve_prefix_for_controls(sel)
+                if auto_prefix:
+                    auto_label = (
+                        "(no namespace)" if auto_prefix == DEFAULT_PREFIX else auto_prefix
+                    )
+                    auto_idx = self.prefix_cb.findText(auto_label)
+                    if auto_idx >= 0:
+                        self.prefix_cb.setCurrentIndex(auto_idx)
 
         self.prefix_cb.blockSignals(False)
         self._active_prefix = self.get_active_prefix()
@@ -3466,7 +3515,7 @@ class MirrorControls(QtWidgets.QDialog):
         # Scene-mode: use the active prefix from the combobox.
         sel = cmds.ls(selection=True, long=True)
         if sel:
-            prefix = _detect_prefix(sel[0])
+            prefix = self._resolve_prefix_for_controls(sel)
         else:
             prefix = self._active_prefix or self.get_active_prefix()
 
@@ -3753,7 +3802,7 @@ class MirrorControls(QtWidgets.QDialog):
             )
             return
 
-        prefix   = _detect_prefix(sel[0])
+        prefix   = self._resolve_prefix_for_controls(sel)
         snapshot = self._load_snapshot_for_mirroring(prefix)
         if snapshot is None:
             label = prefix if prefix and prefix != DEFAULT_PREFIX else "the selected rig"
