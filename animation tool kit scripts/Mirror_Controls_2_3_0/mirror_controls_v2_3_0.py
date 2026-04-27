@@ -286,7 +286,7 @@ def _try_import_character_snapshot():
 
 # Key under which Mirror Controls stores its per-rig flip-sign overrides
 # inside the CharacterSnapshot.metadata dict. The list contains leaf names of
-# controls whose mirror sign should be inverted on translate/rotate axes.
+# controls whose mirrored numeric channels should be sign-inverted.
 _CS_META_FLIP_SIGNS = "mirror_controls_flip_signs"
 
 
@@ -309,7 +309,7 @@ class _CharacterSnapshotAdapter(object):
 
     Flip-sign overrides are stored as a list of leaf names inside
     CharacterSnapshot.metadata[_CS_META_FLIP_SIGNS]. When mirror_pair runs it
-    inverts the control's translate/rotate input value before any rule or
+    inverts the control's mirrored numeric input value before any rule or
     heuristic logic runs — that effectively flips the sign of whatever the
     mirror code would have written to the partner control.
     """
@@ -349,7 +349,7 @@ class _CharacterSnapshotAdapter(object):
     # -- Flip-sign interface ----------------------------------------------
 
     def is_flip_sign(self, ctrl):
-        """Return True if ctrl's translate/rotate signs should be inverted."""
+        """Return True if ctrl's mirrored numeric channels should be inverted."""
         return ctrl.split("|")[-1] in self._flip_signs
 
     def toggle_flip_sign(self, ctrl):
@@ -2669,7 +2669,44 @@ class MirrorControls(QtWidgets.QDialog):
         txt = self.prefix_cb.currentText()
         if not txt or txt == "(none)":
             return None
+        if txt == "(no namespace)":
+            return DEFAULT_PREFIX
         return txt
+
+    def _resolve_prefix_for_controls(self, controls):
+        """
+        Resolve the Character Snapshot prefix for *controls*.
+
+        Priority:
+          1) Namespace detected from selection (fast path).
+          2) Active combobox prefix (if it has a stored snapshot).
+          3) Scan stored snapshots and find one that contains the selected
+             control name(s), matching both full key and leaf key.
+        """
+        controls = controls or []
+        if not controls:
+            return self._active_prefix or self.get_active_prefix()
+
+        detected = _detect_prefix(controls[0])
+        if _load_character_snapshot_for(detected) is not None:
+            return detected
+
+        active = self._active_prefix or self.get_active_prefix()
+        if active and _load_character_snapshot_for(active) is not None:
+            return active
+
+        leaves = {c.split("|")[-1] for c in controls}
+        prefixes = _list_character_snapshot_prefixes()
+        for pfx in prefixes:
+            snap = _load_character_snapshot_for(pfx)
+            if snap is None:
+                continue
+            ctrl_keys = set((snap.controls or {}).keys())
+            ctrl_leaves = {k.split("|")[-1] for k in ctrl_keys}
+            if leaves & ctrl_keys or leaves & ctrl_leaves:
+                return pfx
+
+        return detected
 
     def _refresh_prefix_combobox(self):
         """Re-populate the prefix combobox from Character Snapshot prefixes."""
@@ -2689,6 +2726,18 @@ class MirrorControls(QtWidgets.QDialog):
             idx = self.prefix_cb.findText(old)
             if idx >= 0:
                 self.prefix_cb.setCurrentIndex(idx)
+            else:
+                # If no previous selection, try to auto-select the rig under
+                # the current viewport selection.
+                sel = cmds.ls(selection=True, long=True) or []
+                auto_prefix = self._resolve_prefix_for_controls(sel)
+                if auto_prefix:
+                    auto_label = (
+                        "(no namespace)" if auto_prefix == DEFAULT_PREFIX else auto_prefix
+                    )
+                    auto_idx = self.prefix_cb.findText(auto_label)
+                    if auto_idx >= 0:
+                        self.prefix_cb.setCurrentIndex(auto_idx)
 
         self.prefix_cb.blockSignals(False)
         self._active_prefix = self.get_active_prefix()
@@ -3346,10 +3395,10 @@ class MirrorControls(QtWidgets.QDialog):
 
         # Per-control sign-flip override (Character Snapshot only).
         # When the user clicks "± Flip Sign Rules" the leaf is added to the
-        # snapshot's flip-sign list. We invert the source value for translate
-        # and rotate channels here so every downstream code path (snapshot
-        # rule or heuristic fallback) automatically writes the opposite sign
-        # to the partner control. Scale and custom channels are left alone.
+        # snapshot's flip-sign list. We invert mirrored numeric channels here
+        # so every downstream code path (snapshot rule or heuristic fallback)
+        # automatically writes the opposite sign to the partner control.
+        # Scale, bool and enum channels are left alone.
         flip_this_ctrl = bool(
             snapshot is not None
             and getattr(snapshot, "is_flip_sign", None)
@@ -3361,7 +3410,19 @@ class MirrorControls(QtWidgets.QDialog):
 
             if flip_this_ctrl:
                 attr_lc = attr.lower()
-                if attr_lc.startswith("translate") or attr_lc.startswith("rotate"):
+                src_attr = "{}.{}".format(ctrl, attr)
+                try:
+                    attr_type = cmds.getAttr(src_attr, type=True)
+                except Exception:
+                    attr_type = None
+                is_numeric = isinstance(value, (int, float))
+                is_bool_or_enum = attr_type in ("bool", "enum")
+                if (
+                    is_numeric
+                    and not is_bool_or_enum
+                    and "visibility" not in attr_lc
+                    and not attr_lc.startswith("scale")
+                ):
                     value = -value
 
             # --- Snapshot path ---
@@ -3466,7 +3527,7 @@ class MirrorControls(QtWidgets.QDialog):
         # Scene-mode: use the active prefix from the combobox.
         sel = cmds.ls(selection=True, long=True)
         if sel:
-            prefix = _detect_prefix(sel[0])
+            prefix = self._resolve_prefix_for_controls(sel)
         else:
             prefix = self._active_prefix or self.get_active_prefix()
 
@@ -3734,10 +3795,13 @@ class MirrorControls(QtWidgets.QDialog):
     def flip_sign_rules(self):
         """
         Toggle the per-control sign-flip override for the currently selected
-        controls. When a control is flipped, Mirror Controls inverts the
-        source value for translate/rotate channels before mirroring — useful
-        when a rig setup causes a particular control to mirror with the wrong
-        sign.
+        controls. When a control is flipped, Mirror Controls inverts mirrored
+        numeric channel values before mirroring — useful when a rig setup
+        causes a particular control to mirror with the wrong sign.
+
+        The action also applies an immediate live fix to the selected control:
+        translate on the mirror axis is negated (for example, tx on X rigs).
+        This gives instant feedback and a keyable corrected channel value.
 
         Overrides are stored in the Character Snapshot's metadata (under
         'mirror_controls_flip_signs'). Mirror Controls relies exclusively on
@@ -3753,7 +3817,7 @@ class MirrorControls(QtWidgets.QDialog):
             )
             return
 
-        prefix   = _detect_prefix(sel[0])
+        prefix   = self._resolve_prefix_for_controls(sel)
         snapshot = self._load_snapshot_for_mirroring(prefix)
         if snapshot is None:
             label = prefix if prefix and prefix != DEFAULT_PREFIX else "the selected rig"
@@ -3790,6 +3854,7 @@ class MirrorControls(QtWidgets.QDialog):
         for ctrl in sel:
             leaf = ctrl.split("|")[-1]
             new_state = snapshot.toggle_flip_sign(ctrl)
+            self._apply_live_flip_fix(ctrl, snapshot)
             label = leaf.split(":")[-1] if ":" in leaf else leaf
             (flipped_on if new_state else flipped_off).append(label)
 
@@ -3823,6 +3888,30 @@ class MirrorControls(QtWidgets.QDialog):
                      "No controls were toggled.")
         info.setStandardButtons(QtWidgets.QMessageBox.Ok)
         info.exec()
+
+    def _apply_live_flip_fix(self, ctrl, snapshot):
+        """
+        Immediately negate ctrl's translate value on the mirror axis.
+        """
+        axis = (getattr(snapshot, "mirror_axis", None) or self.get_mirror_axis() or "X").upper()
+        if axis not in ("X", "Y", "Z"):
+            axis = "X"
+        attr = "{}.translate{}".format(ctrl, axis)
+        if not cmds.objExists(attr):
+            return
+        try:
+            if cmds.getAttr(attr, lock=True):
+                return
+        except Exception:
+            return
+        try:
+            val = cmds.getAttr(attr)
+            if isinstance(val, (list, tuple)):
+                val = val[0]
+            if isinstance(val, (int, float)):
+                self.set_attr(attr, -val)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Help
