@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-digetMirrorControl.py - Python Script
+mirror_controls_v2_3_0.py - Python Script
 
 Description:
     A tool for mirroring the controllers from one side to the other or to flip the pose.
-    Now includes a Rig Snapshot system: take a snapshot of a rig's controls at rest pose
-    so the tool can store accurate per-control mirror rules (copy / negate / ignore) for
-    every keyable attribute, including custom channels.  Rules can be reviewed and edited
-    in a dedicated Snapshot Editor window before being saved back to the scene.
-
-    If no snapshot is present the tool falls back to the original axis-vector heuristic.
+    Integrates with the Animation Tool Kit's Character Snapshot tool: when a Character
+    Snapshot exists for the selected rig it is used as the authoritative source of
+    manual pairs, exclusions and side classification. Falls back to the legacy Rig
+    Snapshot system if a CharacterSnapshot is not present, and to the original
+    axis-vector heuristic when no snapshot data exists at all.
 
 Requires:
     Nothing (PySide6 / Maya 2025+)
@@ -19,24 +18,34 @@ Install:
        (%USERPROFILE%/Documents/maya/scripts)
 
     2. In the Maya Script Editor, run:
-         from digetMirrorControl import DigetMirrorControl
-         DigetMirrorControl.show_dialog()
+         from mirror_controls_v2_3_0 import MirrorControls
+         MirrorControls.show_dialog()
 
     3. Create a shelf button by selecting all code (Ctrl+A) and dragging it to the shelf.
 
 Usage:
     1. Pose the rig in its rest / bind pose.
     2. Select all rig controls (or leave nothing selected to capture every NURBS control).
-    3. File > Take Snapshot  —  the tool reads each control's world-space axis vectors and
-       assigns a default mirror rule (copy / negate / ignore) to every keyable attribute.
-    4. File > Edit Snapshot…  —  review or override any rule per attribute, then Save to Scene.
-    5. Use the main mirror controls as normal.  The snapshot is used automatically.
+    3. Open the Character Snapshot tool to capture the rig once. Mirror Controls
+       will automatically use that snapshot for accurate side detection and pairing.
+    4. File > Take Snapshot  —  optional: store per-attribute mirror rules
+       (copy / negate / ignore) in the legacy Rig Snapshot for fine-grained control.
+    5. Use the main mirror controls as normal.
 
 Authors:
     Original: Mikkel Diget Eriksen (2022)
     Updated by: David Shepstone
 
 Version:
+    2.3.0 - Renamed tool from "digetMirrorControl" to "Mirror Controls".
+            Integrated with the Animation Tool Kit Character Snapshot tool: when a
+            Character Snapshot exists for the selected rig prefix it is used as the
+            primary source of manual pair overrides, exclusions, side classification
+            and partner detection. When no Character Snapshot exists for the
+            selected rig a popup reminder prompts the user to create one for
+            accurate mirroring (with options to launch the Character Snapshot tool,
+            continue anyway with the heuristic, or cancel). Updated UI title, log
+            prefixes, About dialog and class name to reflect the new name.
     2.2.5 - Four critical mirror-failure fixes:
              1. Token-swap false positives: _find_partner() and get_partner() used
                 naive str.find() which matched side tokens embedded inside words
@@ -80,7 +89,7 @@ Version:
              token are shown (e.g. ac_lf_thumb, ac_rt_index).  Controls like
              ac_cn_chest, ac_cn_jaw, spine, etc. are silently skipped since they
              have no mirror partner by design.
-    2.2.1 - Fixed _get_all_nurbs_controls() in DigetMirrorControl to return full DAG
+    2.2.1 - Fixed _get_all_nurbs_controls() in MirrorControls to return full DAG
              paths (same fix applied to the diagnostic tool) — resolves 'More than one
              object matches name' crash when opening ManualPairEditorDialog on rigs with
              deeply nested finger chains.
@@ -238,6 +247,78 @@ class OperationType(object):
     mirror_middle = "Mirror Middle"
     selected      = "Selected"
     not_selected  = "Not Selected"
+
+
+# ---------------------------------------------------------------------------
+# Character Snapshot integration
+# ---------------------------------------------------------------------------
+#
+# Mirror Controls prefers data captured by the Animation Tool Kit Character
+# Snapshot tool (character_snapshot_v1_0_0). When a Character Snapshot is
+# available for the selected rig prefix it is wrapped in
+# _CharacterSnapshotAdapter so the rest of the mirror code (which expects a
+# RigSnapshot-shaped object) can read its manual_pairs / excluded_controls /
+# side data without further changes. The adapter intentionally returns None
+# from get_rule() so per-attribute mirror logic falls through to the existing
+# heuristic — Character Snapshots do not store per-attribute copy/negate/ignore
+# rules.
+
+def _try_import_character_snapshot():
+    """Import character_snapshot_v1_0_0. Return the module, or None if missing."""
+    try:
+        import character_snapshot_v1_0_0 as cs_mod
+        return cs_mod
+    except Exception:
+        return None
+
+
+class _CharacterSnapshotAdapter(object):
+    """Thin wrapper that lets a CharacterSnapshot stand in for a RigSnapshot.
+
+    Exposes the subset of RigSnapshot's interface that mirror_control() and
+    mirror_pair() touch:
+      - manual_pairs       (dict, read directly)
+      - excluded_controls  (list, read directly)
+      - get_manual_partner(ctrl)
+      - is_excluded(ctrl)
+      - get_rule(ctrl, attr)  — always returns None so the heuristic runs
+      - controls           (empty dict; CharacterSnapshots have no rule data)
+    """
+
+    def __init__(self, char_snapshot):
+        self._cs               = char_snapshot
+        self.manual_pairs      = char_snapshot.manual_pairs
+        self.excluded_controls = char_snapshot.excluded_controls
+        self.left_token        = char_snapshot.left_token
+        self.right_token       = char_snapshot.right_token
+        self.mirror_axis       = char_snapshot.mirror_axis
+        # Empty so RigSnapshot.get_rule() pattern (ctrl_data is None → None)
+        # returns None for every (ctrl, attr) pair, deferring to the heuristic.
+        self.controls          = {}
+
+    def get_manual_partner(self, ctrl):
+        return self._cs.get_manual_partner(ctrl)
+
+    def is_excluded(self, ctrl):
+        return self._cs.is_excluded(ctrl)
+
+    def get_rule(self, ctrl, attr):
+        # CharacterSnapshots don't store per-attribute rules — let the
+        # axis-vector heuristic decide copy vs negate.
+        return None
+
+
+def _load_character_snapshot_for(prefix):
+    """Return the stored CharacterSnapshot for *prefix*, or None."""
+    cs_mod = _try_import_character_snapshot()
+    if cs_mod is None:
+        return None
+    if not prefix:
+        return None
+    try:
+        return cs_mod.load_snapshot(prefix)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +582,7 @@ class RigSnapshot(object):
                     # Save in new format and remove legacy attr
                     cls._save_multi_store(store)
                     om.MGlobal.displayInfo(
-                        "[digetMirrorControl] Migrated legacy snapshot to "
+                        "[Mirror Controls] Migrated legacy snapshot to "
                         "prefix '{}' in new multi-rig format.".format(prefix)
                     )
                     return store
@@ -541,7 +622,7 @@ class RigSnapshot(object):
         store[prefix] = self.to_dict()
         self._save_multi_store(store)
         om.MGlobal.displayInfo(
-            "[digetMirrorControl] Snapshot saved — {} controls under prefix '{}'.".format(
+            "[Mirror Controls] Snapshot saved — {} controls under prefix '{}'.".format(
                 len(self.controls), prefix
             )
         )
@@ -619,7 +700,7 @@ class RigSnapshot(object):
             del store[prefix]
             cls._save_multi_store(store)
             om.MGlobal.displayInfo(
-                "[digetMirrorControl] Deleted snapshot for prefix '{}'.".format(prefix)
+                "[Mirror Controls] Deleted snapshot for prefix '{}'.".format(prefix)
             )
             return True
         return False
@@ -631,14 +712,14 @@ class RigSnapshot(object):
         data  = store.get(prefix)
         if data is None:
             om.MGlobal.displayWarning(
-                "[digetMirrorControl] No snapshot found for prefix '{}'.".format(prefix)
+                "[Mirror Controls] No snapshot found for prefix '{}'.".format(prefix)
             )
             return False
         export_data = {"prefix": prefix, "snapshot": data}
         with open(filepath, "w") as f:
             json.dump(export_data, f, indent=2)
         om.MGlobal.displayInfo(
-            "[digetMirrorControl] Exported '{}' snapshot to: {}".format(prefix, filepath)
+            "[Mirror Controls] Exported '{}' snapshot to: {}".format(prefix, filepath)
         )
         return True
 
@@ -654,7 +735,7 @@ class RigSnapshot(object):
                 file_data = json.load(f)
         except Exception as exc:
             om.MGlobal.displayError(
-                "[digetMirrorControl] Failed to read JSON: {}".format(exc)
+                "[Mirror Controls] Failed to read JSON: {}".format(exc)
             )
             return None, None
 
@@ -676,13 +757,13 @@ class RigSnapshot(object):
             snap = cls.from_dict(snap_dict)
         except Exception as exc:
             om.MGlobal.displayError(
-                "[digetMirrorControl] Invalid snapshot data: {}".format(exc)
+                "[Mirror Controls] Invalid snapshot data: {}".format(exc)
             )
             return None, None
 
         snap.save_to_scene(prefix)
         om.MGlobal.displayInfo(
-            "[digetMirrorControl] Imported snapshot for '{}' ({} controls).".format(
+            "[Mirror Controls] Imported snapshot for '{}' ({} controls).".format(
                 prefix, len(snap.controls)
             )
         )
@@ -1369,7 +1450,7 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
         self._prefix     = prefix
         self._snapshot   = RigSnapshot.load_from_scene(prefix)
         self._rows_data  = []
-        self.setWindowTitle("Manual Pair Editor  —  digetMirrorControl")
+        self.setWindowTitle("Manual Pair Editor  —  Mirror Controls")
         self.setMinimumWidth(860)
         self.resize(960, 620)
         self._build_ui()
@@ -1942,7 +2023,7 @@ class SnapshotManagerDialog(QtWidgets.QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent or maya_main_window())
-        self.setWindowTitle("Snapshot Manager  —  digetMirrorControl")
+        self.setWindowTitle("Snapshot Manager  —  Mirror Controls")
         self.setMinimumWidth(520)
         self.resize(560, 380)
         self.setStyleSheet(DARK_STYLESHEET)
@@ -2089,10 +2170,10 @@ class SnapshotManagerDialog(QtWidgets.QDialog):
 
 
 # ---------------------------------------------------------------------------
-# DigetMirrorControl  (main dialog)
+# MirrorControls  (main dialog)
 # ---------------------------------------------------------------------------
 
-class DigetMirrorControl(QtWidgets.QDialog):
+class MirrorControls(QtWidgets.QDialog):
 
     dlg_instance             = None
     snapshot_editor_instance = None
@@ -2102,7 +2183,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
     @classmethod
     def show_dialog(cls):
         if not cls.dlg_instance:
-            cls.dlg_instance = DigetMirrorControl()
+            cls.dlg_instance = MirrorControls()
         if cls.dlg_instance.isHidden():
             cls.dlg_instance.show()
         else:
@@ -2111,7 +2192,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
 
     def __init__(self, parent=maya_main_window()):
         super().__init__(parent)
-        self.setWindowTitle("digetMirrorControl  v2.2.5")
+        self.setWindowTitle("Mirror Controls  v2.3.0")
         flags = self.windowFlags()
         flags ^= QtCore.Qt.WindowMinimizeButtonHint
         flags ^= QtCore.Qt.WindowMaximizeButtonHint
@@ -2214,7 +2295,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
 
         help_menu.addSeparator()
 
-        about_action = QtGui.QAction("About digetMirrorControl", self)
+        about_action = QtGui.QAction("About Mirror Controls", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
 
@@ -2534,7 +2615,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
 
     def open_snapshot_manager(self):
         """Open the Snapshot Manager dialog."""
-        cls = DigetMirrorControl
+        cls = MirrorControls
         if cls.snapshot_manager_instance and not cls.snapshot_manager_instance.isHidden():
             cls.snapshot_manager_instance.raise_()
             cls.snapshot_manager_instance.activateWindow()
@@ -2579,7 +2660,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
                 ctrl_list = sel  # fallback: just use what's selected
 
             om.MGlobal.displayInfo(
-                "[digetMirrorControl] Taking snapshot for '{}' — "
+                "[Mirror Controls] Taking snapshot for '{}' — "
                 "{} controls…".format(prefix, len(ctrl_list))
             )
         else:
@@ -2593,7 +2674,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
 
             if not ctrl_list:
                 om.MGlobal.displayError(
-                    "[digetMirrorControl] No NURBS controls found in scene."
+                    "[Mirror Controls] No NURBS controls found in scene."
                 )
                 return
 
@@ -2611,7 +2692,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
                     ctrl_list = filtered
 
             om.MGlobal.displayInfo(
-                "[digetMirrorControl] Taking snapshot for '{}' — "
+                "[Mirror Controls] Taking snapshot for '{}' — "
                 "{} scene controls…".format(prefix, len(ctrl_list))
             )
 
@@ -2750,7 +2831,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
 
     def open_manual_pair_editor(self):
         """Open the Manual Pair Editor window."""
-        cls = DigetMirrorControl
+        cls = MirrorControls
         if cls.manual_pair_editor_instance and not cls.manual_pair_editor_instance.isHidden():
             cls.manual_pair_editor_instance.raise_()
             cls.manual_pair_editor_instance.activateWindow()
@@ -2765,7 +2846,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
             cls.manual_pair_editor_instance.show()
 
     def _open_editor_with_snapshot(self, snap, prefix=None):
-        cls = DigetMirrorControl
+        cls = MirrorControls
         if cls.snapshot_editor_instance and not cls.snapshot_editor_instance.isHidden():
             cls.snapshot_editor_instance.update_snapshot(snap)
             cls.snapshot_editor_instance._prefix = prefix
@@ -2801,7 +2882,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
                 ctrl_list = self._get_all_nurbs_controls()
 
         if not ctrl_list:
-            om.MGlobal.displayError("[digetMirrorControl] No controls found for re-snapshot.")
+            om.MGlobal.displayError("[Mirror Controls] No controls found for re-snapshot.")
             return None
         snap = RigSnapshot.build(ctrl_list, left_token, right_token, mirror_axis)
         snap.save_to_scene(prefix)
@@ -2811,7 +2892,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
         _, unpaired = self._analyse_snapshot_pairing(snap)
         if unpaired:
             om.MGlobal.displayWarning(
-                "[digetMirrorControl] Re-snapshot: {} control{} still unpaired: {}".format(
+                "[Mirror Controls] Re-snapshot: {} control{} still unpaired: {}".format(
                     len(unpaired),
                     "s" if len(unpaired) != 1 else "",
                     ", ".join(unpaired[:20]),
@@ -3251,8 +3332,9 @@ class DigetMirrorControl(QtWidgets.QDialog):
     # ------------------------------------------------------------------
 
     def mirror_control(self):
-        cmds.undoInfo(openChunk=True)
-
+        # Resolve which prefix we're mirroring before opening an undo chunk so
+        # the Character Snapshot reminder popup (if shown) doesn't leave an
+        # empty undo entry behind when the user cancels.
         left_token  = self.get_left_name()
         right_token = self.get_right_name()
         mirror_axis = self.get_mirror_axis()
@@ -3267,7 +3349,14 @@ class DigetMirrorControl(QtWidgets.QDialog):
         else:
             prefix = self._active_prefix or self.get_active_prefix()
 
-        snapshot = RigSnapshot.load_from_scene(prefix) if prefix else RigSnapshot.load_from_scene()
+        snapshot = self._load_snapshot_for_mirroring(prefix)
+        if snapshot is None:
+            # No CharacterSnapshot AND no legacy RigSnapshot for this rig.
+            # Remind the user to capture one for accurate mirroring.
+            if not self._prompt_create_character_snapshot(prefix):
+                return
+
+        cmds.undoInfo(openChunk=True)
 
         if sel:
             # ---- Selection mode ----
@@ -3289,7 +3378,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
                 # Skip excluded controls
                 if snapshot and snapshot.is_excluded(ctrl):
                     om.MGlobal.displayInfo(
-                        "[digetMirrorControl] Skipping excluded control '{}'".format(ctrl)
+                        "[Mirror Controls] Skipping excluded control '{}'".format(ctrl)
                     )
                     continue
 
@@ -3416,6 +3505,83 @@ class DigetMirrorControl(QtWidgets.QDialog):
         cmds.undoInfo(closeChunk=True)
 
     # ------------------------------------------------------------------
+    # Snapshot resolution  (CharacterSnapshot first, RigSnapshot fallback)
+    # ------------------------------------------------------------------
+
+    def _load_snapshot_for_mirroring(self, prefix):
+        """Return a snapshot-shaped object for *prefix*, or None.
+
+        Resolution order:
+          1.  Character Snapshot (Animation Tool Kit) — wrapped in
+              _CharacterSnapshotAdapter so the rest of the mirror code can
+              treat it like a RigSnapshot.
+          2.  Legacy RigSnapshot stored on this tool's scene node.
+          3.  None — caller is expected to prompt the user.
+        """
+        if prefix:
+            cs_snap = _load_character_snapshot_for(prefix)
+            if cs_snap is not None:
+                om.MGlobal.displayInfo(
+                    "[Mirror Controls] Using Character Snapshot for '{}'.".format(prefix)
+                )
+                return _CharacterSnapshotAdapter(cs_snap)
+
+        rig_snap = (RigSnapshot.load_from_scene(prefix)
+                    if prefix else RigSnapshot.load_from_scene())
+        return rig_snap
+
+    def _prompt_create_character_snapshot(self, prefix):
+        """Show the "no snapshot" reminder. Return True if mirroring should
+        continue with the heuristic, False if the user cancelled or asked to
+        open the Character Snapshot tool instead.
+        """
+        label = prefix if prefix and prefix != DEFAULT_PREFIX else "the selected rig"
+        cs_mod = _try_import_character_snapshot()
+        cs_available = cs_mod is not None
+
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Mirror Controls — No Character Snapshot")
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setTextFormat(QtCore.Qt.RichText)
+        message = (
+            "<p>No <b>Character Snapshot</b> was found for "
+            "<b>{}</b>.</p>"
+            "<p>Mirror Controls uses a Character Snapshot of the rig "
+            "(captured at rest pose) for accurate side detection, manual "
+            "pair overrides and exclusions.</p>"
+            "<p>Please create a Character Snapshot before mirroring for "
+            "accurate results. You can continue without one — the tool "
+            "will fall back to the axis-vector heuristic, which may "
+            "misfire on rigs with non-standard naming or geometry.</p>"
+        ).format(label)
+        box.setText(message)
+
+        open_btn = box.addButton("Open Character Snapshot…",
+                                 QtWidgets.QMessageBox.AcceptRole)
+        if not cs_available:
+            open_btn.setEnabled(False)
+            open_btn.setToolTip("character_snapshot_v1_0_0 module not found on sys.path.")
+        continue_btn = box.addButton("Continue Without Snapshot",
+                                     QtWidgets.QMessageBox.DestructiveRole)
+        cancel_btn = box.addButton("Cancel", QtWidgets.QMessageBox.RejectRole)
+        box.setDefaultButton(open_btn if cs_available else continue_btn)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked is open_btn and cs_available:
+            try:
+                cs_mod.show_dialog()
+            except Exception as exc:
+                om.MGlobal.displayError(
+                    "[Mirror Controls] Could not launch Character Snapshot: {}".format(exc)
+                )
+            return False
+        if clicked is continue_btn:
+            return True
+        # cancel_btn or dialog dismissed
+        return False
+
+    # ------------------------------------------------------------------
     # Scene-node helpers
     # ------------------------------------------------------------------
 
@@ -3519,7 +3685,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
             snap.save_to_scene(prefix)
             self._refresh_snapshot_status()
             om.MGlobal.displayInfo(
-                "[digetMirrorControl] Flipped sign rules for {} control{}: {}".format(
+                "[Mirror Controls] Flipped sign rules for {} control{}: {}".format(
                     len(flipped), "s" if len(flipped) != 1 else "",
                     ", ".join(flipped[:15]) + ("…" if len(flipped) > 15 else "")
                 )
@@ -3545,7 +3711,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
 
     def show_help(self):
         help_text = (
-            "<h3>digetMirrorControl — How To Use</h3>"
+            "<h3>Mirror Controls — How To Use</h3>"
             "<hr>"
 
             "<h4>① Quick Start — Mirror a Pose</h4>"
@@ -3623,7 +3789,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
             "than being negated by the axis heuristic.</p>"
         )
         box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("How To Use — digetMirrorControl")
+        box.setWindowTitle("How To Use — Mirror Controls")
         box.setTextFormat(QtCore.Qt.RichText)
         box.setText(help_text)
         box.setStandardButtons(QtWidgets.QMessageBox.Ok)
@@ -3635,8 +3801,9 @@ class DigetMirrorControl(QtWidgets.QDialog):
 
     def show_about(self):
         about_text = (
-            "<h3>digetMirrorControl</h3>"
-            "<p style='color:#8ab4f8;'>Version 2.2.5</p>"
+            "<h3>Mirror Controls</h3>"
+            "<p style='color:#8ab4f8;'>Version 2.3.0</p>"
+            "<p style='color:#888; font-size:10px;'>Formerly digetMirrorControl</p>"
             "<hr>"
 
             "<h4>Contributors</h4>"
@@ -3647,26 +3814,24 @@ class DigetMirrorControl(QtWidgets.QDialog):
             "<td>David Shepstone</td></tr>"
             "</table>"
 
-            "<h4>What's New in 2.2.5</h4>"
+            "<h4>What's New in 2.3.0</h4>"
             "<ul>"
-            "<li><b>Per-character snapshots</b> — snapshot data is now stored per rig "
-            "namespace prefix.  Multiple characters in one scene each get independent "
-            "snapshots.  Select any one control to auto-detect and capture the full rig.  "
-            "Export/import snapshots as JSON via the Snapshot Manager.</li>"
-            "<li><b>± Flip Sign Rules</b> — toggle copy ↔ negate on selected controls "
-            "when the rig mirrors with the wrong sign.</li>"
-            "<li><b>Word-boundary token matching</b> — side tokens (lf/rt) are no "
-            "longer falsely matched inside words like 'shirt' or 'upperteeth'.</li>"
-            "<li><b>DAG path resolution</b> — fixed scene-mode and selection-mode "
-            "failures on rigs with deeply nested controls (finger chains).</li>"
-            "<li><b>Manual Pair Editor fixes</b> — Save to Scene and Exclude "
-            "now correctly preserve all pending edits.</li>"
-            "<li><b>Redesigned UI</b> — dark theme, organized sections, tooltips "
-            "on every control, Help menu with full documentation.</li>"
+            "<li><b>Renamed to Mirror Controls</b> — the tool now lives under a "
+            "clearer name in the Animation Tool Kit toolbar.</li>"
+            "<li><b>Character Snapshot integration</b> — when a Character Snapshot "
+            "exists for the selected rig prefix it is used as the authoritative "
+            "source of manual pairs, exclusions and side classification.</li>"
+            "<li><b>Snapshot reminder popup</b> — when the selected rig has no "
+            "Character Snapshot the tool prompts the user to create one for "
+            "accurate mirroring, with a one-click launcher for the Character "
+            "Snapshot tool.</li>"
             "</ul>"
 
             "<h4>Previous Highlights</h4>"
             "<ul>"
+            "<li><b>v2.2.5</b> — Per-character snapshots stored per rig namespace "
+            "prefix; ± Flip Sign Rules; word-boundary token matching; DAG path "
+            "resolution fixes; Manual Pair Editor edit-preservation fixes.</li>"
             "<li><b>v2.2.0</b> — Manual Pair Editor for per-rig partner overrides "
             "and control exclusions.</li>"
             "<li><b>v2.1.0</b> — Rig Snapshot system with per-attribute mirror rules "
@@ -3676,7 +3841,7 @@ class DigetMirrorControl(QtWidgets.QDialog):
             "<p style='color:#888; font-size:10px;'>Python · PySide6 · Maya 2025+</p>"
         )
         box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("About digetMirrorControl")
+        box.setWindowTitle("About Mirror Controls")
         box.setTextFormat(QtCore.Qt.RichText)
         box.setText(about_text)
         box.setStandardButtons(QtWidgets.QMessageBox.Ok)
@@ -3708,5 +3873,5 @@ if __name__ == "__main__":
         mirror_control.deleteLater() # type: ignore
     except Exception:
         pass
-    mirror_control = DigetMirrorControl()
+    mirror_control = MirrorControls()
     mirror_control.show()

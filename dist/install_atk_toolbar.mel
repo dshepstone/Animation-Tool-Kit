@@ -320,7 +320,8 @@ global proc atk__install()
         "AnimSnap_1_0_0/anim_snap.py",
         "xform_copy_past_2_0_0/xform_copy_paste.py",
         "selection_set_2_0_4/SmartSelectSets_v2.py",
-        "diget_mirror_2_5_5/digetMirrorControl_v2_2_5.py",
+        "Mirror_Controls_2_3_0/mirror_controls_v2_3_0.py",
+        "Character_Snapshot_1_0_0/character_snapshot_v1_0_0.py",
         "user_directory_check_1_0_0/user_directory_check.py"
     };
     for ($relScript in $toolScripts)
@@ -464,7 +465,8 @@ global proc atk__install()
         "AnimSnap_1_0_0/animSnap.png",
         "xform_copy_past_2_0_0/xform_copy_paste.png",
         "selection_set_2_0_4/selectionSet.png",
-        "diget_mirror_2_5_5/mirror.png",
+        "Mirror_Controls_2_3_0/mirror.png",
+        "Character_Snapshot_1_0_0/snapshot.png",
         "Bookmarks/icons/Bookmark.png",
         "tangent_tools/curveTool.png",
         "tangent_tools/tangent_icons/AutoSpline.png",

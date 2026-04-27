@@ -1,18 +1,18 @@
 /*
-Diget Mirror Control Installer (v2.2.5)
-Drag and drop this file into Maya's viewport to install Diget Mirror Control.
+Mirror Controls Installer (v2.3.0)
+Drag and drop this file into Maya's viewport to install Mirror Controls.
 Compatible with Maya 2025+
 
 Place these files in the SAME folder before dragging:
-  - install_diget_mirror_control.mel  (this file)
-  - digetMirrorControl_v2_2_5.py
-  - mirror.png                        (required for shelf icon)
+  - install_mirror_controls.mel  (this file)
+  - mirror_controls_v2_3_0.py
+  - mirror.png                   (required for shelf icon)
 */
 
-global proc digetMirrorControlInstall() {
+global proc mirrorControlsInstall() {
 
     // ---- Locate this MEL file on disk ----
-    string $whatIs = `whatIs digetMirrorControlInstall`;
+    string $whatIs = `whatIs mirrorControlsInstall`;
     string $melPath = `substitute "^.*found in: " $whatIs ""`;
     $melPath = `strip $melPath`;
 
@@ -21,11 +21,11 @@ global proc digetMirrorControlInstall() {
     $pyCmd += "import os, re, sys, shutil, importlib\n";
     $pyCmd += "import maya.cmds as cmds\n";
     $pyCmd += "import maya.mel as mel\n";
-    $pyCmd += "what_is = mel.eval('whatIs digetMirrorControlInstall')\n";
+    $pyCmd += "what_is = mel.eval('whatIs mirrorControlsInstall')\n";
     $pyCmd += "mel_path = re.sub(r'^.*found in: ', '', what_is).strip()\n";
     $pyCmd += "source_dir = os.path.dirname(mel_path).replace('\\\\\\\\', '/')\n";
     $pyCmd += "\n";
-    $pyCmd += "script_name = 'digetMirrorControl_v2_2_5.py'\n";
+    $pyCmd += "script_name = 'mirror_controls_v2_3_0.py'\n";
     $pyCmd += "icon_name = 'mirror.png'\n";
     $pyCmd += "scripts_dir = cmds.internalVar(usd=True)\n";
     $pyCmd += "prefs_dir   = cmds.internalVar(upd=True)\n";
@@ -37,13 +37,13 @@ global proc digetMirrorControlInstall() {
 
     $pyCmd += "src_script = os.path.join(source_dir, script_name)\n";
     $pyCmd += "src_icon   = os.path.join(source_dir, icon_name)\n";
-    
+
     $pyCmd += "if not os.path.isfile(src_script):\n";
-    $pyCmd += "    cmds.confirmDialog(title='Install Failed', message='Missing file: ' + script_name + '\\nPlace it in the same folder as install_diget_mirror_control.mel', button=['OK'])\n";
+    $pyCmd += "    cmds.confirmDialog(title='Install Failed', message='Missing file: ' + script_name + '\\nPlace it in the same folder as install_mirror_controls.mel', button=['OK'])\n";
     $pyCmd += "    raise RuntimeError('Missing ' + script_name)\n";
-    
+
     $pyCmd += "if not os.path.isfile(src_icon):\n";
-    $pyCmd += "    cmds.confirmDialog(title='Install Failed', message='Missing file: mirror.png\\nPlace it in the same folder as install_diget_mirror_control.mel', button=['OK'])\n";
+    $pyCmd += "    cmds.confirmDialog(title='Install Failed', message='Missing file: mirror.png\\nPlace it in the same folder as install_mirror_controls.mel', button=['OK'])\n";
     $pyCmd += "    raise RuntimeError('Missing mirror.png')\n";
     $pyCmd += "\n";
 
@@ -63,15 +63,15 @@ global proc digetMirrorControlInstall() {
     $pyCmd += "for btn in children:\n";
     $pyCmd += "    if cmds.objectTypeUI(btn) == 'shelfButton':\n";
     $pyCmd += "        label = cmds.shelfButton(btn, q=True, label=True)\n";
-    $pyCmd += "        if label == 'Mirror':\n";
+    $pyCmd += "        if label in ('Mirror', 'Mirror Controls'):\n";
     $pyCmd += "            cmds.deleteUI(btn)\n";
     $pyCmd += "\n";
 
-    $pyCmd += "launch_cmd = \"import importlib\\nimport digetMirrorControl_v2_2_5 as mirror_tool\\nimportlib.reload(mirror_tool)\\nmirror_tool.DigetMirrorControl.show_dialog()\"\n";
+    $pyCmd += "launch_cmd = \"import importlib\\nimport mirror_controls_v2_3_0 as mirror_tool\\nimportlib.reload(mirror_tool)\\nmirror_tool.MirrorControls.show_dialog()\"\n";
     $pyCmd += "cmds.shelfButton(\n";
     $pyCmd += "    parent=current_shelf,\n";
-    $pyCmd += "    label='Mirror',\n";
-    $pyCmd += "    annotation='Launch Diget Mirror Control v2.2.5',\n";
+    $pyCmd += "    label='Mirror Controls',\n";
+    $pyCmd += "    annotation='Launch Mirror Controls v2.3.0',\n";
     $pyCmd += "    image='mirror.png',\n";
     $pyCmd += "    command=launch_cmd,\n";
     $pyCmd += "    sourceType='python',\n";
@@ -79,10 +79,10 @@ global proc digetMirrorControlInstall() {
     $pyCmd += "\n";
 
     $pyCmd += "importlib.invalidate_caches()\n";
-    $pyCmd += "cmds.confirmDialog(title='Install Complete', message='Diget Mirror Control v2.2.5 installed!\\n\\nScript: ' + dst_script + '\\nIcon: ' + dst_icon + '\\n\\nA shelf button has been added to your current shelf.', button=['OK'])\n";
-    $pyCmd += "cmds.inViewMessage(amg='<hl>Diget Mirror Control v2.2.5</hl> installed!', pos='midCenter', fade=True)\n";
+    $pyCmd += "cmds.confirmDialog(title='Install Complete', message='Mirror Controls v2.3.0 installed!\\n\\nScript: ' + dst_script + '\\nIcon: ' + dst_icon + '\\n\\nA shelf button has been added to your current shelf.', button=['OK'])\n";
+    $pyCmd += "cmds.inViewMessage(amg='<hl>Mirror Controls v2.3.0</hl> installed!', pos='midCenter', fade=True)\n";
 
     python($pyCmd);
 }
 
-digetMirrorControlInstall();
+mirrorControlsInstall();
