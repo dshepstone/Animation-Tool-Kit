@@ -8,6 +8,8 @@ import os
 import sys
 import importlib
 import importlib.util
+import runpy
+import shutil
 import maya.cmds as cmds
 
 # ---------------------------------------------------------------------------
@@ -202,6 +204,18 @@ TOOL_REGISTRY = [
         "version":   "2.0.4",
     },
     {
+        "id":        "playblast_creator",
+        "label":     "Playblast Creator",
+        "tooltip":   "Create playblasts with overlays and project-ready output options",
+        "module":    "playblast_creator_latest",
+        "launch_fn": "launch",
+        "icon_file": "playblast_creator_icon.png",
+        "icon_key":  "library",
+        "group":     "pipeline",
+        "version":   "2.0.4",
+        "reload_on_launch": True,
+    },
+    {
         "id":        "studio_library",
         "label":     "Studio Library",
         "tooltip":   "Manage poses and animation clips in a visual library",
@@ -264,6 +278,10 @@ def setup_paths():
     scripts_dir = cmds.internalVar(userScriptDir=True)
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
+    playblast_scripts_dir = os.path.join(scripts_dir, "playblast_creator")
+    if os.path.isdir(playblast_scripts_dir) and playblast_scripts_dir not in sys.path:
+        sys.path.insert(0, playblast_scripts_dir)
+    _ensure_playblast_creator_icon_installed()
 
     # The atk_toolbar package directory itself
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
@@ -327,12 +345,19 @@ def launch_tool(tool_id):
 
     module_name = tool["module"]
     fn_name = tool["launch_fn"]
+    reload_on_launch = bool(tool.get("reload_on_launch", False))
 
     try:
+        if tool_id == "playblast_creator":
+            _launch_playblast_creator_latest()
+            return
+
         if module_name not in sys.modules:
             mod = importlib.import_module(module_name)
         else:
             mod = sys.modules[module_name]
+            if reload_on_launch:
+                mod = importlib.reload(mod)
 
         fn = mod
         for attr in fn_name.split("."):
@@ -371,11 +396,58 @@ def launch_tool(tool_id):
         cmds.warning("ATK Toolbar: error launching '{}': {}".format(tool_id, exc))
 
 
+def _launch_playblast_creator_latest():
+    """Launch Playblast Creator using its installer-authored runpy entrypoint."""
+    launcher = os.path.join(
+        cmds.internalVar(userAppDir=True),
+        "scripts",
+        "playblast_creator",
+        "playblast_creator_latest.py",
+    )
+    if not os.path.isfile(launcher):
+        raise RuntimeError("Playblast Creator launcher not found: {}".format(launcher))
+    globals_dict = runpy.run_path(launcher)
+    launch = globals_dict.get("launch")
+    if not callable(launch):
+        raise RuntimeError("Playblast Creator launcher missing callable 'launch'.")
+    launch()
+
+
+def _ensure_playblast_creator_icon_installed():
+    """Install Playblast Creator icon into Maya prefs/icons if the source exists."""
+    source_icon = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "animation tool kit scripts",
+        "Playblast_Creator",
+        "playblast_creator_icon.png",
+    )
+    if not os.path.isfile(source_icon):
+        return
+
+    icons_dir = os.path.join(cmds.internalVar(userPrefDir=True), "icons")
+    os.makedirs(icons_dir, exist_ok=True)
+    target_icon = os.path.join(icons_dir, "playblast_creator_icon.png")
+
+    try:
+        if not os.path.exists(target_icon) or os.path.getmtime(source_icon) > os.path.getmtime(target_icon):
+            shutil.copy2(source_icon, target_icon)
+    except Exception:
+        pass
+
+
 def is_tool_installed(tool_id):
     """Return True if the tool module can be found on sys.path."""
     tool = _tool_by_id(tool_id)
     if tool is None:
         return False
+    if tool_id == "playblast_creator":
+        launcher = os.path.join(
+            cmds.internalVar(userAppDir=True),
+            "scripts",
+            "playblast_creator",
+            "playblast_creator_latest.py",
+        )
+        return os.path.isfile(launcher)
     try:
         spec = importlib.util.find_spec(tool["module"])
         return spec is not None
