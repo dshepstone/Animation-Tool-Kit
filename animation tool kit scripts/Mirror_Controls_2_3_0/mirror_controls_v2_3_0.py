@@ -3799,6 +3799,10 @@ class MirrorControls(QtWidgets.QDialog):
         numeric channel values before mirroring — useful when a rig setup
         causes a particular control to mirror with the wrong sign.
 
+        The action also applies an immediate live fix to the selected control:
+        translate on the mirror axis is negated (for example, tx on X rigs).
+        This gives instant feedback and a keyable corrected channel value.
+
         Overrides are stored in the Character Snapshot's metadata (under
         'mirror_controls_flip_signs'). Mirror Controls relies exclusively on
         the Character Snapshot tool, so a Character Snapshot must exist for
@@ -3850,6 +3854,7 @@ class MirrorControls(QtWidgets.QDialog):
         for ctrl in sel:
             leaf = ctrl.split("|")[-1]
             new_state = snapshot.toggle_flip_sign(ctrl)
+            self._apply_live_flip_fix(ctrl, snapshot)
             label = leaf.split(":")[-1] if ":" in leaf else leaf
             (flipped_on if new_state else flipped_off).append(label)
 
@@ -3883,6 +3888,30 @@ class MirrorControls(QtWidgets.QDialog):
                      "No controls were toggled.")
         info.setStandardButtons(QtWidgets.QMessageBox.Ok)
         info.exec()
+
+    def _apply_live_flip_fix(self, ctrl, snapshot):
+        """
+        Immediately negate ctrl's translate value on the mirror axis.
+        """
+        axis = (getattr(snapshot, "mirror_axis", None) or self.get_mirror_axis() or "X").upper()
+        if axis not in ("X", "Y", "Z"):
+            axis = "X"
+        attr = "{}.translate{}".format(ctrl, axis)
+        if not cmds.objExists(attr):
+            return
+        try:
+            if cmds.getAttr(attr, lock=True):
+                return
+        except Exception:
+            return
+        try:
+            val = cmds.getAttr(attr)
+            if isinstance(val, (list, tuple)):
+                val = val[0]
+            if isinstance(val, (int, float)):
+                self.set_attr(attr, -val)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Help
