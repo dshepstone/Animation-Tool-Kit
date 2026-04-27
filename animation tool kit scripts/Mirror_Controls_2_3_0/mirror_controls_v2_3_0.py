@@ -286,7 +286,7 @@ def _try_import_character_snapshot():
 
 # Key under which Mirror Controls stores its per-rig flip-sign overrides
 # inside the CharacterSnapshot.metadata dict. The list contains leaf names of
-# controls whose mirror sign should be inverted on translate/rotate axes.
+# controls whose mirrored numeric channels should be sign-inverted.
 _CS_META_FLIP_SIGNS = "mirror_controls_flip_signs"
 
 
@@ -309,7 +309,7 @@ class _CharacterSnapshotAdapter(object):
 
     Flip-sign overrides are stored as a list of leaf names inside
     CharacterSnapshot.metadata[_CS_META_FLIP_SIGNS]. When mirror_pair runs it
-    inverts the control's translate/rotate input value before any rule or
+    inverts the control's mirrored numeric input value before any rule or
     heuristic logic runs — that effectively flips the sign of whatever the
     mirror code would have written to the partner control.
     """
@@ -349,7 +349,7 @@ class _CharacterSnapshotAdapter(object):
     # -- Flip-sign interface ----------------------------------------------
 
     def is_flip_sign(self, ctrl):
-        """Return True if ctrl's translate/rotate signs should be inverted."""
+        """Return True if ctrl's mirrored numeric channels should be inverted."""
         return ctrl.split("|")[-1] in self._flip_signs
 
     def toggle_flip_sign(self, ctrl):
@@ -3395,10 +3395,10 @@ class MirrorControls(QtWidgets.QDialog):
 
         # Per-control sign-flip override (Character Snapshot only).
         # When the user clicks "± Flip Sign Rules" the leaf is added to the
-        # snapshot's flip-sign list. We invert the source value for translate
-        # and rotate channels here so every downstream code path (snapshot
-        # rule or heuristic fallback) automatically writes the opposite sign
-        # to the partner control. Scale and custom channels are left alone.
+        # snapshot's flip-sign list. We invert mirrored numeric channels here
+        # so every downstream code path (snapshot rule or heuristic fallback)
+        # automatically writes the opposite sign to the partner control.
+        # Scale, bool and enum channels are left alone.
         flip_this_ctrl = bool(
             snapshot is not None
             and getattr(snapshot, "is_flip_sign", None)
@@ -3410,7 +3410,19 @@ class MirrorControls(QtWidgets.QDialog):
 
             if flip_this_ctrl:
                 attr_lc = attr.lower()
-                if attr_lc.startswith("translate") or attr_lc.startswith("rotate"):
+                src_attr = "{}.{}".format(ctrl, attr)
+                try:
+                    attr_type = cmds.getAttr(src_attr, type=True)
+                except Exception:
+                    attr_type = None
+                is_numeric = isinstance(value, (int, float))
+                is_bool_or_enum = attr_type in ("bool", "enum")
+                if (
+                    is_numeric
+                    and not is_bool_or_enum
+                    and "visibility" not in attr_lc
+                    and not attr_lc.startswith("scale")
+                ):
                     value = -value
 
             # --- Snapshot path ---
@@ -3783,10 +3795,9 @@ class MirrorControls(QtWidgets.QDialog):
     def flip_sign_rules(self):
         """
         Toggle the per-control sign-flip override for the currently selected
-        controls. When a control is flipped, Mirror Controls inverts the
-        source value for translate/rotate channels before mirroring — useful
-        when a rig setup causes a particular control to mirror with the wrong
-        sign.
+        controls. When a control is flipped, Mirror Controls inverts mirrored
+        numeric channel values before mirroring — useful when a rig setup
+        causes a particular control to mirror with the wrong sign.
 
         Overrides are stored in the Character Snapshot's metadata (under
         'mirror_controls_flip_signs'). Mirror Controls relies exclusively on
