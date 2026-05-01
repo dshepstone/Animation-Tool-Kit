@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Animation Tool Kit — Toolbar Tool Reference</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #22c55e;
+      --border: #374151;
+      --timing: #60a5fa;
+      --viewport: #a78bfa;
+      --rigging: #f59e0b;
+      --pipeline: #34d399;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(180deg, #0b1220, var(--bg));
+      color: var(--text);
+      line-height: 1.55;
+    }
+    .container { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+    h1 { margin: 0 0 8px; font-size: 2rem; }
+    .sub { color: var(--muted); margin-bottom: 20px; }
+    .pillbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 24px; }
+    .pill {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #0b1020;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+    .panel {
+      background: rgba(17, 24, 39, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 18px;
+    }
+    .group-title { margin: 0 0 10px; font-size: 1.25rem; }
+    .timing { color: var(--timing); }
+    .viewport { color: var(--viewport); }
+    .rigging { color: var(--rigging); }
+    .pipeline { color: var(--pipeline); }
+    table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 10px; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { background: var(--panel-2); font-size: 0.9rem; }
+    tr:last-child td { border-bottom: none; }
+    code { background: #0b1020; border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; color: #93c5fd; }
+    .note { color: var(--muted); font-size: 0.92rem; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Animation Tool Kit — Toolbar Tool Reference</h1>
+    <p class="sub">A user-friendly overview of every tool in the ATK toolbar, including what each tool does and which function it calls internally.</p>
+
+    <div class="panel">
+      <strong>How to use this page</strong>
+      <ul>
+        <li>Each section matches a toolbar category.</li>
+        <li><strong>What it does</strong> explains the practical use case in plain language.</li>
+        <li><strong>Launch function</strong> shows the internal Python entry point used by the toolbar.</li>
+      </ul>
+    </div>
+
+    <div class="pillbar">
+      <a class="pill" href="#timing">Timing Tools</a>
+      <a class="pill" href="#viewport">Viewport Tools</a>
+      <a class="pill" href="#rigging">Rigging Tools</a>
+      <a class="pill" href="#pipeline">Pipeline Tools</a>
+    </div>
+
+    <section id="timing" class="panel">
+      <h2 class="group-title timing">Timing Tools</h2>
+      <table>
+        <thead><tr><th>Tool</th><th>What it does</th><th>Module</th><th>Launch function</th><th>Version</th></tr></thead>
+        <tbody>
+          <tr><td>Inbetweener</td><td>Blends poses between keyframes with multiple easing modes.</td><td><code>vertex_tweener</code></td><td><code>show</code></td><td>2.0.2</td></tr>
+          <tr><td>Add / Remove Frames</td><td>Inserts or removes frames while rippling downstream keys.</td><td><code>insert_remove_frames_tool</code></td><td><code>show</code></td><td>1.0.2</td></tr>
+          <tr><td>Tangent Tools</td><td>Provides Graph Editor tangent and interpolation controls.</td><td><code>tangent_tools.main</code></td><td><code>launch</code></td><td>1.0.0</td></tr>
+          <tr><td>TweenMachine</td><td>Creates in-between poses from selected keys/controls.</td><td><code>tweenMachine</code></td><td><code>start</code></td><td>3.x</td></tr>
+          <tr><td>Noise Generator</td><td>Adds noise, easing, and scale effects to animation curves.</td><td><code>noise_generator_1_0_0</code></td><td><code>launch</code></td><td>1.0.0</td></tr>
+          <tr><td>Xform Copy Paste</td><td>Copies and pastes world-space transforms between objects.</td><td><code>xform_copy_paste</code></td><td><code>show</code></td><td>2.0.0</td></tr>
+          <tr><td>Bookmarks</td><td>Creates and navigates timeline bookmarks.</td><td><code>time_bookmarks.main</code></td><td><code>launch</code></td><td>0.1.0</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="viewport" class="panel">
+      <h2 class="group-title viewport">Viewport Tools</h2>
+      <table>
+        <thead><tr><th>Tool</th><th>What it does</th><th>Module</th><th>Launch function</th><th>Version</th></tr></thead>
+        <tbody>
+          <tr><td>Micro Manipulator</td><td>Gives precision transform controls with micro-speed scrubbing.</td><td><code>Micro_Manipulator_v1_0_0</code></td><td><code>show</code></td><td>1.0.0</td></tr>
+          <tr><td>Temp Pivot</td><td>Creates temporary non-destructive rotation pivots.</td><td><code>temp_pivot_tool</code></td><td><code>show</code></td><td>1.0.5</td></tr>
+          <tr><td>Onion Skin</td><td>Displays multi-frame ghosting for motion reference.</td><td><code>onion_skin_2_1_0</code></td><td><code>launch</code></td><td>2.1.0</td></tr>
+          <tr><td>AnimSnap</td><td>Snaps one object to another using world-space transforms.</td><td><code>anim_snap</code></td><td><code>launch</code></td><td>1.0.0</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="rigging" class="panel">
+      <h2 class="group-title rigging">Rigging Tools</h2>
+      <table>
+        <thead><tr><th>Tool</th><th>What it does</th><th>Module</th><th>Launch function</th><th>Version</th></tr></thead>
+        <tbody>
+          <tr><td>Wire Shape Tool</td><td>Builds curve-based rig control shapes.</td><td><code>wire_shape_tool</code></td><td><code>show</code></td><td>1.0.0</td></tr>
+          <tr><td>Reset Tool</td><td>Resets translate/rotate/scale on selected objects.</td><td><code>transform_reset_tool</code></td><td><code>show</code></td><td>2.0.1</td></tr>
+          <tr><td>Selection Set</td><td>Creates, stores, and recalls named selection sets.</td><td><code>SmartSelectSets_v2</code></td><td><code>show_smart_select_sets</code></td><td>2.0.4</td></tr>
+          <tr><td>Character Snapshot</td><td>Captures rig snapshots for Mirror Controls and related tools.</td><td><code>character_snapshot_v1_0_0</code></td><td><code>show_dialog</code></td><td>1.0.0</td></tr>
+          <tr><td>Mirror Controls</td><td>Mirrors, swaps, or flips controls across left/right sides.</td><td><code>mirror_controls_v2_3_0</code></td><td><code>MirrorControls.show_dialog</code></td><td>2.3.1</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="pipeline" class="panel">
+      <h2 class="group-title pipeline">Pipeline Tools</h2>
+      <table>
+        <thead><tr><th>Tool</th><th>What it does</th><th>Module</th><th>Launch function</th><th>Version</th></tr></thead>
+        <tbody>
+          <tr><td>SavePlus</td><td>Handles intelligent scene versioning and backup.</td><td><code>savePlus_launcher</code></td><td><code>launch_save_plus</code></td><td>2.0.4</td></tr>
+          <tr><td>Studio Library</td><td>Manages animation clips and poses in a visual library.</td><td><code>studiolibrary</code></td><td><code>main</code></td><td>2.21.1</td></tr>
+          <tr><td>Playblast Creator</td><td>Creates preview playblasts with masks and presets.</td><td><code>playblast_creator_ui</code></td><td><code>show_ui</code></td><td>2.0.4</td></tr>
+          <tr><td>User Directory Check</td><td>Verifies key Maya user directories and path setup.</td><td><code>user_directory_check</code></td><td><code>show</code></td><td>1.0.0</td></tr>
+        </tbody>
+      </table>
+      <p class="note">Source of truth for these entries: <code>atk_toolbar/atk_loader.py</code> (TOOL_REGISTRY).</p>
+    </section>
+  </div>
+</body>
+</html>
