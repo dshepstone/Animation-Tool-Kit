@@ -14,7 +14,6 @@ import os
 import math
 import logging
 
-from studiovendor import six
 from studiovendor.Qt import QtGui
 from studiovendor.Qt import QtCore
 from studiovendor.Qt import QtWidgets
@@ -71,7 +70,7 @@ class ImageWorker(QtCore.QRunnable):
         """The starting point for the thread."""
         try:
             if self._path:
-                image = QtGui.QImage(six.text_type(self._path))
+                image = QtGui.QImage(str(self._path))
                 self.signals.triggered.emit(image)
         except Exception as error:
             logger.exception("Cannot load thumbnail image.")
@@ -239,14 +238,14 @@ class Item(QtWidgets.QTreeWidgetItem):
         if not isAppRunning:
             return
 
-        if isinstance(icon, six.string_types):
+        if isinstance(icon, str):
             if not os.path.exists(icon):
                 color = color or studioqt.Color(255, 255, 255, 20)
                 icon = studiolibrary.resource.icon("image", color=color)
             else:
                 icon = QtGui.QIcon(icon)
 
-        if isinstance(column, six.string_types):
+        if isinstance(column, str):
             self._icon[column] = icon
         else:
             self._pixmap[column] = None
@@ -297,7 +296,7 @@ class Item(QtWidgets.QTreeWidgetItem):
         :type label: str
         :rtype: str
         """
-        return six.text_type(self.itemData().get(label, ''))
+        return str(self.itemData().get(label, ''))
 
     def sortText(self, label):
         """
@@ -306,7 +305,7 @@ class Item(QtWidgets.QTreeWidgetItem):
         :type label: str
         :rtype: str
         """
-        return six.text_type(self.itemData().get(label, ''))
+        return str(self.itemData().get(label, ''))
 
     def update(self):
         """
@@ -434,7 +433,7 @@ class Item(QtWidgets.QTreeWidgetItem):
         :rtype: str
         """
         if not self._searchText:
-            self._searchText = six.text_type(self._data)
+            self._searchText = str(self._data)
 
         return self._searchText
 

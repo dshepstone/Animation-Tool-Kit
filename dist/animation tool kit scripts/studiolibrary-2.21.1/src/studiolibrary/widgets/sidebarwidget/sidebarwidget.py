@@ -15,7 +15,6 @@ import logging
 import functools
 import collections
 
-from studiovendor import six
 from studiovendor.Qt import QtGui
 from studiovendor.Qt import QtCore
 from studiovendor.Qt import QtWidgets
@@ -1028,7 +1027,7 @@ class TreeWidget(QtWidgets.QTreeWidget):
                     text = key
 
                 item = SidebarWidgetItem(self)
-                item.setText(0, six.text_type(text))
+                item.setText(0, str(text))
                 item.setPath(root)
                 item.setExpanded(True)
 
@@ -1044,7 +1043,7 @@ class TreeWidget(QtWidgets.QTreeWidget):
                     path = studiolibrary.normPath(path)
 
                     child = SidebarWidgetItem(parent)
-                    child.setText(0, six.text_type(text))
+                    child.setText(0, str(text))
                     child.setPath(path)
 
                     self._index[path] = child

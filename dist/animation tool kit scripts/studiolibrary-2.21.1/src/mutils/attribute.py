@@ -18,8 +18,6 @@ attr = mutils.Attribute("sphere1", "translateX")
 attr.set(100)
 """
 import logging
-from studiovendor import six
-
 try:
     import maya.cmds
 except ImportError:
@@ -96,8 +94,8 @@ class Attribute(object):
             msg = "Cannot initialise attribute instance without a given attr."
             raise AttributeError(msg)
 
-        self._name = six.text_type(name)
-        self._attr = six.text_type(attr)
+        self._name = str(name)
+        self._attr = str(attr)
         self._type = type
         self._value = value
         self._cache = cache
@@ -270,7 +268,7 @@ class Attribute(object):
 
             try:
                 self._type = maya.cmds.getAttr(self.fullname(), type=True)
-                self._type = six.text_type(self._type)
+                self._type = str(self._type)
             except Exception:
                 msg = 'Cannot GET attribute TYPE for "{0}"'
                 msg = msg.format(self.fullname())

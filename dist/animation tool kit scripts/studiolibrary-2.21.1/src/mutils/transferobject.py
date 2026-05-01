@@ -33,8 +33,6 @@ import locale
 import getpass
 import logging
 
-from studiovendor import six
-
 import mutils
 
 try:
@@ -275,7 +273,7 @@ class TransferObject(object):
 
         :type objects: str | list[str]
         """
-        if isinstance(objects, six.string_types):
+        if isinstance(objects, str):
             objects = [objects]
 
         for name in objects:
@@ -287,7 +285,7 @@ class TransferObject(object):
 
         :type objects: str | list[str]
         """
-        if isinstance(objects, six.string_types):
+        if isinstance(objects, str):
             objects = [objects]
 
         for obj in objects:
@@ -362,7 +360,7 @@ class TransferObject(object):
 
         user = getpass.getuser()
         if user:
-            user = six.text_type(user)
+            user = str(user)
 
         ctime = str(time.time()).split(".")[0]
         references = mutils.getReferenceData(self.objects())

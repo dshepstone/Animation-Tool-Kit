@@ -14,7 +14,6 @@ import re
 import logging
 import functools
 
-from studiovendor import six
 from studiovendor.Qt import QtGui, QtCore, QtWidgets
 
 import studioqt
@@ -668,7 +667,7 @@ class LabelFieldWidget(FieldWidget):
         
         :rtype: str 
         """
-        return six.text_type(self.widget().text())
+        return str(self.widget().text())
 
     def setValue(self, value):
         """
@@ -676,7 +675,7 @@ class LabelFieldWidget(FieldWidget):
         
         :type value: str 
         """
-        self.widget().setText(six.text_type(value))
+        self.widget().setText(str(value))
         super(LabelFieldWidget, self).setValue(value)
 
 
@@ -735,7 +734,7 @@ class StringFieldWidget(FieldWidget):
         
         :rtype: unicode 
         """
-        return six.text_type(self.widget().text())
+        return str(self.widget().text())
 
     def setValue(self, value):
         """
@@ -802,7 +801,7 @@ class TextFieldWidget(FieldWidget):
         
         :rtype: unicode 
         """
-        return six.text_type(self.widget().toPlainText())
+        return str(self.widget().toPlainText())
 
     def setValue(self, value):
         """
@@ -1021,7 +1020,7 @@ class EnumFieldWidget(FieldWidget):
         
         :rtype: unicode 
         """
-        return six.text_type(self.widget().currentText())
+        return str(self.widget().currentText())
 
     def setState(self, state):
         """

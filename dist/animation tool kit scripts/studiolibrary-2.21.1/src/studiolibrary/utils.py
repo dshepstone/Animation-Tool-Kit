@@ -45,8 +45,7 @@ except ImportError:
 
 import studiolibrary
 
-from studiovendor import six
-from studiovendor.six.moves import urllib
+import urllib.request
 
 
 __all__ = [
@@ -125,17 +124,17 @@ class PathError(IOError):
         """
         :type: str or unicode 
         """
-        msg = six.text_type(msg)
+        msg = str(msg)
         super(PathError, self).__init__(msg)
         self._msg = msg
 
     def __unicode__(self):
         """
         Return the decoded message using 'unicode_escape'
-        
-        :rtype: unicode 
+
+        :rtype: unicode
         """
-        return six.text_type(self._msg)
+        return str(self._msg)
 
 
 class MovePathError(PathError):
@@ -545,15 +544,15 @@ def formatPath(formatString, path="", **kwargs):
     temp = tempfile.gettempdir()
     if temp:
 
-        temp = six.text_type(temp)
+        temp = str(temp)
 
     username = user()
     if username:
-        username = six.text_type(username)
+        username = str(username)
 
     local = os.getenv('APPDATA') or os.getenv('HOME')
     if local:
-        local = six.text_type(local)
+        local = str(local)
 
     kwargs.update(os.environ)
 
@@ -571,7 +570,7 @@ def formatPath(formatString, path="", **kwargs):
 
     kwargs.update(labels)
 
-    resolvedString = six.text_type(formatString).format(**kwargs)
+    resolvedString = str(formatString).format(**kwargs)
 
     logger.debug("Resolved String: %s", resolvedString)
 
@@ -634,7 +633,7 @@ def movePath(src, dst):
     :type dst: str
     :rtype: str
     """
-    src = six.text_type(src)
+    src = str(src)
     dirname, name, extension = splitPath(src)
 
     if not os.path.exists(src):
@@ -773,10 +772,7 @@ def read(path):
 
 
 def write(path, data):
-    if six.PY2:
-        write2(path, data)
-    else:
-        write3(path, data)
+    write3(path, data)
 
 
 def write2(path, data):
@@ -1002,8 +998,8 @@ def replaceJson(path, old, new, count=-1):
     :type count: int
     :rtype: dict
     """
-    old = six.text_type(old)
-    new = six.text_type(new)
+    old = str(old)
+    new = str(new)
 
     data = read(path) or "{}"
     data = data.replace(old, new, count)
@@ -1431,7 +1427,7 @@ def showInFolder(path):
     args = studiolibrary.config.get('showInFolderCmd')
 
     if args:
-        if isinstance(args, six.string_types):
+        if isinstance(args, str):
             args = [args]
 
     elif isLinux():
@@ -1447,7 +1443,7 @@ def showInFolder(path):
     path = os.path.normpath(path)
 
     for i, a in enumerate(args):
-        if isinstance(a, six.string_types) and '{path}' in a:
+        if isinstance(a, str) and '{path}' in a:
             args[i] = a.format(path=path)
 
     logger.info("Call: '%s' with arguments: %s", cmd.__name__, args)

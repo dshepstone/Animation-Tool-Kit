@@ -13,7 +13,6 @@
 import os
 import logging
 
-from studiovendor import six
 from studiovendor.Qt import QtGui
 from studiovendor.Qt import QtCore
 from studiovendor.Qt import QtWidgets
@@ -184,7 +183,7 @@ class SidebarWidgetItem(QtWidgets.QTreeWidgetItem):
             if isinstance(color, QtGui.QColor):
                 color = studioqt.Color.fromColor(color)
 
-            elif isinstance(color, six.string_types):
+            elif isinstance(color, str):
                 color = studioqt.Color.fromString(color)
 
             self._iconColor = color.toString()
@@ -289,7 +288,7 @@ class SidebarWidgetItem(QtWidgets.QTreeWidgetItem):
         if isinstance(color, QtGui.QColor):
             color = studioqt.Color.fromColor(color)
 
-        elif isinstance(color, six.string_types):
+        elif isinstance(color, str):
             color = studioqt.Color.fromString(color)
 
         self._settings["textColor"] = color.toString()
