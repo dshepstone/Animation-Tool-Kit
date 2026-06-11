@@ -158,11 +158,21 @@ class TestPersistence:
     def test_load_replaces_existing_bookmarks(self, controller, persistence):
         controller.create_bookmark("Original", 1, 10, "#000")
         controller.save_to_scene()
+        snapshot = persistence.load()
+
         controller.create_bookmark("Extra", 11, 20, "#000")
+        # Simulate opening a different scene: the backend holds only the
+        # snapshot, regardless of the controller's in-memory state.
+        persistence.save(snapshot)
 
         controller.load_from_scene()
         names = {b.name for b in controller.list_bookmarks()}
         assert names == {"Original"}
+
+    def test_mutations_autosave_to_persistence(self, controller, persistence):
+        # Creating a bookmark persists without an explicit save_to_scene().
+        controller.create_bookmark("Auto", 1, 10, "#000")
+        assert {b.name for b in persistence.load()} == {"Auto"}
 
     def test_load_emits_change(self, controller, persistence):
         controller.create_bookmark("A", 1, 10, "#000")

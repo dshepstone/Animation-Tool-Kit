@@ -10,7 +10,16 @@ when the timeline is resized.
 
 Frame → pixel mapping
 ---------------------
-    x = (frame - range_start) / (range_end - range_start) * widget_width
+Maya's ``timeControl`` renders one *cell* per frame: the visible range
+``[start, end]`` occupies ``end - start + 1`` equal cells across the
+widget width.  The left edge of frame *f* is therefore::
+
+    x = (f - range_start) / (range_end - range_start + 1) * widget_width
+
+and a bookmark band spans from the left edge of its start frame's cell to
+the *right* edge of its end frame's cell (``end_frame + 1``).  Using
+``range_end - range_start`` (without the +1) — as earlier versions did —
+made markers drift progressively to the right of their true frames.
 """
 
 from __future__ import annotations
@@ -53,7 +62,12 @@ class TimelineOverlay(QtWidgets.QWidget):
         frame_range: Tuple[int, int],
     ) -> None:
         self._bookmarks = list(bookmarks)
-        self._frame_range = frame_range
+        # Guard against inverted/degenerate ranges so painting never divides
+        # by zero or mirrors positions.
+        start, end = frame_range
+        if end < start:
+            start, end = end, start
+        self._frame_range = (start, end)
         self.update()
 
     def set_visible(self, visible: bool) -> None:
@@ -67,10 +81,16 @@ class TimelineOverlay(QtWidgets.QWidget):
         if obj is self._parent_widget:
             try:
                 resize_t = QtCore.QEvent.Type.Resize
+                show_t   = QtCore.QEvent.Type.Show
             except AttributeError:
                 resize_t = QtCore.QEvent.Resize  # type: ignore[attr-defined]
-            if event.type() == resize_t:
+                show_t   = QtCore.QEvent.Show    # type: ignore[attr-defined]
+            # Re-sync geometry on Show as well as Resize so the overlay
+            # survives Maya workspace/layout changes that re-show the
+            # timeline without an explicit resize event.
+            if event.type() in (resize_t, show_t):
                 self.setGeometry(self._parent_widget.rect())
+                self.raise_()
         return False
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:  # type: ignore[override]
@@ -88,7 +108,10 @@ class TimelineOverlay(QtWidgets.QWidget):
 
     def _draw(self, painter: QtGui.QPainter) -> None:
         start_frame, end_frame = self._frame_range
-        frame_span = max(end_frame - start_frame, 1)
+        # FIX: the timeline shows (end - start + 1) frame *cells*, not
+        # (end - start) intervals.  The old span caused a cumulative
+        # right-drift of every marker.
+        frame_span = max(float(end_frame) - float(start_frame) + 1.0, 1.0)
         w = self.width()
         h = self.height()
 
@@ -107,8 +130,19 @@ class TimelineOverlay(QtWidgets.QWidget):
             if not getattr(bookmark, "visible", True):
                 continue
 
-            x1 = int((bookmark.start_frame - start_frame) / frame_span * w)
-            x2 = int((bookmark.end_frame   - start_frame) / frame_span * w)
+            # Skip bookmarks entirely outside the visible range.
+            if (bookmark.end_frame < start_frame
+                    or bookmark.start_frame > end_frame):
+                continue
+
+            # FIX: derive pixel positions purely from frame values against
+            # the *current* range.  x1 = left edge of the start frame's
+            # cell, x2 = right edge of the end frame's cell (hence +1).
+            x1 = int(round((bookmark.start_frame - start_frame) / frame_span * w))
+            x2 = int(round((bookmark.end_frame + 1 - start_frame) / frame_span * w))
+            # Clamp to the widget so partially-visible bookmarks draw cleanly.
+            x1 = max(x1, 0)
+            x2 = min(x2, w)
             x2 = max(x2, x1 + self._MIN_BAND_WIDTH)
             band_w = x2 - x1
 
