@@ -16,7 +16,9 @@ class MayaTimeAdapter(TimeAdapterProtocol):
     def get_current_frame(self) -> int:
         """Return the frame the timeline cursor is currently on."""
         import maya.cmds as cmds  # noqa: PLC0415
-        return int(cmds.currentTime(q=True))
+        # round() rather than int(): Maya returns floats and plain int()
+        # truncates (e.g. 24.999 -> 24), causing off-by-one bookmarks.
+        return int(round(cmds.currentTime(q=True)))
 
     def set_current_frame(self, frame: int) -> None:
         """Move the timeline cursor to *frame*."""
@@ -26,8 +28,8 @@ class MayaTimeAdapter(TimeAdapterProtocol):
     def get_playback_range(self) -> tuple:
         """Return ``(start_frame, end_frame)`` of the active playback range."""
         import maya.cmds as cmds  # noqa: PLC0415
-        start = int(cmds.playbackOptions(q=True, min=True))
-        end = int(cmds.playbackOptions(q=True, max=True))
+        start = int(round(cmds.playbackOptions(q=True, min=True)))
+        end = int(round(cmds.playbackOptions(q=True, max=True)))
         return (start, end)
 
     def set_playback_range(self, start: int, end: int) -> None:

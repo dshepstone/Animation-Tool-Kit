@@ -66,6 +66,9 @@ class BookmarkController:
         self._persistence = persistence
         self._overlay_visible: bool = True
         self._on_change_callbacks: List[Callable[[], None]] = []
+        # Suppresses the autosave-on-change while bookmarks are being
+        # (re)loaded from the scene, so loading never re-writes fileInfo.
+        self._loading: bool = False
 
         # Lazily create Qt notifier when Qt is available.
         NotifierClass = _make_notifier()
@@ -89,8 +92,22 @@ class BookmarkController:
         return self._notifier
 
     def _emit_change(self) -> None:
+        # FIX: autosave bookmarks to the scene on every mutation so data
+        # survives Maya sessions without requiring an explicit save call.
+        # Skipped while loading, and failures (e.g. no scene / batch mode)
+        # never break the UI update that follows.
+        if not self._loading:
+            try:
+                self.save_to_scene()
+            except Exception:
+                pass
         for cb in self._on_change_callbacks:
-            cb()
+            try:
+                cb()
+            except RuntimeError:
+                # A registered listener's Qt widget was deleted (panel or
+                # overlay closed) — ignore rather than break all updates.
+                pass
         if self._notifier is not None:
             self._notifier.bookmarks_changed.emit()
 
@@ -257,13 +274,25 @@ class BookmarkController:
         self._persistence.save(self._service.list_bookmarks())
 
     def load_from_scene(self) -> None:
-        """Load bookmarks from the persistence backend, replacing current state."""
-        bookmarks = self._persistence.load()
-        # Reload the service state from the loaded bookmarks.
-        self._service = BookmarkService()
-        for b in bookmarks:
-            self._service._bookmarks[b.id] = b
-        self._emit_change()
+        """Load bookmarks from the persistence backend, replacing current state.
+
+        Safe to call when no scene is loaded or persistence fails — the
+        current state is simply cleared/kept and the UI still refreshes.
+        """
+        try:
+            bookmarks = self._persistence.load()
+        except Exception:
+            bookmarks = []
+        # Reload the service state from the loaded bookmarks, suppressing
+        # autosave so a load never immediately re-writes the scene.
+        self._loading = True
+        try:
+            self._service = BookmarkService()
+            for b in bookmarks:
+                self._service._bookmarks[b.id] = b
+            self._emit_change()
+        finally:
+            self._loading = False
 
     # ------------------------------------------------------------------
     # Visibility
