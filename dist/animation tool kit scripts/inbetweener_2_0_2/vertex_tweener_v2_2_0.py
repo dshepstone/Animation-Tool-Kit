@@ -3,7 +3,7 @@ Inbetweener Tool - Maya Animation Breakdown Tool
 A high-performance tweening utility for Maya animators to break down poses and manage arcs.
 
 Author: Pipeline Tools
-Version: 2.2.0
+Version: 2.2.1
 """
 
 import math
@@ -189,8 +189,16 @@ class DefaultPoseStore:
                 except RuntimeError:
                     pass
 
-        cmds.setAttr(node + '.visibility', False)
-        cmds.lockNode(node, lock=True)
+        # 'network' nodes have no visibility attribute — only hide when the
+        # storage node type happens to support it.
+        try:
+            cmds.setAttr(node + '.visibility', False)
+        except (RuntimeError, ValueError):
+            pass
+        try:
+            cmds.lockNode(node, lock=True)
+        except RuntimeError:
+            pass
         return count
 
     @staticmethod
@@ -251,6 +259,27 @@ class DefaultPoseStore:
     def has_stored_defaults():
         """Return True if the default-pose storage node exists."""
         return cmds.objExists(DEFAULT_POSE_NODE)
+
+
+def _surrounding_key_times(full_attr, current_time, tolerance=0.001):
+    """Return (prev_time, next_time) of the keys bracketing *current_time*.
+
+    One sorted keyframe query per attribute (instead of a getAttr per key)
+    keeps slider presses fast even with a full rig selected on a long
+    timeline. Either side may be None when no key exists on that side.
+    """
+    keyframes = cmds.keyframe(full_attr, query=True, timeChange=True)
+    if not keyframes:
+        return None, None
+    prev_time = None
+    next_time = None
+    for kf_time in keyframes:
+        if kf_time < current_time - tolerance:
+            prev_time = kf_time
+        elif kf_time > current_time + tolerance:
+            next_time = kf_time
+            break
+    return prev_time, next_time
 
 
 # ============================================================================
@@ -497,96 +526,6 @@ class TweenEngine:
 
         return count
 
-    @staticmethod
-    def apply_neighbor_blend(weight, blend_to_next=True):
-        """BN logic: Blends selected keyframes in Graph Editor toward neighbors."""
-        n_weight = weight / 100.0
-        selected_curves = cmds.keyframe(q=True, selected=True, name=True)
-        if not selected_curves: return
-
-        for curve in selected_curves:
-            indices = cmds.keyframe(curve, q=True, selected=True, indexValue=True)
-            for idx in indices:
-                curr_val = cmds.keyframe(curve, index=(idx,), q=True, valueChange=True)[0]
-                try:
-                    target_idx = idx + 1 if blend_to_next else idx - 1
-                    target_val = cmds.keyframe(curve, index=(target_idx,), q=True, valueChange=True)[0]
-                    new_val = curr_val + (target_val - curr_val) * n_weight
-                    cmds.keyframe(curve, index=(idx,), valueChange=new_val)
-                except IndexError: continue
-
-    @staticmethod
-    def get_default_value_for_curve(curve):
-        """Determine the default/rest value for an animation curve's attribute."""
-        attr_name = curve.split('_')[-1] if '_' in curve else curve
-        return 1.0 if attr_name in SCALE_ATTRS else 0.0
-
-    @staticmethod
-    def apply_ease_blend(weight, blend_to_next=True):
-        """BE logic: Blends selected keyframes to create eased motion between neighbors.
-
-        Calculates where the key should be to create an ease-in-out curve,
-        then blends toward that eased position.
-
-        Positive weight: ease motion toward next key (ease-in)
-        Negative weight: ease motion toward previous key (ease-out)
-        """
-        n_weight = abs(weight) / 100.0  # Linear weight mapping for tight control
-        selected_curves = cmds.keyframe(q=True, selected=True, name=True)
-        if not selected_curves: return
-
-        for curve in selected_curves:
-            indices = cmds.keyframe(curve, q=True, selected=True, indexValue=True)
-            if not indices:
-                continue
-
-            for idx in indices:
-                try:
-                    # Get current keyframe value and time
-                    curr_val = cmds.keyframe(curve, index=(idx,), q=True, valueChange=True)[0]
-                    curr_time = cmds.keyframe(curve, index=(idx,), q=True, timeChange=True)[0]
-
-                    # Get surrounding keyframes to calculate eased position
-                    prev_idx = idx - 1
-                    next_idx = idx + 1
-
-                    # Need both prev and next keys to calculate ease
-                    if prev_idx < 0 or next_idx >= cmds.keyframe(curve, q=True, keyframeCount=True):
-                        continue
-
-                    prev_val = cmds.keyframe(curve, index=(prev_idx,), q=True, valueChange=True)[0]
-                    prev_time = cmds.keyframe(curve, index=(prev_idx,), q=True, timeChange=True)[0]
-                    next_val = cmds.keyframe(curve, index=(next_idx,), q=True, valueChange=True)[0]
-                    next_time = cmds.keyframe(curve, index=(next_idx,), q=True, timeChange=True)[0]
-
-                    # Calculate normalized time position (0 to 1) between prev and next
-                    time_range = next_time - prev_time
-                    if time_range == 0:
-                        continue
-                    t = (curr_time - prev_time) / time_range
-
-                    # Calculate eased position using cubic ease-in-out
-                    # This determines where the key should be for smooth easing
-                    if blend_to_next:
-                        # Ease-in: slow start, accelerate toward next
-                        # Use t^3 for ease-in curve
-                        eased_t = t * t * t
-                    else:
-                        # Ease-out: fast start, decelerate toward prev
-                        # Use 1 - (1-t)^3 for ease-out curve
-                        eased_t = 1 - pow(1 - t, 3)
-
-                    # Calculate the eased value (where key should be for eased motion)
-                    eased_val = prev_val + (next_val - prev_val) * eased_t
-
-                    # Blend current value toward eased value based on weight
-                    # Linear blend for tight slider-to-key correlation
-                    new_val = curr_val + (eased_val - curr_val) * n_weight
-                    cmds.keyframe(curve, index=(idx,), valueChange=new_val)
-
-                except (IndexError, TypeError):
-                    continue
-
 
 class WorldTweenEngine:
     """Handles world-space matrix interpolation for tweening in global coordinates.
@@ -610,6 +549,10 @@ class WorldTweenEngine:
     # Per-selected-key cache populated on slider press. List of dicts,
     # one per object with selected transform keys. See cache_selected_keys.
     _key_cache = []
+
+    # Objects written by the most recent apply_world_tween call. Used on
+    # slider release to key exactly the objects the tween touched.
+    _touched = []
 
     _TRANSFORM_ATTRS = ('tx', 'ty', 'tz', 'rx', 'ry', 'rz')
 
@@ -683,6 +626,7 @@ class WorldTweenEngine:
         Queries world matrices at specific times WITHOUT changing the timeline.
         Auto-keying is handled on slider release to prevent mid-drag corruption.
         """
+        WorldTweenEngine._touched = []
         selection = WorldTweenEngine.get_selected_keyframe_objects() or cmds.ls(selection=True, type=('transform', 'joint'))
         if not selection:
             return 0
@@ -713,10 +657,61 @@ class WorldTweenEngine:
             interp_matrix.setRotation(interp_rot)
 
             matrix_list = list(interp_matrix.asMatrix())
-            cmds.xform(obj, matrix=matrix_list, worldSpace=True)
+            try:
+                cmds.xform(obj, matrix=matrix_list, worldSpace=True)
+            except RuntimeError:
+                # Locked / constrained channels — skip the object entirely.
+                continue
+            WorldTweenEngine._touched.append(obj)
             count += 1
 
         return count
+
+    @staticmethod
+    def get_current_time_targets():
+        """Return the objects a current-time world tween would act on.
+
+        Used on slider press to report how many targets are available
+        before any drag happens.
+        """
+        selection = (WorldTweenEngine.get_selected_keyframe_objects()
+                     or cmds.ls(selection=True, type=('transform', 'joint'))
+                     or [])
+        current_time = cmds.currentTime(query=True)
+        targets = []
+        for obj in selection:
+            prev_time, next_time = WorldTweenEngine.get_keyframe_times(obj, current_time)
+            if prev_time is not None and next_time is not None:
+                targets.append(obj)
+        return targets
+
+    @staticmethod
+    def key_touched_objects():
+        """Key the already-animated, unlocked transform channels of every
+        object written by the last apply_world_tween call.
+
+        Only channels that already have animation curves are keyed, so the
+        tween never creates curves on static channels.
+        """
+        current_time = cmds.currentTime(query=True)
+        keyed = 0
+        for obj in WorldTweenEngine._touched:
+            for attr in WorldTweenEngine._TRANSFORM_ATTRS:
+                full_attr = "{}.{}".format(obj, attr)
+                try:
+                    if cmds.getAttr(full_attr, lock=True):
+                        continue
+                    if cmds.keyframe(full_attr, query=True, keyframeCount=True):
+                        cmds.setKeyframe(full_attr, time=current_time)
+                        keyed += 1
+                except (RuntimeError, TypeError, ValueError):
+                    continue
+        return keyed
+
+    @staticmethod
+    def clear_touched():
+        """Forget the objects recorded by the last current-time tween."""
+        WorldTweenEngine._touched = []
 
     # ------------------------------------------------------------------
     # Per-selected-key mode
@@ -1161,22 +1156,22 @@ class BlendEngine:
             except (RuntimeError, TypeError, ValueError):
                 continue
 
-            keyframes = cmds.keyframe(full_attr, query=True, timeChange=True)
-            if not keyframes or len(keyframes) < 2:
+            # One keyframe query + at most two timed getAttr calls per
+            # attribute. The old code ran a getAttr for EVERY key before the
+            # current time, which effectively hung Maya when a full rig was
+            # selected on a long timeline.
+            prev_time, next_time = _surrounding_key_times(full_attr, current_time)
+            if prev_time is None and next_time is None:
                 continue
 
             current_val = cmds.getAttr(full_attr)
             if not isinstance(current_val, (int, float)):
                 continue
 
-            prev_val = None
-            next_val = None
-            for kf_time in keyframes:
-                if kf_time < current_time - 0.001:
-                    prev_val = cmds.getAttr(full_attr, time=kf_time)
-                elif kf_time > current_time + 0.001:
-                    next_val = cmds.getAttr(full_attr, time=kf_time)
-                    break
+            prev_val = (cmds.getAttr(full_attr, time=prev_time)
+                        if prev_time is not None else None)
+            next_val = (cmds.getAttr(full_attr, time=next_time)
+                        if next_time is not None else None)
 
             if prev_val is not None and not isinstance(prev_val, (int, float)):
                 prev_val = None
@@ -1194,9 +1189,32 @@ class BlendEngine:
         return cache
 
     @staticmethod
+    def _restore_originals(cache):
+        """Write every cached entry back to its pre-drag value.
+
+        Used when a blend slider passes through (or is released at) its
+        neutral position so a cancelled drag leaves the scene untouched.
+        """
+        count = 0
+        for entry in cache:
+            try:
+                if 'curve' in entry:
+                    cmds.keyframe(
+                        entry['curve'], index=(entry['index'],),
+                        valueChange=entry['original'])
+                else:
+                    cmds.setAttr(entry['attr'], entry['original'])
+                count += 1
+            except (RuntimeError, TypeError, ValueError):
+                continue
+        return count
+
+    @staticmethod
     def apply_bn(value, cache):
-        if value == 50 or not cache:
+        if not cache:
             return 0
+        if value == 50:
+            return BlendEngine._restore_originals(cache)
         if value < 50:
             blend_to_next = False
             weight = (50 - value) / 50.0
@@ -1277,8 +1295,10 @@ class BlendEngine:
 
     @staticmethod
     def apply_bd(value, cache):
-        if value == 0 or not cache:
+        if not cache:
             return 0
+        if value == 0:
+            return BlendEngine._restore_originals(cache)
         n_weight = value / 100.0
         count = 0
         for entry in cache:
@@ -1365,24 +1385,12 @@ class BlendEngine:
             except (RuntimeError, TypeError, ValueError):
                 continue
 
-            keyframes = cmds.keyframe(full_attr, query=True, timeChange=True)
-            if not keyframes or len(keyframes) < 3:
+            prev_time, next_time = _surrounding_key_times(full_attr, current_time)
+            if prev_time is None or next_time is None:
                 continue
 
             current_val = cmds.getAttr(full_attr)
             if not isinstance(current_val, (int, float)):
-                continue
-
-            prev_time = None
-            next_time = None
-            for kf_time in keyframes:
-                if kf_time < current_time - 0.001:
-                    prev_time = kf_time
-                elif kf_time > current_time + 0.001:
-                    next_time = kf_time
-                    break
-
-            if prev_time is None or next_time is None:
                 continue
 
             prev_val = cmds.getAttr(full_attr, time=prev_time)
@@ -1408,8 +1416,10 @@ class BlendEngine:
 
     @staticmethod
     def apply_be(value, cache):
-        if value == 50 or not cache:
+        if not cache:
             return 0
+        if value == 50:
+            return BlendEngine._restore_originals(cache)
         weight = abs(value - 50) / 50.0
         blend_to_next = value > 50
         count = 0
@@ -1430,12 +1440,11 @@ class BlendEngine:
 
 
 def _auto_key_selection():
-    """Set keys on every already-animated keyable attr on the selection.
+    """LEGACY: set keys on every already-animated keyable attr on the selection.
 
-    Used by every slider's release handler to lock in the tweened pose.
-    Works for both viewport selection and Graph-Editor-filtered attrs; the
-    attrs that the tweener actually touched are exactly those that have
-    animation curves, so we key everything that has a curve.
+    Kept only for backward compatibility with older callers (e.g. an
+    out-of-date ATK toolbar). New code should use SliderSession, which keys
+    only the attributes the slider actually modified.
 
     When the user has keys selected in the Graph Editor, the slider already
     modified those keys directly via cmds.keyframe(valueChange=...), so
@@ -1463,6 +1472,192 @@ def _auto_key_selection():
                 continue
 
 
+def _key_attr_entries(entries):
+    """Key the plain-attribute entries of an engine cache at the current frame.
+
+    Entries that carry a 'curve' were written directly into selected
+    Graph Editor keys via cmds.keyframe(valueChange=...) and need no extra
+    key. Only the attributes the slider actually modified get keyed, so
+    untouched channels never grow phantom keys.
+    """
+    current_time = cmds.currentTime(query=True)
+    keyed = 0
+    for entry in entries:
+        full_attr = entry.get('attr')
+        if not full_attr:
+            continue
+        try:
+            cmds.setKeyframe(full_attr, time=current_time)
+            keyed += 1
+        except (RuntimeError, TypeError, ValueError):
+            continue
+    return keyed
+
+
+def _no_target_message(slider_type):
+    """Human-readable reason why a slider press found nothing to act on."""
+    has_keys = bool(cmds.keyframe(q=True, selected=True, name=True))
+    has_sel = bool(cmds.ls(selection=True))
+    if not has_keys and not has_sel:
+        return "Nothing selected — select controls or Graph Editor keys"
+    return {
+        'LT': "No keyframes around the current frame on this selection",
+        'WT': "No transform keyframes around the current frame on this selection",
+        'BN': "No neighboring keys found on this selection",
+        'BD': "No animated attributes found on this selection",
+        'BE': "Need keys on both sides of the current frame / selection to ease",
+    }.get(slider_type, "Nothing to blend on this selection")
+
+
+class SliderSession(object):
+    """One slider interaction: press -> drag -> release.
+
+    Owns the undo chunk, the pre-drag value cache, the final re-apply and
+    the keying of the result, so the main window, the pop-out sliders and
+    the ATK toolbar all share identical behavior instead of each
+    re-implementing the press/drag/release sequence.
+
+    Usage::
+
+        session = SliderSession('LT')
+        session.begin()            # on sliderPressed
+        session.update(value)      # on every valueChanged during the drag
+        session.end(final_value)   # on sliderReleased
+
+    Guarantees:
+      * The final slider value is re-applied on release so the adjusted
+        pose is exactly what gets keyed — no snap-back.
+      * Only the attributes the slider actually modified are keyed.
+      * Blend sliders (BN/BD/BE) released at their neutral position restore
+        the pre-drag values and set no keys (a cancelled drag is a no-op).
+      * The undo chunk is always closed, even if applying raises.
+      * All module-level engine caches are cleared on end()/cancel().
+    """
+
+    NEUTRALS = {'LT': 50, 'WT': 50, 'BN': 50, 'BD': 0, 'BE': 50}
+
+    def __init__(self, slider_type, chunk_name=None):
+        if slider_type not in self.NEUTRALS:
+            raise ValueError("Unknown slider type: {}".format(slider_type))
+        self.slider_type = slider_type
+        self.neutral = self.NEUTRALS[slider_type]
+        self.chunk_name = chunk_name or "Inbetweener_{}".format(slider_type)
+        self.cache = []
+        self.count = 0          # entries cached by begin()
+        self.moved = False      # True once update() has run
+        self.keyed = 0          # keys set by end()
+        self.active = False
+        self._undo_open = False
+
+    def begin(self):
+        """Open the undo chunk and snapshot the current selection.
+
+        Returns the number of cached targets (0 = nothing to act on).
+        """
+        self.cache = []
+        self.count = 0
+        self.moved = False
+        self.keyed = 0
+        cmds.undoInfo(openChunk=True, chunkName=self.chunk_name)
+        self._undo_open = True
+        self.active = True
+        try:
+            st = self.slider_type
+            if st == 'LT':
+                self.count = TweenEngine.cache_selection()
+            elif st == 'WT':
+                self.count = WorldTweenEngine.cache_selected_keys()
+                if not self.count:
+                    self.count = len(WorldTweenEngine.get_current_time_targets())
+            elif st == 'BN':
+                self.cache = BlendEngine.cache_bn()
+                self.count = len(self.cache)
+            elif st == 'BD':
+                self.cache = BlendEngine.cache_bd()
+                self.count = len(self.cache)
+            elif st == 'BE':
+                self.cache = BlendEngine.cache_be()
+                self.count = len(self.cache)
+        except Exception:
+            self.cancel()
+            raise
+        return self.count
+
+    def update(self, value):
+        """Apply *value* from the cached snapshot. Returns targets written."""
+        if not self.active:
+            return 0
+        self.moved = True
+        st = self.slider_type
+        if st == 'LT':
+            return TweenEngine.apply_cached_tween(value)
+        if st == 'WT':
+            if WorldTweenEngine._key_cache:
+                return WorldTweenEngine.apply_cached_world_tween(value)
+            return WorldTweenEngine.apply_world_tween(value)
+        if st == 'BN':
+            return BlendEngine.apply_bn(value, self.cache)
+        if st == 'BD':
+            return BlendEngine.apply_bd(value, self.cache)
+        if st == 'BE':
+            return BlendEngine.apply_be(value, self.cache)
+        return 0
+
+    def end(self, final_value):
+        """Re-apply the final value, key the result, close the undo chunk.
+
+        Returns the number of targets the final value was applied to
+        (0 when the slider never moved, was released at a blend slider's
+        neutral position, or there was nothing to act on).
+        """
+        applied = 0
+        try:
+            if self.active and self.moved:
+                st = self.slider_type
+                if st in ('BN', 'BD', 'BE') and final_value == self.neutral:
+                    # Drag returned to neutral: restore and do not key.
+                    BlendEngine._restore_originals(self.cache)
+                elif st == 'LT':
+                    applied = TweenEngine.apply_cached_tween(final_value)
+                    self.keyed = _key_attr_entries(TweenEngine._cached_attrs)
+                elif st == 'WT':
+                    if WorldTweenEngine._key_cache:
+                        # Selected Graph Editor keys were written directly —
+                        # no extra keying needed.
+                        applied = WorldTweenEngine.apply_cached_world_tween(final_value)
+                    else:
+                        applied = WorldTweenEngine.apply_world_tween(final_value)
+                        self.keyed = WorldTweenEngine.key_touched_objects()
+                else:
+                    if st == 'BN':
+                        applied = BlendEngine.apply_bn(final_value, self.cache)
+                    elif st == 'BD':
+                        applied = BlendEngine.apply_bd(final_value, self.cache)
+                    else:
+                        applied = BlendEngine.apply_be(final_value, self.cache)
+                    self.keyed = _key_attr_entries(self.cache)
+        finally:
+            self._cleanup()
+        return applied
+
+    def cancel(self):
+        """Abort the session without applying or keying anything."""
+        self._cleanup()
+
+    def _cleanup(self):
+        self.active = False
+        self.cache = []
+        TweenEngine.clear_cache()
+        WorldTweenEngine.clear_key_cache()
+        WorldTweenEngine.clear_touched()
+        if self._undo_open:
+            try:
+                cmds.undoInfo(closeChunk=True)
+            except RuntimeError:
+                pass
+            self._undo_open = False
+
+
 # ============================================================================
 # CUSTOM SLIDER UI
 # ============================================================================
@@ -1476,7 +1671,56 @@ class VertexTickedSlider(QtWidgets.QSlider):
         self.label_text = label_text  # Text to display in center box (e.g., "TW", "BN")
         self.overshoot_mode = True
         self.keyed_value = None  # Slider value where a key was set (special tick)
+        self._groove_drag = False  # True while dragging after a groove click
         self.setTickPosition(QtWidgets.QSlider.NoTicks)
+
+    def _value_at(self, pos):
+        """Map a mouse position to a slider value along the groove."""
+        opt = QtWidgets.QStyleOptionSlider()
+        self.initStyleOption(opt)
+        groove = self.style().subControlRect(
+            QtWidgets.QStyle.CC_Slider, opt, QtWidgets.QStyle.SC_SliderGroove, self)
+        handle = self.style().subControlRect(
+            QtWidgets.QStyle.CC_Slider, opt, QtWidgets.QStyle.SC_SliderHandle, self)
+        span = max(1, groove.width() - handle.width())
+        x = pos.x() - groove.left() - handle.width() / 2.0
+        return QtWidgets.QStyle.sliderValueFromPosition(
+            self.minimum(), self.maximum(), int(round(x)), span, opt.upsideDown)
+
+    def mousePressEvent(self, event):
+        # Clicking the groove starts a normal drag session at that position
+        # (sliderPressed -> cache, valueChanged -> tween, sliderReleased ->
+        # key) instead of Qt's default page-step jump, which changes values
+        # WITHOUT ever firing sliderPressed/sliderReleased — i.e. outside
+        # any undo chunk and without keying the result.
+        if event.button() == QtCore.Qt.LeftButton:
+            opt = QtWidgets.QStyleOptionSlider()
+            self.initStyleOption(opt)
+            handle = self.style().subControlRect(
+                QtWidgets.QStyle.CC_Slider, opt,
+                QtWidgets.QStyle.SC_SliderHandle, self)
+            if not handle.contains(event.pos()):
+                self._groove_drag = True
+                self.setSliderDown(True)          # emits sliderPressed first
+                self.setSliderPosition(self._value_at(event.pos()))
+                event.accept()
+                return
+        super(VertexTickedSlider, self).mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._groove_drag:
+            self.setSliderPosition(self._value_at(event.pos()))
+            event.accept()
+            return
+        super(VertexTickedSlider, self).mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._groove_drag and event.button() == QtCore.Qt.LeftButton:
+            self._groove_drag = False
+            self.setSliderDown(False)             # emits sliderReleased
+            event.accept()
+            return
+        super(VertexTickedSlider, self).mouseReleaseEvent(event)
 
     def paintEvent(self, event):
         super(VertexTickedSlider, self).paintEvent(event)
@@ -1620,8 +1864,7 @@ class SliderPopOut(QtWidgets.QDialog):
         self.config = self.CONFIGS[slider_type]
         self.neutral = self.config['neutral']
 
-        self.cache = []
-        self.undo_chunk_open = False
+        self.session = None
 
         self.setWindowTitle("Inbetweener - " + self.config['name'])
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
@@ -1699,112 +1942,65 @@ class SliderPopOut(QtWidgets.QDialog):
         self.slider.sliderReleased.connect(self._on_released)
 
     # ------------------------------------------------------------------
-    # Press / Drag / Release handlers
+    # Press / Drag / Release handlers (delegated to SliderSession)
     # ------------------------------------------------------------------
     def _on_pressed(self):
         self.slider.keyed_value = None
         self.slider.update()
-        self.undo_chunk_open = True
-        cmds.undoInfo(openChunk=True, chunkName="Inbetweener_{}_popout".format(self.slider_type))
-
-        if self.slider_type == 'LT':
-            cached = TweenEngine.cache_selection()
-            if not cached:
-                self.status_label.setText("No keyframes found on selection")
-        elif self.slider_type == 'WT':
-            # Cache per-selected-key data if keys are selected in the
-            # Graph Editor. Cache is empty -> _on_changed falls back to
-            # current-time world tween on the viewport selection.
-            WorldTweenEngine.cache_selected_keys()
-        elif self.slider_type == 'BN':
-            self.cache = BlendEngine.cache_bn()
-            if not self.cache:
-                self.status_label.setText("No neighbor keyframes found")
-        elif self.slider_type == 'BD':
-            if not DefaultPoseStore.has_stored_defaults():
-                self.status_label.setText("Tip: scan default pose for best results")
-            self.cache = BlendEngine.cache_bd()
-            if not self.cache:
-                self.status_label.setText("No animated attributes on selection")
-        elif self.slider_type == 'BE':
-            self.cache = BlendEngine.cache_be()
-            if not self.cache:
-                self.status_label.setText("Need 3+ keyframes for easing")
+        self.session = SliderSession(
+            self.slider_type,
+            chunk_name="Inbetweener_{}_popout".format(self.slider_type))
+        try:
+            count = self.session.begin()
+        except Exception as exc:
+            self.session = None
+            self.status_label.setText("Error: {}".format(exc))
+            return
+        if not count:
+            self.status_label.setText(_no_target_message(self.slider_type))
+        elif self.slider_type == 'BD' and not DefaultPoseStore.has_stored_defaults():
+            self.status_label.setText("Tip: scan default pose for best results")
 
     def _on_changed(self, value):
         self.value_label.setText("{} {}%".format(self.config['label'], value))
-        count = 0
-        if self.slider_type == 'LT':
-            if TweenEngine._cached_attrs:
-                count = TweenEngine.apply_cached_tween(value)
-        elif self.slider_type == 'WT':
-            if WorldTweenEngine._key_cache:
-                count = WorldTweenEngine.apply_cached_world_tween(value)
-            else:
-                count = WorldTweenEngine.apply_world_tween(value)
-        elif self.slider_type == 'BN':
-            if value == 50:
-                self.status_label.setText("BN neutral")
-                return
-            count = BlendEngine.apply_bn(value, self.cache)
-        elif self.slider_type == 'BD':
-            count = BlendEngine.apply_bd(value, self.cache)
-        elif self.slider_type == 'BE':
-            if value == 50:
-                self.status_label.setText("BE neutral")
-                return
-            count = BlendEngine.apply_be(value, self.cache)
-
-        if count:
+        if self.session is None or not self.session.active:
+            return
+        try:
+            count = self.session.update(value)
+        except Exception as exc:
+            self.status_label.setText("Error: {}".format(exc))
+            return
+        if self.slider_type in ('BN', 'BD', 'BE') and value == self.neutral:
+            self.status_label.setText("Neutral — release here to cancel")
+        elif count:
             self.status_label.setText(
                 "Affecting {} attr{}".format(count, 's' if count != 1 else '')
             )
 
     def _on_released(self):
         final_val = self.slider.value()
+        applied = 0
+        if self.session is not None:
+            try:
+                applied = self.session.end(final_val)
+            except Exception as exc:
+                self.status_label.setText("Error: {}".format(exc))
+            self.session = None
 
-        # Apply the final value from cache so it sticks, then key the pose.
-        if self.slider_type == 'LT':
-            if TweenEngine._cached_attrs:
-                TweenEngine.apply_cached_tween(final_val)
-            TweenEngine.clear_cache()
-            _auto_key_selection()
-        elif self.slider_type == 'WT':
-            # Apply final value from per-key cache (if any) so it sticks.
-            if WorldTweenEngine._key_cache:
-                WorldTweenEngine.apply_cached_world_tween(final_val)
-            WorldTweenEngine.clear_key_cache()
-            _auto_key_selection()
-        elif self.slider_type == 'BN':
-            if self.cache:
-                if final_val != 50:
-                    BlendEngine.apply_bn(final_val, self.cache)
-                _auto_key_selection()
-        elif self.slider_type == 'BD':
-            if self.cache:
-                if final_val != 0:
-                    BlendEngine.apply_bd(final_val, self.cache)
-                _auto_key_selection()
-        elif self.slider_type == 'BE':
-            if self.cache:
-                if final_val != 50:
-                    BlendEngine.apply_be(final_val, self.cache)
-                _auto_key_selection()
-
-        self.cache = []
-
-        if self.undo_chunk_open:
-            cmds.undoInfo(closeChunk=True)
-            self.undo_chunk_open = False
-
-        # Show keyed position tick, then snap slider back to neutral
-        self.slider.keyed_value = final_val
+        # Show keyed position tick, then snap slider back to neutral.
+        # blockSignals stops the reset from re-triggering _on_changed.
+        self.slider.keyed_value = final_val if applied else None
         self.slider.blockSignals(True)
         self.slider.setValue(self.neutral)
         self.slider.blockSignals(False)
         self.slider.update()
         self.value_label.setText("{} {}%".format(self.config['label'], self.neutral))
-        self.status_label.setText("Keyed at {}%".format(final_val))
+        if applied:
+            self.status_label.setText(
+                "Keyed {}% on {} attr{}".format(
+                    final_val, applied, 's' if applied != 1 else ''))
+        else:
+            self.status_label.setText("No change")
 
     def set_overshoot(self, enabled):
         """External hook to toggle LT overshoot range after construction."""
@@ -1820,12 +2016,12 @@ class SliderPopOut(QtWidgets.QDialog):
         self.slider.update()
 
     def closeEvent(self, event):
-        if self.undo_chunk_open:
+        if self.session is not None:
             try:
-                cmds.undoInfo(closeChunk=True)
+                self.session.cancel()
             except RuntimeError:
                 pass
-            self.undo_chunk_open = False
+            self.session = None
         try:
             SliderPopOut._open_windows.remove(self)
         except ValueError:
@@ -1860,20 +2056,15 @@ class VertexTweenerUI(QtWidgets.QDialog):
             parent = shiboken.wrapInstance(int(ptr), QtWidgets.QWidget)
         super(VertexTweenerUI, self).__init__(parent)
         
-        self.setWindowTitle("Inbetweener v2.2")
+        self.setWindowTitle("Inbetweener v2.2.1")
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
         self.setMinimumWidth(420)
 
-        self.undo_chunk_open = False
-        self.world_undo_chunk_open = False
-        self.bn_undo_chunk_open = False
-        self.bd_undo_chunk_open = False
-        self.be_undo_chunk_open = False
-
-        # Store original keyframe values for BN/BD/BE sliders
-        self.bn_original_values = []
-        self.bd_original_values = []
-        self.be_original_values = []
+        # One SliderSession per slider type, created on press and consumed
+        # on release. All press/drag/release behavior lives in SliderSession.
+        self._sessions = {}
+        # Ask about the missing default-pose scan at most once per session.
+        self._bd_prompted = False
 
         self.create_widgets()
         self.create_layout()
@@ -2251,168 +2442,132 @@ class VertexTweenerUI(QtWidgets.QDialog):
         self.help_action.triggered.connect(self.show_help_dialog)
         self.accordion_toggle.toggled.connect(self.on_accordion_toggled)
 
-    def on_slider_changed(self, value):
-        self.value_label.setText("Local {}%".format(value))
-        # Use cached data for fast drag — no Maya queries during drag
-        if TweenEngine._cached_attrs:
-            count = TweenEngine.apply_cached_tween(value)
-            if count:
-                self.status_label.setText("Tweening {} attribute{}".format(count, 's' if count != 1 else ''))
+    # ------------------------------------------------------------------
+    # Shared session plumbing — every slider delegates to SliderSession
+    # ------------------------------------------------------------------
+    def _begin_session(self, slider_type):
+        """Create and start a SliderSession on slider press."""
+        session = SliderSession(slider_type)
+        self._sessions[slider_type] = session
+        try:
+            count = session.begin()
+        except Exception as exc:
+            self._sessions.pop(slider_type, None)
+            self.status_label.setText("Error: {}".format(exc))
+            return None
+        if not count:
+            self.status_label.setText(_no_target_message(slider_type))
+        return session
 
+    def _update_session(self, slider_type, value):
+        """Apply a drag value through the active session (if any)."""
+        session = self._sessions.get(slider_type)
+        if session is None or not session.active:
+            return 0
+        try:
+            return session.update(value)
+        except Exception as exc:
+            self.status_label.setText("Error: {}".format(exc))
+            return 0
+
+    def _end_session(self, slider_type, final_value):
+        """Finish the active session: re-apply, key, close undo chunk."""
+        session = self._sessions.pop(slider_type, None)
+        if session is None:
+            return 0
+        try:
+            return session.end(final_value)
+        except Exception as exc:
+            self.status_label.setText("Error: {}".format(exc))
+            return 0
+
+    def _finish_slider(self, slider, label, final_val, applied, neutral):
+        """Reset *slider* to its neutral position and report the result.
+
+        Signals are blocked during the reset so snapping the handle back
+        never re-applies values on top of the freshly keyed pose.
+        """
+        slider.keyed_value = final_val if applied else None
+        slider.blockSignals(True)
+        slider.setValue(neutral)
+        slider.blockSignals(False)
+        slider.update()
+        self.value_label.setText("{} {}%".format(label, neutral))
+        if applied:
+            self.status_label.setText(
+                "Keyed {} {}% on {} attribute{}".format(
+                    label, final_val, applied, 's' if applied != 1 else ''))
+        else:
+            self.status_label.setText("No change")
+
+    # ---- Local Tweener -----------------------------------------------
     def on_slider_pressed(self):
         self.slider.keyed_value = None
         self.slider.update()
-        self.undo_chunk_open = True
-        cmds.undoInfo(openChunk=True, chunkName="VertexTW")
-        # Cache all keyframe data up front — the only expensive query
-        cached = TweenEngine.cache_selection()
-        if not cached:
-            self.status_label.setText("No keyframes found on selection")
+        self._begin_session('LT')
+
+    def on_slider_changed(self, value):
+        self.value_label.setText("Local {}%".format(value))
+        count = self._update_session('LT', value)
+        if count:
+            self.status_label.setText(
+                "Tweening {} attribute{}".format(count, 's' if count != 1 else ''))
 
     def on_slider_released(self):
         final_val = self.slider.value()
+        applied = self._end_session('LT', final_val)
+        self._finish_slider(self.slider, "Local", final_val, applied, 50)
 
-        # Apply final value from cache to ensure it sticks
-        if TweenEngine._cached_attrs:
-            TweenEngine.apply_cached_tween(final_val)
-
-        # Always set keyframes to lock in the tween
-        self._auto_key_current_position()
-
-        if self.undo_chunk_open:
-            cmds.undoInfo(closeChunk=True)
-            self.undo_chunk_open = False
-
-        TweenEngine.clear_cache()
-
-        # Show keyed position tick, then reset slider to center
-        self.slider.keyed_value = final_val
-        self.slider.blockSignals(True)
-        self.slider.setValue(50)
-        self.slider.blockSignals(False)
-        self.slider.update()
-        self.value_label.setText("Local 50%")
-        self.status_label.setText("Keyed at {}%".format(final_val))
-
-    def on_world_slider_changed(self, value):
-        self.value_label.setText("World {}%".format(value))
-        # If the press handler cached selected keys, drive the per-key
-        # world tween; otherwise fall back to current-time world tween.
-        if WorldTweenEngine._key_cache:
-            count = WorldTweenEngine.apply_cached_world_tween(value)
-            if count:
-                self.status_label.setText(
-                    "World tweening {} key{}".format(count, 's' if count != 1 else ''))
-            return
-        count = WorldTweenEngine.apply_world_tween(value)
-        if count:
-            self.status_label.setText("World tweening {} object{}".format(count, 's' if count != 1 else ''))
-        else:
-            self.status_label.setText("No keyframes found on selection")
-
+    # ---- World Tweener -------------------------------------------------
     def on_world_slider_pressed(self):
         self.world_slider.keyed_value = None
         self.world_slider.update()
-        self.world_undo_chunk_open = True
-        cmds.undoInfo(openChunk=True, chunkName="WorldTW")
-        # Pre-cache per-selected-key data (no-op if nothing is selected
-        # in the Graph Editor). apply_world_tween handles the fallback
-        # current-time path when the cache is empty.
-        WorldTweenEngine.cache_selected_keys()
+        self._begin_session('WT')
+
+    def on_world_slider_changed(self, value):
+        self.value_label.setText("World {}%".format(value))
+        count = self._update_session('WT', value)
+        if count:
+            self.status_label.setText(
+                "World tweening {} target{}".format(count, 's' if count != 1 else ''))
 
     def on_world_slider_released(self):
         final_val = self.world_slider.value()
+        applied = self._end_session('WT', final_val)
+        self._finish_slider(self.world_slider, "World", final_val, applied, 50)
 
-        # Apply final value from the per-key cache so it sticks.
-        if WorldTweenEngine._key_cache:
-            WorldTweenEngine.apply_cached_world_tween(final_val)
-
-        # Always set keyframes to lock in the tween (skipped automatically
-        # when keys are selected — _auto_key_selection already guards that).
-        self._auto_key_current_position()
-
-        WorldTweenEngine.clear_key_cache()
-
-        if self.world_undo_chunk_open:
-            cmds.undoInfo(closeChunk=True)
-            self.world_undo_chunk_open = False
-
-        # Show keyed position tick, then reset slider to center
-        self.world_slider.keyed_value = final_val
-        self.world_slider.blockSignals(True)
-        self.world_slider.setValue(50)
-        self.world_slider.blockSignals(False)
-        self.world_slider.update()
-        self.value_label.setText("World 50%")
-        self.status_label.setText("Keyed at {}%".format(final_val))
-
-    def on_bn_changed(self, value):
-        self.value_label.setText("BN {}%".format(value))
-        if value == 50:
-            self.status_label.setText("BN neutral")
-            return
-        count = BlendEngine.apply_bn(value, self.bn_original_values)
-        if count:
-            self.status_label.setText("Blending {} attribute{}".format(count, 's' if count != 1 else ''))
-        elif self.bn_original_values:
-            self.status_label.setText("No neighbor keyframes found")
-
+    # ---- Blend to Neighbor ---------------------------------------------
     def on_bn_pressed(self):
         self.bn_slider.keyed_value = None
         self.bn_slider.update()
-        self.bn_undo_chunk_open = True
-        cmds.undoInfo(openChunk=True, chunkName="VertexBN")
-        self.bn_original_values = BlendEngine.cache_bn()
-        if not self.bn_original_values:
-            self.status_label.setText("No neighbor keyframes found on selection")
+        self._begin_session('BN')
+
+    def on_bn_changed(self, value):
+        self.value_label.setText("BN {}%".format(value))
+        count = self._update_session('BN', value)
+        if value == 50:
+            self.status_label.setText("BN neutral — release here to cancel")
+        elif count:
+            self.status_label.setText(
+                "Blending {} attribute{}".format(count, 's' if count != 1 else ''))
 
     def on_bn_released(self):
         final_val = self.bn_slider.value()
+        applied = self._end_session('BN', final_val)
+        self._finish_slider(self.bn_slider, "BN", final_val, applied, 50)
 
-        # Apply final value
-        if self.bn_original_values:
-            if final_val != 50:
-                BlendEngine.apply_bn(final_val, self.bn_original_values)
-            # Always set keyframes to lock in the blend
-            self._auto_key_current_position()
-
-        if self.bn_undo_chunk_open:
-            cmds.undoInfo(closeChunk=True)
-            self.bn_undo_chunk_open = False
-        self.bn_original_values = []
-
-        # Show keyed position tick, then reset slider to center
-        self.bn_slider.keyed_value = final_val
-        self.bn_slider.blockSignals(True)
-        self.bn_slider.setValue(50)
-        self.bn_slider.blockSignals(False)
-        self.bn_slider.update()
-        self.value_label.setText("BN 50%")
-        self.status_label.setText("Keyed at BN {}%".format(final_val))
-
-    def on_bd_changed(self, value):
-        """BD slider: Blend from original pose (at 0) toward default/rest pose (at 100)."""
-        self.value_label.setText("BD {}%".format(value))
-        count = BlendEngine.apply_bd(value, self.bd_original_values)
-        if count:
-            self.status_label.setText("Blending {} attribute{} to default".format(count, 's' if count != 1 else ''))
-        elif value != 0 and self.bd_original_values:
-            self.status_label.setText("No attributes found")
-
+    # ---- Blend to Default ------------------------------------------------
     def on_bd_pressed(self):
         self.bd_slider.keyed_value = None
         self.bd_slider.update()
-        self.bd_undo_chunk_open = True
-        cmds.undoInfo(openChunk=True, chunkName="VertexBD")
 
-        self.bd_original_values = []
-        # Respect both Graph-Editor and viewport selection for "nothing selected" check
-        has_selection = bool(TweenEngine.get_selected_keyframe_attrs()) or bool(cmds.ls(selection=True))
-        if not has_selection:
-            return
-
-        # Prompt user if no default pose has been scanned yet
-        if not DefaultPoseStore.has_stored_defaults():
+        # Offer to scan the default pose first (once per tool session) so
+        # BD blends toward the real rest pose instead of guessed 0/1 values.
+        has_targets = (bool(TweenEngine.get_selected_keyframe_attrs())
+                       or bool(cmds.ls(selection=True)))
+        if (has_targets and not DefaultPoseStore.has_stored_defaults()
+                and not self._bd_prompted):
+            self._bd_prompted = True
             result = cmds.confirmDialog(
                 title='Scan Default Pose',
                 message=(
@@ -2428,80 +2583,47 @@ class VertexTweenerUI(QtWidgets.QDialog):
                 dismissString='Cancel',
             )
             if result != 'Continue':
-                self.status_label.setText("Scan default pose first for accurate BD blending")
+                self.status_label.setText(
+                    "Scan default pose first for accurate BD blending")
                 return
 
-        self.bd_original_values = BlendEngine.cache_bd()
-        if not self.bd_original_values:
-            self.status_label.setText("No animated attributes on selection")
+        self._begin_session('BD')
+
+    def on_bd_changed(self, value):
+        """BD slider: blend from original pose (at 0) toward default/rest pose (at 100)."""
+        self.value_label.setText("BD {}%".format(value))
+        count = self._update_session('BD', value)
+        if value == 0:
+            self.status_label.setText("BD neutral — release here to cancel")
+        elif count:
+            self.status_label.setText(
+                "Blending {} attribute{} to default".format(count, 's' if count != 1 else ''))
 
     def on_bd_released(self):
         final_val = self.bd_slider.value()
+        applied = self._end_session('BD', final_val)
+        self._finish_slider(self.bd_slider, "BD", final_val, applied, 0)
 
-        if self.bd_original_values:
-            if final_val != 0:
-                BlendEngine.apply_bd(final_val, self.bd_original_values)
-            # Always set keyframes to lock in the blend
-            self._auto_key_current_position()
-
-        if self.bd_undo_chunk_open:
-            cmds.undoInfo(closeChunk=True)
-            self.bd_undo_chunk_open = False
-        self.bd_original_values = []
-
-        # Show keyed position tick, then reset slider to zero
-        self.bd_slider.keyed_value = final_val
-        self.bd_slider.blockSignals(True)
-        self.bd_slider.setValue(0)
-        self.bd_slider.blockSignals(False)
-        self.bd_slider.update()
-        self.value_label.setText("BD 0%")
-        self.status_label.setText("Keyed at BD {}%".format(final_val))
-
-    def on_be_changed(self, value):
-        """BE slider: Blend toward eased position using pre-computed targets."""
-        self.value_label.setText("BE {}%".format(value))
-        if value == 50:
-            self.status_label.setText("BE neutral")
-            return
-        count = BlendEngine.apply_be(value, self.be_original_values)
-        if count:
-            self.status_label.setText("Easing {} attribute{}".format(count, 's' if count != 1 else ''))
-        elif self.be_original_values:
-            self.status_label.setText("No attributes found")
-
+    # ---- Blend to Ease ----------------------------------------------------
     def on_be_pressed(self):
         self.be_slider.keyed_value = None
         self.be_slider.update()
-        self.be_undo_chunk_open = True
-        cmds.undoInfo(openChunk=True, chunkName="VertexBE")
+        self._begin_session('BE')
 
-        self.be_original_values = BlendEngine.cache_be()
-        if not self.be_original_values:
-            self.status_label.setText("Need 3+ keyframes for easing")
+    def on_be_changed(self, value):
+        """BE slider: blend toward eased position using pre-computed targets."""
+        self.value_label.setText("BE {}%".format(value))
+        count = self._update_session('BE', value)
+        if value == 50:
+            self.status_label.setText("BE neutral — release here to cancel")
+        elif count:
+            self.status_label.setText(
+                "Easing {} attribute{}".format(count, 's' if count != 1 else ''))
 
     def on_be_released(self):
         final_val = self.be_slider.value()
-
-        if self.be_original_values:
-            if final_val != 50:
-                BlendEngine.apply_be(final_val, self.be_original_values)
-            # Always set keyframes to lock in the blend
-            self._auto_key_current_position()
-
-        if self.be_undo_chunk_open:
-            cmds.undoInfo(closeChunk=True)
-            self.be_undo_chunk_open = False
-        self.be_original_values = []
-
-        # Show keyed position tick, then reset slider to center
-        self.be_slider.keyed_value = final_val
-        self.be_slider.blockSignals(True)
-        self.be_slider.setValue(50)
-        self.be_slider.blockSignals(False)
-        self.be_slider.update()
-        self.value_label.setText("BE 50%")
-        self.status_label.setText("Keyed at BE {}%".format(final_val))
+        applied = self._end_session('BE', final_val)
+        self._finish_slider(self.be_slider, "BE", final_val, applied, 50)
 
     def on_scan_defaults(self):
         """Scan selected controls' current pose as the default/rest pose."""
@@ -2515,7 +2637,11 @@ class VertexTweenerUI(QtWidgets.QDialog):
             if not self._show_scan_confirm_dialog():
                 return
 
-        count = DefaultPoseStore.scan_defaults()
+        try:
+            count = DefaultPoseStore.scan_defaults()
+        except Exception as exc:
+            self.status_label.setText("Default pose scan failed: {}".format(exc))
+            return
         if count:
             self.status_label.setText("Stored {} default attribute values".format(count))
         else:
@@ -2683,16 +2809,6 @@ class VertexTweenerUI(QtWidgets.QDialog):
                 "color: #CC8888; font-size: 10px; background: transparent; border: none;"
             )
 
-    def _auto_key_current_position(self):
-        """Set keyframes on all selected objects at current time to lock in the tween.
-
-        Keys any keyable attribute that already has animation curves,
-        supporting transforms, joints, and custom rig controls. The user's
-        Maya autoKeyframe setting is intentionally NOT touched here — the
-        tool's keying is orthogonal to Maya's autoKey preference.
-        """
-        _auto_key_selection()
-
     def _populate_fraction_labels(self):
         for layout in (self.fraction_labels_top_layout, self.fraction_labels_bottom_layout):
             while layout.count():
@@ -2722,26 +2838,21 @@ class VertexTweenerUI(QtWidgets.QDialog):
         layout.addStretch(trailing_stretch)
 
     def set_slider_val(self, val):
-        """Quick button handler - applies tween, keys, then resets to center."""
-        cmds.undoInfo(openChunk=True)
+        """Quick preset button: one-shot Local tween at *val* percent, then key."""
+        session = SliderSession('LT', chunk_name="Inbetweener_LT_preset")
+        try:
+            count = session.begin()
+            if count:
+                session.update(val)
+            applied = session.end(val)
+        except Exception as exc:
+            session.cancel()
+            self.status_label.setText("Error: {}".format(exc))
+            return
 
-        # One-shot full query-and-apply (no drag, so no need for cache)
-        TweenEngine.apply_tween(val)
-
-        # Always key to lock in the position
-        self._auto_key_current_position()
-
-        cmds.undoInfo(closeChunk=True)
-
-        # Show keyed position tick, then reset slider to center
-        self.slider.keyed_value = val
-        self.slider.blockSignals(True)
-        self.slider.setValue(50)
-        self.slider.blockSignals(False)
-        self.slider.update()
-
-        self.value_label.setText("Local 50%")
-        self.status_label.setText("Keyed at {}%".format(val))
+        self._finish_slider(self.slider, "Local", val, applied, 50)
+        if not applied:
+            self.status_label.setText(_no_target_message('LT'))
 
     def set_slider_fraction(self, numerator, denominator):
         value = int(round(100.0 * (float(numerator) / float(denominator))))
@@ -2769,7 +2880,8 @@ class VertexTweenerUI(QtWidgets.QDialog):
         self.be_slider.setValue(50)
         self.be_slider.blockSignals(False)
 
-        self.value_label.setText("50%")
+        self.value_label.setText("Local 50%")
+        self.status_label.setText("Sliders reset to neutral")
 
     def on_overshoot_toggled(self, checked):
         set_pref(PREF_OVERSHOOT_MODE, checked)
@@ -2841,7 +2953,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
         while self.bn_tick_labels_layout.count():
             item = self.bn_tick_labels_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
-        ticks = [(0, "Prev"), (50, "50"), (100, "Next")]
+        ticks = [(0, "Prev"), (50, "Neutral"), (100, "Next")]
         for i, (v, t) in enumerate(ticks):
             lbl = QtWidgets.QLabel(t); lbl.setStyleSheet("color: #666; font-size: 9px;")
             lbl.setAlignment(QtCore.Qt.AlignLeft if i == 0 else QtCore.Qt.AlignRight if i == len(ticks) - 1 else QtCore.Qt.AlignCenter)
@@ -2861,23 +2973,24 @@ class VertexTweenerUI(QtWidgets.QDialog):
         while self.be_tick_labels_layout.count():
             item = self.be_tick_labels_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
-        ticks = [(0, "Ease Out"), (50, "50"), (100, "Ease In")]
+        ticks = [(0, "Ease Out"), (50, "Neutral"), (100, "Ease In")]
         for i, (v, t) in enumerate(ticks):
             lbl = QtWidgets.QLabel(t); lbl.setStyleSheet("color: #666; font-size: 9px;")
             lbl.setAlignment(QtCore.Qt.AlignLeft if i == 0 else QtCore.Qt.AlignRight if i == len(ticks) - 1 else QtCore.Qt.AlignCenter)
             self.be_tick_labels_layout.addWidget(lbl, 1 if i not in [0, len(ticks) - 1] else 0)
 
     def closeEvent(self, event):
-        if self.undo_chunk_open: cmds.undoInfo(closeChunk=True)
-        if self.world_undo_chunk_open: cmds.undoInfo(closeChunk=True)
-        if self.bn_undo_chunk_open: cmds.undoInfo(closeChunk=True)
-        if self.bd_undo_chunk_open: cmds.undoInfo(closeChunk=True)
-        if self.be_undo_chunk_open: cmds.undoInfo(closeChunk=True)
+        for session in list(self._sessions.values()):
+            try:
+                session.cancel()
+            except RuntimeError:
+                pass
+        self._sessions = {}
         super(VertexTweenerUI, self).closeEvent(event)
 
     def show_help_dialog(self):
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Inbetweener v2.2 - Help")
+        dialog.setWindowTitle("Inbetweener v2.2.1 - Help")
         dialog.setMinimumSize(520, 600)
         layout = QtWidgets.QVBoxLayout(dialog)
 
@@ -2899,7 +3012,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
             <p>The <b>Inbetweener Tool</b> provides five slider modes for creating breakdowns
             and refining animation curves in Autodesk Maya. It works with <b>transforms, joints,
             NURBS curve controls</b>, and any object with keyable attributes.</p>
-            <p>Version 2.2.0 &mdash; Pipeline Tools</p>
+            <p>Version 2.2.1 &mdash; Pipeline Tools</p>
         </div>
 
         <h2>Local Tweener (LT)</h2>
@@ -2985,9 +3098,12 @@ class VertexTweenerUI(QtWidgets.QDialog):
         <h2>Options</h2>
         <div class="section">
             <ul>
-                <li><span class="key">Auto Keying</span>: All sliders automatically set keyframes
-                on release. A green diamond tick marks the keyed position on the slider.
-                Maya's own Auto Key preference is left untouched — the tool never toggles it.</li>
+                <li><span class="key">Auto Keying</span>: All sliders key the result on release —
+                only the attributes the slider actually changed are keyed. A green diamond
+                tick marks the keyed position on the slider. Maya's own Auto Key preference
+                is left untouched — the tool never toggles it.</li>
+                <li><span class="key">Cancel a drag</span>: Release BN/BD/BE back at their
+                neutral position to restore the original values without setting any keys.</li>
                 <li><span class="key">Overshoot Mode</span>: Extends Local Tweener range to
                 -50% / 150% for exaggerated breakdown poses.</li>
                 <li><span class="key">Scan Default Pose</span>: Stores the current pose of selected

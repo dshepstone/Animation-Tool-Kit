@@ -48,7 +48,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.0.1"
+VERSION        = "1.0.2"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -721,6 +721,14 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
 
 class _InbetweenerToolbarSlider(QtWidgets.QFrame):
+    """Inline Inbetweener slider embedded in the toolbar.
+
+    A thin wrapper around ``vertex_tweener.SliderSession`` so the toolbar
+    shares the exact press/drag/release behavior of the full Inbetweener
+    window (cache on press, tween on drag, re-apply + key + close the undo
+    chunk on release) instead of duplicating that logic here.
+    """
+
     SLIDER_TYPES = ("LT", "WT", "BN", "BD", "BE")
 
     def __init__(self, parent=None, orientation="horizontal"):
@@ -729,8 +737,7 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
         self._vt = None
         self._config = {}
         self._neutral = 50
-        self._cache = []
-        self._undo_open = False
+        self._session = None
         self._build_failed = False
         self._load_inbetweener()
         self._build_ui()
@@ -739,6 +746,10 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
         try:
             self._vt = importlib.import_module("vertex_tweener")
             self._config = dict(self._vt.SliderPopOut.CONFIGS)
+            # SliderSession carries all of the corrected press/drag/release
+            # behavior; older tool versions lack it and must be updated.
+            if not hasattr(self._vt, "SliderSession"):
+                raise RuntimeError("vertex_tweener 2.2.1+ required")
         except Exception:
             self._build_failed = True
 
@@ -750,7 +761,7 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
         main.setSpacing(4)
 
         if self._build_failed:
-            unavailable = QtWidgets.QLabel("Inbetweener slider unavailable")
+            unavailable = QtWidgets.QLabel("Inbetweener slider unavailable — update the Inbetweener tool")
             unavailable.setStyleSheet("color:#999; font-size:10px;")
             main.addWidget(unavailable)
             return
@@ -791,11 +802,15 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
             self.slider.label_text = cfg["label"]
             overshoot_key = getattr(self._vt, "PREF_OVERSHOOT_MODE", "vertexTweener_overshootMode")
             overshoot = self._pref_bool(overshoot_key, False)
+            # Block signals so the reset never fires _on_changed and applies
+            # values to the scene while merely switching modes.
+            self.slider.blockSignals(True)
             if key == "LT" and overshoot:
                 self.slider.setRange(-50, 150)
             else:
                 self.slider.setRange(0, 100)
             self.slider.setValue(self._neutral)
+            self.slider.blockSignals(False)
             self.slider.keyed_value = None
             self.slider.update()
         except Exception as exc:
@@ -804,69 +819,56 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
     def _on_pressed(self):
         try:
             key = self.slider_type_combo.currentText()
-            self._cache = []
             self.slider.keyed_value = None
             self.slider.update()
-            self._undo_open = True
-            cmds.undoInfo(openChunk=True, chunkName="ATK_InbetweenerToolbarSlider_{}".format(key))
-
-            if key == "LT":
-                self._vt.TweenEngine.cache_selection()
-            elif key == "WT":
-                self._vt.WorldTweenEngine.cache_selected_keys()
-            elif key == "BN":
-                self._cache = self._vt.BlendEngine.cache_bn()
-            elif key == "BD":
-                self._cache = self._vt.BlendEngine.cache_bd()
-            elif key == "BE":
-                self._cache = self._vt.BlendEngine.cache_be()
+            self._session = self._vt.SliderSession(
+                key, chunk_name="ATK_Inbetweener_{}".format(key))
+            count = self._session.begin()
+            if not count:
+                self._show_message(self._vt._no_target_message(key))
         except Exception as exc:
+            if self._session is not None:
+                self._session.cancel()
+                self._session = None
             cmds.warning("ATK Toolbar: Inbetweener slider press failed: {}".format(exc))
 
     def _on_changed(self, value):
+        if self._session is None or not getattr(self._session, "active", False):
+            return
         try:
-            key = self.slider_type_combo.currentText()
-            if key == "LT":
-                if self._vt.TweenEngine._cached_attrs:
-                    self._vt.TweenEngine.apply_cached_tween(value)
-            elif key == "WT":
-                if self._vt.WorldTweenEngine._key_cache:
-                    self._vt.WorldTweenEngine.apply_cached_world_tween(value)
-                else:
-                    self._vt.WorldTweenEngine.apply_world_tween(value)
-            elif key == "BN":
-                if value != 50:
-                    self._vt.BlendEngine.apply_bn(value, self._cache)
-            elif key == "BD":
-                self._vt.BlendEngine.apply_bd(value, self._cache)
-            elif key == "BE":
-                if value != 50:
-                    self._vt.BlendEngine.apply_be(value, self._cache)
+            self._session.update(value)
         except Exception as exc:
             cmds.warning("ATK Toolbar: Inbetweener slider drag failed: {}".format(exc))
 
     def _on_released(self):
+        final_val = self.slider.value()
+        applied = 0
+        if self._session is not None:
+            try:
+                applied = self._session.end(final_val)
+            except Exception as exc:
+                cmds.warning("ATK Toolbar: Inbetweener slider release failed: {}".format(exc))
+            self._session = None
+
+        # Show the keyed-position tick, then snap back to neutral.
+        # blockSignals stops the reset from re-applying the neutral value
+        # on top of the freshly keyed pose (the old snap-back bug).
+        self.slider.keyed_value = final_val if applied else None
+        self.slider.blockSignals(True)
+        self.slider.setValue(self._neutral)
+        self.slider.blockSignals(False)
+        self.slider.update()
+
+    @staticmethod
+    def _show_message(text):
         try:
-            auto_key_name = getattr(self._vt, "PREF_AUTO_KEY", "vertexTweener_autoKey")
-            if self._pref_bool(auto_key_name, True):
-                auto_key_fn = getattr(self._vt, "_auto_key_selection", None)
-                if callable(auto_key_fn):
-                    auto_key_fn()
-        finally:
-            if self._undo_open:
-                cmds.undoInfo(closeChunk=True)
-                self._undo_open = False
-            self.slider.keyed_value = self.slider.value()
-            self.slider.setValue(self._neutral)
-            self.slider.update()
+            cmds.inViewMessage(
+                amg="Inbetweener: {}".format(text),
+                pos="botCenter", fade=True, fadeStayTime=1500)
+        except Exception:
+            cmds.warning("Inbetweener: {}".format(text))
 
     def _pref_bool(self, pref_name, default):
-        loader = getattr(self._vt, "_load_bool_pref", None)
-        if callable(loader):
-            try:
-                return bool(loader(pref_name, default))
-            except Exception:
-                pass
         try:
             if cmds.optionVar(exists=pref_name):
                 return bool(cmds.optionVar(q=pref_name))
