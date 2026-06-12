@@ -3,15 +3,19 @@
 mirror_controls_v2_3_0.py - Python Script
 
 Description:
-    A tool for mirroring the controllers from one side to the other or to flip the pose.
-    Integrates with the Animation Tool Kit's Character Snapshot tool: when a Character
-    Snapshot exists for the selected rig it is used as the authoritative source of
-    manual pairs, exclusions and side classification. Falls back to the legacy Rig
-    Snapshot system if a CharacterSnapshot is not present, and to the original
-    axis-vector heuristic when no snapshot data exists at all.
+    A tool for mirroring the controllers from one side to the other or to flip
+    the pose. The Animation Tool Kit Character Snapshot tool
+    (character_snapshot_v1_0_0) is the single source of truth for snapshot
+    data: control lists, side classification, mirror partners (automatic and
+    manual), exclusions, per-channel copy/negate rules and sign-flip
+    overrides all live in the Character Snapshot scene store. Mirror Controls
+    no longer keeps its own snapshot system — it queries the Character
+    Snapshot module and only falls back to a local axis-vector heuristic when
+    the user explicitly chooses to continue without a snapshot.
 
 Requires:
-    Nothing (PySide6 / Maya 2025+)
+    character_snapshot_v1_0_0.py on the Maya script path (installed by the
+    Character Snapshot tool). PySide6 / Maya 2025+.
 
 Install:
     1. Place this file in the Maya scripts folder
@@ -24,111 +28,60 @@ Install:
     3. Create a shelf button by selecting all code (Ctrl+A) and dragging it to the shelf.
 
 Usage:
-    1. Pose the rig in its rest / bind pose.
-    2. Select all rig controls (or leave nothing selected to capture every NURBS control).
-    3. Open the Character Snapshot tool to capture the rig once. Mirror Controls
-       will automatically use that snapshot for accurate side detection and pairing.
-    4. File > Take Snapshot  —  optional: store per-attribute mirror rules
-       (copy / negate / ignore) in the legacy Rig Snapshot for fine-grained control.
-    5. Use the main mirror controls as normal.
+    1. Pose the rig in its rest / default pose.
+    2. Select any control on the rig.
+    3. Click "Take Snapshot" (or use the Character Snapshot tool) to capture
+       the rig once. The snapshot records every controller, its mirror
+       partner, and per-channel flip rules detected from the default pose.
+    4. Use the main mirror controls as normal. Manual pairs and channel-rule
+       overrides are edited through the Character Snapshot data and shared by
+       every ATK tool.
 
 Authors:
     Original: Mikkel Diget Eriksen (2022)
     Updated by: David Shepstone
 
 Version:
-    2.3.1 - Mirror Controls now relies exclusively on the Character Snapshot
-            tool for snapshot data. The legacy RigSnapshot fallback has been
-            removed from runtime mirroring, the prefix combobox, the snapshot
-            status label and the ± Flip Sign button. The ± Flip Sign button
-            now stores per-control sign overrides inside the Character
-            Snapshot's metadata (under 'mirror_controls_flip_signs'); when a
-            flipped control is mirrored its translate / rotate values are
-            inverted before any rule or heuristic decides copy / negate, so
-            the partner control receives the opposite sign on those channels.
-            Selecting Flip Sign without a Character Snapshot for the rig now
-            shows a clear reminder with a one-click launcher for the
-            Character Snapshot tool.
-    2.3.0 - Renamed tool from "digetMirrorControl" to "Mirror Controls".
-            Integrated with the Animation Tool Kit Character Snapshot tool: when a
-            Character Snapshot exists for the selected rig prefix it is used as the
-            primary source of manual pair overrides, exclusions, side classification
-            and partner detection. When no Character Snapshot exists for the
-            selected rig a popup reminder prompts the user to create one for
-            accurate mirroring (with options to launch the Character Snapshot tool,
-            continue anyway with the heuristic, or cancel). Updated UI title, log
-            prefixes, About dialog and class name to reflect the new name.
-    2.2.5 - Four critical mirror-failure fixes:
-             1. Token-swap false positives: _find_partner() and get_partner() used
-                naive str.find() which matched side tokens embedded inside words
-                (e.g. "rt" in "upperteeth", "shirt", "earTip").  Replaced with a
-                shared _swap_side_token() helper using regex word-boundary matching
-                where boundaries are '_' or string start/end.  Added _has_side_token()
-                companion to replace all naive `token in ctrl` classification checks
-                throughout get_controllers() and mirror_control().
-             2. Scene-mode DAG path mismatch: in scene mode (no selection),
-                ctrl_list contains full DAG paths (|A|B|C) but get_partner()
-                returns short namespace:name strings.  The check
-                `partner not in vector_data` always failed because key formats
-                differ.  Added a leaf→DAG lookup map (_leaf_to_dag) that resolves
-                short partner names to their full DAG paths before the lookup.
-             3. Selection-mode DAG ambiguity: cmds.ls(selection=True) returned
-                short names, and get_partner() returns short names.  On rigs with
-                deeply nested finger chains (ac_lf_index3 at multiple DAG depths),
-                Maya raised "More than one object matches name" when these were
-                passed to cmds.xform / cmds.listAttr / cmds.getAttr.  Fixed by
-                using cmds.ls(selection=True, long=True) and resolving partner
-                names through a leaf→DAG map built from _get_all_nurbs_controls().
-             4. _collect_pending_edits() read partner values from the rd dict
-                stored in QTableWidgetItem.data(UserRole) which PySide6 can
-                return as a detached copy.  Now reads directly from the live
-                QLineEdit cell widget, fixing "Save to Scene" reporting 0 pairs
-                and "Exclude" wiping all unsaved manual pair entries.
-    2.2.4 - Fixed bug in ManualPairEditorDialog where clicking Exclude wiped all
-             unsaved manual pair edits from the table. Root cause: _toggle_excluded
-             called save_to_scene() before the QLineEdit partner values had been
-             committed to self._snapshot.manual_pairs, so the subsequent refresh
-             reloaded the old snapshot and discarded everything typed since the
-             last Save. Fix: extracted _collect_pending_edits() helper that commits
-             all live table widget values into the snapshot first; _toggle_excluded
-             now calls this before saving, as does _on_save().
-    2.2.3 - ManualPairEditorDialog: clicking a row now selects the source control
-             (and partner if already assigned) in the Maya viewport, making it easy
-             to identify controls before pairing. Controlled by a 'Select in viewport
-             on click' checkbox in the filter bar (on by default).
-    2.2.2 - ManualPairEditorDialog now filters out centre/middle controls from the
-             unpaired list — only controls whose leaf name contains the left or right
-             token are shown (e.g. ac_lf_thumb, ac_rt_index).  Controls like
-             ac_cn_chest, ac_cn_jaw, spine, etc. are silently skipped since they
-             have no mirror partner by design.
-    2.2.1 - Fixed _get_all_nurbs_controls() in MirrorControls to return full DAG
-             paths (same fix applied to the diagnostic tool) — resolves 'More than one
-             object matches name' crash when opening ManualPairEditorDialog on rigs with
-             deeply nested finger chains.
-             Replaced post-snapshot dialog with a smart pairing report: if all controls
-             pair successfully the user is offered the Snapshot Editor; if any are
-             unpaired a warning lists them by name and defaults to opening Manual Pairs.
-             Extracted _analyse_snapshot_pairing() helper so take_snapshot and
-             _do_re_snapshot share the same logic.
-    2.2.0 - Added ManualPairEditorDialog: per-rig manual pair overrides and control exclusions.
-             Controls that auto-pair correctly never appear — only controls needing attention
-             are shown. Users select in the Maya viewport and click ⊕ Pick to assign source
-             or partner. Manual pairs and exclusions persist in the scene snapshot.
-             get_partner() now checks manual_pairs before the token-swap heuristic.
-             mirror_control() now skips excluded controls.
-    2.1.1 - Fixed DAG path handling in get_partner() and RigSnapshot._find_partner():
-             controls passed as full paths (parent|child) now correctly resolve their
-             mirror partner by operating on the leaf node name only.
-             Added Replace / Merge / Cancel guard when Take Snapshot would overwrite an
-             existing snapshot — Merge updates only the re-sampled controls and preserves
-             all other rules in the scene snapshot.
-    2.1.0 - Added RigSnapshot system: per-control axis sampling, per-attribute mirror rules,
-             and SnapshotEditorDialog for reviewing / overriding rules.
-             Fixed duplicate create_menus() definition present in v2.0.0.
+    2.3.2 - Character Snapshot is now the single source of truth.
+             * Removed the duplicated legacy RigSnapshot system (snapshot
+               builder, Manual Pair Editor, Snapshot Manager). "Take
+               Snapshot" now builds a Character Snapshot; "Manual Pairs"
+               opens the Character Snapshot Manual Pair Editor; "Manage"
+               opens the Character Snapshot tool. Existing legacy
+               RigSnapshot scene data is migrated into Character Snapshots
+               automatically (non-destructively) on first launch.
+             * Partner matching is fully centralised: manual pair → recorded
+               partner → multi-convention token swap (lt/rt, l/r,
+               left/right, lf/rf, L_/R_, _L/_R, camelCase Left/Right, …),
+               every result validated against the scene.
+             * Channel flip rules: the snapshot's auto-detected per-channel
+               copy/negate rules (derived from the rig's default pose) now
+               drive mirroring; "Edit Rules" edits per-channel overrides
+               stored in the Character Snapshot — previously the editor
+               wrote to legacy data that runtime mirroring never read.
+             * Fixed Flip in selection mode: it copied one side over the
+               other instead of swapping both sides. Both directions are now
+               applied from values captured before any write.
+             * Fixed Mirror Middle in selection mode (it warned "no partner"
+               and did nothing).
+             * Implemented the "Not Selected" operation (direction radio
+               buttons were previously ignored).
+             * Undo chunks are closed in a try/finally so an error mid-mirror
+               can no longer corrupt the undo queue.
+             * Missing-snapshot popup now uses the standard ATK wording and
+               never fails silently; mirroring reports a summary (mirrored /
+               unmatched counts) to the Script Editor.
+    2.3.1 - Mirror Controls relies on the Character Snapshot tool for
+            snapshot data; ± Flip Sign stores per-control sign overrides in
+            the Character Snapshot metadata.
+    2.3.0 - Renamed tool from "digetMirrorControl" to "Mirror Controls";
+            first Character Snapshot integration.
+    2.2.x - Word-boundary token matching, DAG-path resolution fixes, Manual
+            Pair Editor, per-character snapshots (see git history).
+    2.1.0 - RigSnapshot system with per-attribute mirror rules.
 """
 
 import json
-import re
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import wrapInstance
@@ -142,9 +95,13 @@ import maya.OpenMaya as om
 # Constants
 # ---------------------------------------------------------------------------
 
-SNAPSHOT_NODE = "digetMirrorControlSettings"
-SNAPSHOT_ATTR = "rigSnapshot"
-SNAPSHOT_MULTI_ATTR = "rigSnapshots"
+# Legacy scene node written by digetMirrorControl / Mirror Controls <= 2.3.1.
+# Only read for one-time migration into the Character Snapshot store — no new
+# data is ever written to it.
+LEGACY_SNAPSHOT_NODE       = "digetMirrorControlSettings"
+LEGACY_SNAPSHOT_ATTR       = "rigSnapshot"
+LEGACY_SNAPSHOT_MULTI_ATTR = "rigSnapshots"
+
 DEFAULT_PREFIX = "__scene__"
 
 RULE_COPY   = "copy"
@@ -173,107 +130,13 @@ def _detect_prefix(ctrl):
 
 
 # ---------------------------------------------------------------------------
-# Shared token-swap helper
-# ---------------------------------------------------------------------------
-
-def _swap_side_token(base_name, left_token, right_token):
-    """
-    Swap the left/right token in *base_name* (no namespace, no DAG prefix)
-    and return the result, or None if no token was found.
-
-    Word-boundary-aware: only matches when the token appears as a delimited
-    segment.  In rig naming conventions the delimiter is '_', so the regex
-    treats '_' and string start/end as word boundaries.
-
-    Examples with tokens lf / rt:
-        ac_lf_armFK     →  ac_rt_armFK       (matched)
-        ac_rt_handIK    →  ac_lf_handIK      (matched)
-        ac_cn_upperteeth →  None              ("rt" inside "upperteeth" — ignored)
-        shirt_main       →  None              ("rt" inside "shirt" — ignored)
-        ac_lf_earTip     →  ac_rt_earTip      (matches "lf" between delimiters)
-    """
-    lt = re.escape(left_token)
-    rt = re.escape(right_token)
-
-    # Build patterns that match the token as a delimited segment.
-    # Boundaries: start of string, end of string, or '_'.
-    def _boundary_pattern(tok):
-        return r'(?:(?<=_)|(?<=\A))' + tok + r'(?=_|\Z)'
-
-    # Try right → left first
-    pat_rt = _boundary_pattern(rt)
-    m = re.search(pat_rt, base_name, re.IGNORECASE)
-    if m:
-        # Preserve the casing convention of the original token position
-        return base_name[:m.start()] + left_token + base_name[m.end():]
-
-    # Then left → right
-    pat_lt = _boundary_pattern(lt)
-    m = re.search(pat_lt, base_name, re.IGNORECASE)
-    if m:
-        return base_name[:m.start()] + right_token + base_name[m.end():]
-
-    return None
-
-
-def _has_side_token(ctrl, token):
-    """
-    Return True if the control's leaf base-name contains *token* as a
-    delimited segment (bounded by '_' or string edges), case-insensitive.
-
-    This must be used instead of ``token.lower() in ctrl.lower()`` to avoid
-    false positives like "rt" matching inside "upperteeth" or "shirt".
-    """
-    leaf = ctrl.split("|")[-1]
-    base = leaf.split(":")[-1] if ":" in leaf else leaf
-    pat = r'(?:(?<=_)|(?<=\A))' + re.escape(token) + r'(?=_|\Z)'
-    return bool(re.search(pat, base, re.IGNORECASE))
-
-
-def _resolve_long(name):
-    """
-    Resolve a possibly-ambiguous short or namespace-qualified name to a
-    unique full DAG path using ``cmds.ls(name, long=True)``.
-
-    Returns the full path if exactly one match is found, otherwise returns
-    the original name unchanged (let Maya raise later if truly ambiguous).
-    """
-    try:
-        matches = cmds.ls(name, long=True)
-    except Exception:
-        return name
-    if matches and len(matches) == 1:
-        return matches[0]
-    return name
-
-
-# ---------------------------------------------------------------------------
-# OperationType
-# ---------------------------------------------------------------------------
-
-class OperationType(object):
-    left_to_right = "Left to Right"
-    right_to_left = "Right to Left"
-    flip          = "Flip"
-    flip_to_frame = "Flip to Frame"
-    mirror_middle = "Mirror Middle"
-    selected      = "Selected"
-    not_selected  = "Not Selected"
-
-
-# ---------------------------------------------------------------------------
 # Character Snapshot integration
 # ---------------------------------------------------------------------------
 #
-# Mirror Controls prefers data captured by the Animation Tool Kit Character
-# Snapshot tool (character_snapshot_v1_0_0). When a Character Snapshot is
-# available for the selected rig prefix it is wrapped in
-# _CharacterSnapshotAdapter so the rest of the mirror code (which expects a
-# RigSnapshot-shaped object) can read its manual_pairs / excluded_controls /
-# side data without further changes. The adapter intentionally returns None
-# from get_rule() so per-attribute mirror logic falls through to the existing
-# heuristic — Character Snapshots do not store per-attribute copy/negate/ignore
-# rules.
+# The Character Snapshot module owns ALL matching logic. The thin helpers
+# below delegate to it; the only local fallback is a minimal single-pair
+# token swap used when the module is not installed at all (the user is then
+# warned and offered to install/launch it before mirroring).
 
 def _try_import_character_snapshot():
     """Import character_snapshot_v1_0_0. Return the module, or None if missing."""
@@ -284,118 +147,59 @@ def _try_import_character_snapshot():
         return None
 
 
-# Key under which Mirror Controls stores its per-rig flip-sign overrides
-# inside the CharacterSnapshot.metadata dict. The list contains leaf names of
-# controls whose mirrored numeric channels should be sign-inverted.
-_CS_META_FLIP_SIGNS = "mirror_controls_flip_signs"
-
-
-class _CharacterSnapshotAdapter(object):
-    """Thin wrapper that lets a CharacterSnapshot stand in for a RigSnapshot.
-
-    Exposes the subset of RigSnapshot's interface that mirror_control(),
-    mirror_pair() and flip_sign_rules() touch:
-      - manual_pairs           (dict, read directly)
-      - excluded_controls      (list, read directly)
-      - get_manual_partner(ctrl)
-      - is_excluded(ctrl)
-      - get_rule(ctrl, attr)   — always returns None so the heuristic runs
-      - controls               (empty dict; CharacterSnapshots have no rule data)
-      - is_flip_sign(ctrl)     — True if the user has marked this ctrl as
-                                  sign-flipped via the ± Flip Sign button
-      - toggle_flip_sign(ctrl) — flips that bit and marks the snapshot dirty
-      - save()                 — writes the wrapped CharacterSnapshot back to
-                                  the scene store (used after flip-sign edits)
-
-    Flip-sign overrides are stored as a list of leaf names inside
-    CharacterSnapshot.metadata[_CS_META_FLIP_SIGNS]. When mirror_pair runs it
-    inverts the control's mirrored numeric input value before any rule or
-    heuristic logic runs — that effectively flips the sign of whatever the
-    mirror code would have written to the partner control.
-    """
-
-    def __init__(self, char_snapshot):
-        self._cs               = char_snapshot
-        self.manual_pairs      = char_snapshot.manual_pairs
-        self.excluded_controls = char_snapshot.excluded_controls
-        self.left_token        = char_snapshot.left_token
-        self.right_token       = char_snapshot.right_token
-        self.mirror_axis       = char_snapshot.mirror_axis
-        # Empty so RigSnapshot.get_rule() pattern (ctrl_data is None → None)
-        # returns None for every (ctrl, attr) pair, deferring to the heuristic.
-        self.controls          = {}
-        # Read flip-sign overrides; tolerate missing or malformed metadata.
-        meta = getattr(char_snapshot, "metadata", None) or {}
-        raw  = meta.get(_CS_META_FLIP_SIGNS, [])
-        if isinstance(raw, list):
-            self._flip_signs = set(raw)
-        else:
-            self._flip_signs = set()
-        self._dirty = False
-
-    # -- Snapshot-rule interface (RigSnapshot-shaped) ----------------------
-
-    def get_manual_partner(self, ctrl):
-        return self._cs.get_manual_partner(ctrl)
-
-    def is_excluded(self, ctrl):
-        return self._cs.is_excluded(ctrl)
-
-    def get_rule(self, ctrl, attr):
-        # CharacterSnapshots don't store per-attribute rules — let the
-        # axis-vector heuristic decide copy vs negate.
-        return None
-
-    # -- Flip-sign interface ----------------------------------------------
-
-    def is_flip_sign(self, ctrl):
-        """Return True if ctrl's mirrored numeric channels should be inverted."""
-        return ctrl.split("|")[-1] in self._flip_signs
-
-    def toggle_flip_sign(self, ctrl):
-        """Flip this control's sign-override bit. Returns the new state."""
-        leaf = ctrl.split("|")[-1]
-        if leaf in self._flip_signs:
-            self._flip_signs.discard(leaf)
-            new_state = False
-        else:
-            self._flip_signs.add(leaf)
-            new_state = True
-        self._dirty = True
-        return new_state
-
-    def list_attribute_names(self, ctrl):
-        """Return the attribute names recorded for ctrl in the CharacterSnapshot.
-
-        CharacterSnapshot stores attributes as a flat list, not a dict — this
-        helper returns that list so flip_sign_rules() can iterate it.
-        """
-        leaf = ctrl.split("|")[-1]
-        cs_ctrls = self._cs.controls
-        # Try direct hit first (full DAG path), then leaf lookup.
-        if ctrl in cs_ctrls:
-            return list(cs_ctrls[ctrl].get("attributes", []))
-        for k, v in cs_ctrls.items():
-            if k.split("|")[-1] == leaf:
-                return list(v.get("attributes", []))
-        return []
-
-    # -- Persistence -------------------------------------------------------
-
-    def save(self):
-        """Persist any flip-sign edits back to the scene snapshot."""
-        if not self._dirty:
-            return
-        meta = self._cs.metadata if isinstance(self._cs.metadata, dict) else {}
-        meta[_CS_META_FLIP_SIGNS] = sorted(self._flip_signs)
-        self._cs.metadata = meta
+def _mirror_name_candidates(base_name, left_token, right_token):
+    """Mirror-name candidates for *base_name* — delegates to the Character
+    Snapshot module so the matching behaviour is identical everywhere. Falls
+    back to a basic underscore-boundary swap of the configured tokens when
+    the module is unavailable."""
+    cs_mod = _try_import_character_snapshot()
+    if cs_mod is not None and hasattr(cs_mod, "mirror_name_candidates"):
         try:
-            self._cs.save_to_scene()
-            self._dirty = False
-        except Exception as exc:
-            om.MGlobal.displayError(
-                "[Mirror Controls] Failed to persist flip-sign overrides: {}".format(exc)
-            )
+            return cs_mod.mirror_name_candidates(base_name, left_token, right_token)
+        except Exception:
+            pass
+    swapped = _basic_swap_side_token(base_name, left_token, right_token)
+    return [swapped] if swapped else []
+
+
+def _basic_swap_side_token(base_name, left_token, right_token):
+    """Minimal word-boundary token swap (fallback when the Character
+    Snapshot module is missing). Boundaries are '_' and string edges so
+    'rt' inside 'shirt' is never matched."""
+    import re
+    for tok, other in ((right_token, left_token), (left_token, right_token)):
+        pat = r'(?:(?<=_)|(?<=\A))' + re.escape(tok) + r'(?=_|\Z)'
+        m = re.search(pat, base_name, re.IGNORECASE)
+        if m:
+            return base_name[:m.start()] + other + base_name[m.end():]
+    return None
+
+
+def _has_side_token(ctrl, token):
+    """True if the control's leaf base-name contains *token* as a delimited
+    segment. Delegates to the Character Snapshot module when available."""
+    cs_mod = _try_import_character_snapshot()
+    if cs_mod is not None and hasattr(cs_mod, "_has_side_token"):
+        try:
+            return cs_mod._has_side_token(ctrl, token)
+        except Exception:
+            pass
+    import re
+    leaf = ctrl.split("|")[-1]
+    base = leaf.split(":")[-1] if ":" in leaf else leaf
+    pat = r'(?:(?<=_)|(?<=\A))' + re.escape(token) + r'(?=_|\Z)'
+    return bool(re.search(pat, base, re.IGNORECASE))
+
+
+def _resolve_long(name):
+    """Resolve a possibly-ambiguous short name to a unique full DAG path."""
+    try:
+        matches = cmds.ls(name, long=True)
+    except Exception:
+        return name
+    if matches and len(matches) == 1:
+        return matches[0]
+    return name
 
 
 def _load_character_snapshot_for(prefix):
@@ -420,6 +224,244 @@ def _list_character_snapshot_prefixes():
         return list(cs_mod.list_prefixes())
     except Exception:
         return []
+
+
+# Key under which Mirror Controls stores its per-rig flip-sign overrides
+# inside the CharacterSnapshot.metadata dict. The list contains leaf names of
+# controls whose mirrored numeric channels should be sign-inverted.
+_CS_META_FLIP_SIGNS = "mirror_controls_flip_signs"
+
+
+class _CharacterSnapshotAdapter(object):
+    """Mirror Controls' view onto a CharacterSnapshot.
+
+    All snapshot queries the mirror code makes go through this adapter so
+    there is exactly one integration point with the Character Snapshot tool:
+      - manual_pairs / excluded_controls   (read directly)
+      - find_partner(ctrl)                 → scene-validated partner lookup
+      - get_side(ctrl)                     → left / right / middle
+      - is_excluded(ctrl)
+      - get_rule(ctrl, attr)               → effective channel rule
+                                              (user override → auto-detected
+                                              → None = runtime heuristic)
+      - set_rule / clear_rule              → per-channel overrides stored in
+                                              the snapshot metadata
+      - is_flip_sign / toggle_flip_sign    → whole-control sign inversion
+      - save()                             → persists edits to the scene
+    """
+
+    def __init__(self, char_snapshot):
+        self._cs               = char_snapshot
+        self.manual_pairs      = char_snapshot.manual_pairs
+        self.excluded_controls = char_snapshot.excluded_controls
+        self.left_token        = char_snapshot.left_token
+        self.right_token       = char_snapshot.right_token
+        self.mirror_axis       = char_snapshot.mirror_axis
+        # Read flip-sign overrides; tolerate missing or malformed metadata.
+        meta = getattr(char_snapshot, "metadata", None) or {}
+        raw  = meta.get(_CS_META_FLIP_SIGNS, [])
+        self._flip_signs = set(raw) if isinstance(raw, list) else set()
+        self._dirty = False
+
+    # -- Pairing / classification ------------------------------------------
+
+    def get_manual_partner(self, ctrl):
+        return self._cs.get_manual_partner(ctrl)
+
+    def find_partner(self, ctrl):
+        """Scene-validated partner: manual pair → recorded partner →
+        multi-convention token swap. None when nothing resolves."""
+        try:
+            return self._cs.find_partner_in_scene(ctrl)
+        except Exception:
+            return None
+
+    def get_side(self, ctrl):
+        try:
+            return self._cs.get_side(ctrl)
+        except Exception:
+            return None
+
+    def is_excluded(self, ctrl):
+        return self._cs.is_excluded(ctrl)
+
+    # -- Channel rules -------------------------------------------------------
+
+    def get_rule(self, ctrl, attr):
+        """Effective copy/negate/ignore rule for ctrl.attr, or None to let
+        the runtime axis-vector heuristic decide."""
+        try:
+            return self._cs.get_mirror_rule(ctrl, attr)
+        except Exception:
+            return None
+
+    def get_auto_rule(self, ctrl, attr):
+        try:
+            return self._cs.get_auto_mirror_rule(ctrl, attr)
+        except Exception:
+            return None
+
+    def get_override(self, ctrl, attr):
+        try:
+            return self._cs.get_mirror_rule_override(ctrl, attr)
+        except Exception:
+            return None
+
+    def set_rule(self, ctrl, attr, rule):
+        self._cs.set_mirror_rule_override(ctrl, attr, rule)
+        self._dirty = True
+
+    def clear_rule(self, ctrl, attr):
+        self._cs.clear_mirror_rule_override(ctrl, attr)
+        self._dirty = True
+
+    def cs_controls(self):
+        """The CharacterSnapshot controls dict (read-only use)."""
+        return self._cs.controls
+
+    def control_count(self):
+        return self._cs.control_count()
+
+    def pair_count(self):
+        return self._cs.pair_count()
+
+    def validate_against_scene(self):
+        try:
+            return self._cs.validate_against_scene()
+        except Exception:
+            return None
+
+    # -- Flip-sign interface ----------------------------------------------
+
+    def is_flip_sign(self, ctrl):
+        """Return True if ctrl's mirrored numeric channels should be inverted."""
+        return ctrl.split("|")[-1] in self._flip_signs
+
+    def toggle_flip_sign(self, ctrl):
+        """Flip this control's sign-override bit. Returns the new state."""
+        leaf = ctrl.split("|")[-1]
+        if leaf in self._flip_signs:
+            self._flip_signs.discard(leaf)
+            new_state = False
+        else:
+            self._flip_signs.add(leaf)
+            new_state = True
+        self._dirty = True
+        return new_state
+
+    def list_attribute_names(self, ctrl):
+        """Attribute names recorded for ctrl in the CharacterSnapshot."""
+        data = self._cs._control_data(ctrl)
+        if not data:
+            return []
+        attrs = data.get("attributes", [])
+        return sorted(attrs.keys()) if isinstance(attrs, dict) else list(attrs)
+
+    # -- Persistence -------------------------------------------------------
+
+    def save(self):
+        """Persist flip-sign / rule-override edits back to the scene store."""
+        if not self._dirty:
+            return
+        meta = self._cs.metadata if isinstance(self._cs.metadata, dict) else {}
+        meta[_CS_META_FLIP_SIGNS] = sorted(self._flip_signs)
+        self._cs.metadata = meta
+        try:
+            self._cs.save_to_scene()
+            self._dirty = False
+        except Exception as exc:
+            om.MGlobal.displayError(
+                "[Mirror Controls] Failed to persist snapshot edits: {}".format(exc)
+            )
+
+
+# ---------------------------------------------------------------------------
+# Legacy RigSnapshot migration (read-only)
+# ---------------------------------------------------------------------------
+
+def _read_legacy_rig_snapshot_store():
+    """Read the legacy digetMirrorControlSettings store.
+
+    Returns {prefix: snapshot_dict}. Handles both the multi-prefix attribute
+    and the very old single-snapshot attribute. Never writes anything.
+    """
+    if not cmds.objExists(LEGACY_SNAPSHOT_NODE):
+        return {}
+    try:
+        if cmds.attributeQuery(LEGACY_SNAPSHOT_MULTI_ATTR,
+                               node=LEGACY_SNAPSHOT_NODE, exists=True):
+            raw = cmds.getAttr("{}.{}".format(LEGACY_SNAPSHOT_NODE,
+                                              LEGACY_SNAPSHOT_MULTI_ATTR))
+            if raw:
+                store = json.loads(raw)
+                if isinstance(store, dict):
+                    return store
+    except Exception:
+        pass
+    try:
+        if cmds.attributeQuery(LEGACY_SNAPSHOT_ATTR,
+                               node=LEGACY_SNAPSHOT_NODE, exists=True):
+            raw = cmds.getAttr("{}.{}".format(LEGACY_SNAPSHOT_NODE,
+                                              LEGACY_SNAPSHOT_ATTR))
+            if raw:
+                legacy = json.loads(raw)
+                if isinstance(legacy, dict) and legacy.get("controls"):
+                    prefix = DEFAULT_PREFIX
+                    for ctrl_key in legacy["controls"]:
+                        p = _detect_prefix(ctrl_key)
+                        if p != DEFAULT_PREFIX:
+                            prefix = p
+                            break
+                    return {prefix: legacy}
+    except Exception:
+        pass
+    return {}
+
+
+def _migrate_legacy_snapshots():
+    """Convert legacy RigSnapshot scene data into Character Snapshots.
+
+    Non-destructive and idempotent: prefixes that already have a Character
+    Snapshot are skipped and the legacy node is left untouched. Manual pairs,
+    exclusions, tokens and per-attribute rules are all carried over via
+    CharacterSnapshot._adopt_mirror_snapshot. Returns the migrated prefixes.
+    """
+    cs_mod = _try_import_character_snapshot()
+    if cs_mod is None:
+        return []
+    migrated = []
+    for prefix, data in _read_legacy_rig_snapshot_store().items():
+        try:
+            if cs_mod.load_snapshot(prefix) is not None:
+                continue
+            snap = cs_mod.CharacterSnapshot._adopt_mirror_snapshot(data, prefix)
+            snap.save_to_scene()
+            migrated.append(prefix)
+        except Exception as exc:
+            om.MGlobal.displayWarning(
+                "[Mirror Controls] Could not migrate legacy snapshot "
+                "'{}': {}".format(prefix, exc)
+            )
+    if migrated:
+        om.MGlobal.displayInfo(
+            "[Mirror Controls] Migrated legacy Rig Snapshot data into "
+            "Character Snapshots: {}".format(", ".join(migrated))
+        )
+    return migrated
+
+
+# ---------------------------------------------------------------------------
+# OperationType
+# ---------------------------------------------------------------------------
+
+class OperationType(object):
+    left_to_right = "Left to Right"
+    right_to_left = "Right to Left"
+    flip          = "Flip"
+    flip_to_frame = "Flip to Frame"
+    mirror_middle = "Mirror Middle"
+    selected      = "Selected"
+    not_selected  = "Not Selected"
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +584,13 @@ QDoubleSpinBox {
     border-radius: 4px;
     padding: 4px 8px;
 }
+QTreeWidget {
+    background-color: #333333;
+    color: #d4d4d4;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    alternate-background-color: #383838;
+}
 QFrame#separator { background-color: #444444; max-height: 1px; }
 QToolTip {
     background-color: #404040;
@@ -564,689 +613,42 @@ def maya_main_window():
 
 
 # ---------------------------------------------------------------------------
-# RigSnapshot
-# ---------------------------------------------------------------------------
-
-class RigSnapshot(object):
-    """
-    Captures world-space axis data for every control in a rig at rest pose
-    and assigns a per-attribute mirror rule (copy / negate / ignore).
-
-    Stored as a JSON string on the digetMirrorControlSettings scene node so
-    the data travels with the Maya file.
-
-    Schema
-    ------
-    {
-      "left_token":  "lf",
-      "right_token": "rt",
-      "mirror_axis": "X",
-      "controls": {
-        "lf_arm_ctrl": {
-          "side":    "left",
-          "partner": "rt_arm_ctrl",
-          "dominant_axes": {"x": "X",  "y": "Y",  "z": "-Z"},
-          "partner_dominant_axes": {"x": "-X", "y": "Y", "z": "Z"},
-          "attributes": {
-            "translateX": {"type": "translate", "rule": "negate", "user_override": false},
-            "rotateY":    {"type": "rotate",    "rule": "negate", "user_override": false},
-            "fingerCurl": {"type": "custom",    "rule": "copy",   "user_override": false}
-          }
-        }
-      }
-    }
-    """
-
-    def __init__(self):
-        self.left_token        = "lf"
-        self.right_token       = "rt"
-        self.mirror_axis       = "X"
-        self.controls          = {}   # ctrl_name -> control data dict
-        self.manual_pairs      = {}   # {source_leaf: partner_leaf} — user-defined overrides
-        self.excluded_controls = []   # [leaf_name, ...] — skip entirely during mirror
-
-    # ------------------------------------------------------------------
-    # Serialisation
-    # ------------------------------------------------------------------
-
-    def to_dict(self):
-        return {
-            "left_token":        self.left_token,
-            "right_token":       self.right_token,
-            "mirror_axis":       self.mirror_axis,
-            "controls":          self.controls,
-            "manual_pairs":      self.manual_pairs,
-            "excluded_controls": self.excluded_controls,
-        }
-
-    @classmethod
-    def from_dict(cls, d):
-        snap                   = cls()
-        snap.left_token        = d.get("left_token",        "lf")
-        snap.right_token       = d.get("right_token",       "rt")
-        snap.mirror_axis       = d.get("mirror_axis",       "X")
-        snap.controls          = d.get("controls",          {})
-        snap.manual_pairs      = d.get("manual_pairs",      {})
-        snap.excluded_controls = d.get("excluded_controls", [])
-        return snap
-
-    # ------------------------------------------------------------------
-    # Scene persistence — multi-prefix storage
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _ensure_node():
-        """Return the settings node, creating it if needed."""
-        node = SNAPSHOT_NODE
-        if not cmds.objExists(node):
-            node = cmds.createNode("transform", name=node)
-            cmds.setAttr("{}.visibility".format(node), 0)
-        return node
-
-    @classmethod
-    def _load_multi_store(cls):
-        """
-        Load the entire multi-prefix dict from the scene node.
-        Auto-migrates legacy single-snapshot data (rigSnapshot attr)
-        into the new multi-prefix format on first access.
-
-        Returns a dict: {prefix_str: snapshot_dict, ...}
-        """
-        if not cmds.objExists(SNAPSHOT_NODE):
-            return {}
-
-        # --- New multi-prefix attribute ---
-        if cmds.attributeQuery(SNAPSHOT_MULTI_ATTR, node=SNAPSHOT_NODE, exists=True):
-            raw = cmds.getAttr("{}.{}".format(SNAPSHOT_NODE, SNAPSHOT_MULTI_ATTR))
-            if raw:
-                try:
-                    store = json.loads(raw)
-                    if isinstance(store, dict):
-                        return store
-                except Exception:
-                    pass
-
-        # --- Legacy single-snapshot migration ---
-        if cmds.attributeQuery(SNAPSHOT_ATTR, node=SNAPSHOT_NODE, exists=True):
-            raw = cmds.getAttr("{}.{}".format(SNAPSHOT_NODE, SNAPSHOT_ATTR))
-            if raw:
-                try:
-                    legacy = json.loads(raw)
-                    # Detect prefix from control names in the legacy snapshot
-                    prefix = DEFAULT_PREFIX
-                    for ctrl_key in legacy.get("controls", {}):
-                        p = _detect_prefix(ctrl_key)
-                        if p != DEFAULT_PREFIX:
-                            prefix = p
-                            break
-                    store = {prefix: legacy}
-                    # Save in new format and remove legacy attr
-                    cls._save_multi_store(store)
-                    om.MGlobal.displayInfo(
-                        "[Mirror Controls] Migrated legacy snapshot to "
-                        "prefix '{}' in new multi-rig format.".format(prefix)
-                    )
-                    return store
-                except Exception:
-                    pass
-
-        return {}
-
-    @classmethod
-    def _save_multi_store(cls, store):
-        """Write the full {prefix: snapshot_dict} dict to the scene node."""
-        node = cls._ensure_node()
-        if not cmds.attributeQuery(SNAPSHOT_MULTI_ATTR, node=node, exists=True):
-            cmds.addAttr(node, longName=SNAPSHOT_MULTI_ATTR, dataType="string")
-        cmds.setAttr(
-            "{}.{}".format(node, SNAPSHOT_MULTI_ATTR),
-            json.dumps(store, indent=2),
-            type="string",
-        )
-
-    def save_to_scene(self, prefix=None):
-        """
-        Save this snapshot under *prefix* in the multi-prefix store.
-
-        If prefix is None, attempts to auto-detect from the control names
-        in this snapshot. Falls back to DEFAULT_PREFIX.
-        """
-        if prefix is None:
-            prefix = DEFAULT_PREFIX
-            for ctrl_key in self.controls:
-                p = _detect_prefix(ctrl_key)
-                if p != DEFAULT_PREFIX:
-                    prefix = p
-                    break
-
-        store = self._load_multi_store()
-        store[prefix] = self.to_dict()
-        self._save_multi_store(store)
-        om.MGlobal.displayInfo(
-            "[Mirror Controls] Snapshot saved — {} controls under prefix '{}'.".format(
-                len(self.controls), prefix
-            )
-        )
-
-    @classmethod
-    def merge_into_scene(cls, new_snap, prefix=None):
-        """
-        Load the existing snapshot for *prefix* and overlay new_snap.
-        Controls in new_snap replace their counterparts; others are kept.
-        """
-        if prefix is None:
-            prefix = DEFAULT_PREFIX
-            for ctrl_key in new_snap.controls:
-                p = _detect_prefix(ctrl_key)
-                if p != DEFAULT_PREFIX:
-                    prefix = p
-                    break
-
-        existing = cls.load_from_scene(prefix)
-        if existing is None:
-            new_snap.save_to_scene(prefix)
-            return new_snap
-
-        existing.controls.update(new_snap.controls)
-        existing.left_token  = new_snap.left_token
-        existing.right_token = new_snap.right_token
-        existing.mirror_axis = new_snap.mirror_axis
-        existing.save_to_scene(prefix)
-        return existing
-
-    @classmethod
-    def load_from_scene(cls, prefix=None):
-        """
-        Return a RigSnapshot for *prefix*, or None.
-
-        If prefix is None, returns the first available snapshot (backward
-        compat for code that hasn't been updated to pass a prefix).
-        """
-        store = cls._load_multi_store()
-        if not store:
-            return None
-
-        if prefix is not None:
-            data = store.get(prefix)
-            if data is None:
-                return None
-            try:
-                return cls.from_dict(data)
-            except Exception:
-                return None
-
-        # No prefix specified — return first available
-        for _pfx, data in store.items():
-            try:
-                return cls.from_dict(data)
-            except Exception:
-                continue
-        return None
-
-    # ------------------------------------------------------------------
-    # Multi-prefix management
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def list_prefixes(cls):
-        """Return a sorted list of all stored snapshot prefixes."""
-        store = cls._load_multi_store()
-        return sorted(store.keys())
-
-    @classmethod
-    def delete_prefix(cls, prefix):
-        """Remove the snapshot for *prefix* from the scene."""
-        store = cls._load_multi_store()
-        if prefix in store:
-            del store[prefix]
-            cls._save_multi_store(store)
-            om.MGlobal.displayInfo(
-                "[Mirror Controls] Deleted snapshot for prefix '{}'.".format(prefix)
-            )
-            return True
-        return False
-
-    @classmethod
-    def export_prefix(cls, prefix, filepath):
-        """Export the snapshot for *prefix* as a standalone JSON file."""
-        store = cls._load_multi_store()
-        data  = store.get(prefix)
-        if data is None:
-            om.MGlobal.displayWarning(
-                "[Mirror Controls] No snapshot found for prefix '{}'.".format(prefix)
-            )
-            return False
-        export_data = {"prefix": prefix, "snapshot": data}
-        with open(filepath, "w") as f:
-            json.dump(export_data, f, indent=2)
-        om.MGlobal.displayInfo(
-            "[Mirror Controls] Exported '{}' snapshot to: {}".format(prefix, filepath)
-        )
-        return True
-
-    @classmethod
-    def import_from_file(cls, filepath):
-        """
-        Import a JSON snapshot file and save it to the scene.
-
-        Returns (prefix, snapshot) on success, or (None, None) on failure.
-        """
-        try:
-            with open(filepath, "r") as f:
-                file_data = json.load(f)
-        except Exception as exc:
-            om.MGlobal.displayError(
-                "[Mirror Controls] Failed to read JSON: {}".format(exc)
-            )
-            return None, None
-
-        # Support both wrapped format {"prefix":..., "snapshot":...}
-        # and raw snapshot dict (for backward compat)
-        if "prefix" in file_data and "snapshot" in file_data:
-            prefix = file_data["prefix"]
-            snap_dict = file_data["snapshot"]
-        else:
-            snap_dict = file_data
-            prefix = DEFAULT_PREFIX
-            for ctrl_key in snap_dict.get("controls", {}):
-                p = _detect_prefix(ctrl_key)
-                if p != DEFAULT_PREFIX:
-                    prefix = p
-                    break
-
-        try:
-            snap = cls.from_dict(snap_dict)
-        except Exception as exc:
-            om.MGlobal.displayError(
-                "[Mirror Controls] Invalid snapshot data: {}".format(exc)
-            )
-            return None, None
-
-        snap.save_to_scene(prefix)
-        om.MGlobal.displayInfo(
-            "[Mirror Controls] Imported snapshot for '{}' ({} controls).".format(
-                prefix, len(snap.controls)
-            )
-        )
-        return prefix, snap
-
-    # ------------------------------------------------------------------
-    # Building a snapshot
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def build(cls, ctrl_list, left_token, right_token, mirror_axis="X"):
-        """
-        Sample ctrl_list at current pose (temporarily zero-ing rotations to read
-        clean world-space axis vectors), build pair assignments, and infer a
-        default mirror rule for every keyable attribute.
-
-        Parameters
-        ----------
-        ctrl_list    : list of str  – Maya control transform names
-        left_token   : str          – e.g. "lf"
-        right_token  : str          – e.g. "rt"
-        mirror_axis  : str          – "X", "Y", or "Z"
-        """
-        snap             = cls()
-        snap.left_token  = left_token
-        snap.right_token = right_token
-        snap.mirror_axis = mirror_axis
-
-        # 1. Classify each control as left / right / middle
-        classification = cls._classify(ctrl_list, left_token, right_token)
-
-        # 2. Sample world-space axis vectors (briefly zero each ctrl's rotation)
-        vector_data = cls._sample_axis_vectors(ctrl_list)
-
-        # 3. Build per-control records
-        for ctrl in ctrl_list:
-            side    = classification.get(ctrl, "middle")
-            partner = cls._find_partner(ctrl, left_token, right_token)
-            if partner and not cmds.objExists(partner):
-                partner = None
-
-            vd  = vector_data.get(ctrl, {})
-            pvd = vector_data.get(partner, {}) if partner else {}
-
-            dom  = cls._dominant_axes(vd)
-            pdom = cls._dominant_axes(pvd)
-
-            # Collect all keyable, unlocked, scalar attributes
-            attributes = {}
-            raw_attrs  = cmds.listAttr(ctrl, keyable=True, unlocked=True) or []
-            for attr in raw_attrs:
-                try:
-                    val = cmds.getAttr("{}.{}".format(ctrl, attr))
-                except Exception:
-                    continue
-                if not isinstance(val, (int, float)):
-                    continue
-                attr_type = cls._attr_type(attr)
-                rule      = cls._infer_rule(attr, attr_type, dom, pdom, mirror_axis)
-                attributes[attr] = {
-                    "type":          attr_type,
-                    "rule":          rule,
-                    "user_override": False,
-                }
-
-            snap.controls[ctrl] = {
-                "side":                  side,
-                "partner":               partner,
-                "dominant_axes":         dom,
-                "partner_dominant_axes": pdom,
-                "attributes":            attributes,
-            }
-
-        return snap
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _attr_type(attr):
-        al = attr.lower()
-        if "translate" in al:
-            return "translate"
-        if "rotate" in al:
-            return "rotate"
-        if "scale" in al:
-            return "scale"
-        return "custom"
-
-    @staticmethod
-    def _classify(ctrl_list, left_token, right_token):
-        result = {}
-        lt = left_token.lower()
-        rt = right_token.lower()
-        for ctrl in ctrl_list:
-            short = ctrl.split(":")[-1].lower()
-            if lt in short and rt not in short:
-                result[ctrl] = "left"
-            elif rt in short and lt not in short:
-                result[ctrl] = "right"
-            else:
-                result[ctrl] = "middle"
-        return result
-
-    @staticmethod
-    def _find_partner(ctrl, left_token, right_token):
-        """
-        Swap left/right token to get the mirror partner name.
-
-        Handles full DAG paths (parent|child) by stripping to the leaf node
-        name before doing the token swap, then returning a namespace-qualified
-        short name that Maya can resolve unambiguously.
-
-        Uses word-boundary-aware matching so that tokens like "rt" are only
-        replaced when they appear as delimited segments (bounded by '_', start,
-        or end of string), NOT when embedded inside words like "shirt" or
-        "upperteeth".
-        """
-        # Work on the leaf node only — discard any "|parent" prefix
-        leaf = ctrl.split("|")[-1]
-
-        if ":" in leaf:
-            ns, base = leaf.rsplit(":", 1)
-            ns_prefix = ns + ":"
-        else:
-            ns_prefix = ""
-            base = leaf
-
-        swapped = _swap_side_token(base, left_token, right_token)
-        if swapped is None:
-            return None
-        return ns_prefix + swapped
-
-    @staticmethod
-    def _sample_axis_vectors(ctrl_list):
-        """
-        Temporarily zero each control's rotation so the world matrix
-        gives us clean axis direction vectors, then restore.
-        """
-        # Save current rotation values
-        saved = {}
-        for ctrl in ctrl_list:
-            saved[ctrl] = {}
-            for ax in ["X", "Y", "Z"]:
-                attr = "{}.rotate{}".format(ctrl, ax)
-                try:
-                    if cmds.listAttr(attr, keyable=True, unlocked=True):
-                        saved[ctrl][ax] = cmds.getAttr(attr)
-                except Exception:
-                    pass
-
-        # Zero rotations (disable autokey temporarily)
-        auto_key = cmds.autoKeyframe(state=True, query=True)
-        if auto_key:
-            cmds.autoKeyframe(state=False)
-        for ctrl in ctrl_list:
-            for ax in saved[ctrl]:
-                try:
-                    cmds.setAttr("{}.rotate{}".format(ctrl, ax), 0)
-                except Exception:
-                    pass
-
-        # Read world matrix
-        vector_data = {}
-        for ctrl in ctrl_list:
-            try:
-                wm = cmds.xform(ctrl, matrix=True, worldSpace=True, query=True)
-                wm = [round(v, 4) for v in wm]
-                vector_data[ctrl] = {
-                    "x_axis": wm[0:3],
-                    "y_axis": wm[4:7],
-                    "z_axis": wm[8:11],
-                }
-            except Exception:
-                vector_data[ctrl] = {}
-
-        # Restore rotations
-        for ctrl in ctrl_list:
-            for ax, val in saved[ctrl].items():
-                try:
-                    cmds.setAttr("{}.rotate{}".format(ctrl, ax), val)
-                except Exception:
-                    pass
-        if auto_key:
-            cmds.autoKeyframe(state=True)
-
-        return vector_data
-
-    @staticmethod
-    def _dominant_axis_of(vector):
-        """Return the world axis label ("X", "-Y", etc.) that vector points most along."""
-        if not vector or all(v == 0 for v in vector):
-            return "X"
-        denom = sum(abs(v) for v in vector)
-        if denom == 0:
-            return "X"
-        pct   = [abs(v) / denom for v in vector]
-        idx   = pct.index(max(pct))
-        label = ["X", "Y", "Z"][idx]
-        return ("-" + label) if vector[idx] < 0 else label
-
-    @classmethod
-    def _dominant_axes(cls, vd):
-        """Return {"x": "X", "y": "Y", "z": "-Z"} style dict from vector_data entry."""
-        if not vd:
-            return {"x": "X", "y": "Y", "z": "Z"}
-        return {
-            "x": cls._dominant_axis_of(vd.get("x_axis", [1, 0, 0])),
-            "y": cls._dominant_axis_of(vd.get("y_axis", [0, 1, 0])),
-            "z": cls._dominant_axis_of(vd.get("z_axis", [0, 0, 1])),
-        }
-
-    @classmethod
-    def _infer_rule(cls, attr, attr_type, dom, pdom, mirror_axis):
-        """
-        Determine copy / negate / ignore for a single attribute by comparing the
-        control's dominant-axis orientation with its partner's.
-
-        Custom and scale channels always default to copy.
-        The logic mirrors the existing runtime heuristic so the default snapshot
-        rules match what the tool would have done without a snapshot.
-        """
-        if attr_type in ("custom", "scale"):
-            return RULE_COPY
-
-        al = attr.lower()
-
-        # Which local axis does this attribute act on?
-        if   al.endswith("x"):  chan = "X"
-        elif al.endswith("y"):  chan = "Y"
-        elif al.endswith("z"):  chan = "Z"
-        else:                   return RULE_COPY
-
-        x_dom     = dom.get("x", "X")
-        y_dom     = dom.get("y", "Y")
-        z_dom     = dom.get("z", "Z")
-        opp_x_dom = pdom.get("x", "X")
-        opp_y_dom = pdom.get("y", "Y")
-        opp_z_dom = pdom.get("z", "Z")
-
-        # Which *local* channel aligns most with the chosen world mirror axis?
-        def mirror_local(m_ax, xd, yd, zd):
-            if m_ax == xd or ("-" + m_ax) == xd:  return "X"
-            if m_ax == yd or ("-" + m_ax) == yd:  return "Y"
-            if m_ax == zd or ("-" + m_ax) == zd:  return "Z"
-            return m_ax
-
-        mirror_local_ax = mirror_local(mirror_axis, x_dom, y_dom, z_dom)
-        same_ori        = (x_dom == opp_x_dom and y_dom == opp_y_dom and z_dom == opp_z_dom)
-
-        if same_ori:
-            # Standard symmetric controls (same local-to-world mapping)
-            if attr_type == "translate":
-                return RULE_NEGATE if chan == mirror_local_ax else RULE_COPY
-            if attr_type == "rotate":
-                return RULE_COPY   if chan == mirror_local_ax else RULE_NEGATE
-
-        else:
-            # Controls whose local axes are differently oriented (e.g. wrist IK)
-            local_map     = {"X": x_dom,     "Y": y_dom,     "Z": z_dom}
-            opp_local_map = {"X": opp_x_dom, "Y": opp_y_dom, "Z": opp_z_dom}
-            ctrl_world    = local_map.get(chan, chan)
-            part_world    = opp_local_map.get(chan, chan)
-
-            def is_mirror_same(m_ax, a, b):
-                return (m_ax == a and m_ax == b) or \
-                       ("-" + m_ax == a and "-" + m_ax == b)
-
-            def is_same_not_mirror(m_ax, a, b):
-                same = (a == b)
-                not_mirror = (a != m_ax) and (a != "-" + m_ax)
-                return same and not_mirror
-
-            if attr_type == "translate":
-                if is_mirror_same(mirror_axis, ctrl_world, part_world):
-                    return RULE_NEGATE
-                if ctrl_world == part_world:
-                    return RULE_COPY if (chan == mirror_local_ax or chan == mirror_axis) else RULE_NEGATE
-                return RULE_NEGATE
-
-            if attr_type == "rotate":
-                if is_same_not_mirror(mirror_axis, ctrl_world, part_world):
-                    return RULE_NEGATE if (chan == mirror_local_ax or chan == mirror_axis) else RULE_COPY
-                return RULE_COPY
-
-        return RULE_COPY
-
-    # ------------------------------------------------------------------
-    # Convenience
-    # ------------------------------------------------------------------
-
-    def get_rule(self, ctrl, attr):
-        """
-        Return the stored rule for ctrl.attr, or None if not in snapshot.
-        None signals the caller to fall back to the runtime heuristic.
-        """
-        ctrl_data = self.controls.get(ctrl)
-        if ctrl_data is None:
-            return None
-        attr_data = ctrl_data.get("attributes", {}).get(attr)
-        if attr_data is None:
-            return None
-        return attr_data.get("rule", RULE_COPY)
-
-    def set_rule(self, ctrl, attr, rule, user_override=True):
-        """Update a rule (called by the editor)."""
-        if ctrl in self.controls:
-            attrs = self.controls[ctrl].setdefault("attributes", {})
-            if attr in attrs:
-                attrs[attr]["rule"]          = rule
-                attrs[attr]["user_override"] = user_override
-
-    # ------------------------------------------------------------------
-    # Manual pair helpers
-    # ------------------------------------------------------------------
-
-    def get_manual_partner(self, ctrl):
-        """
-        Return the manually-assigned mirror partner for ctrl, or None.
-        Checks both directions (src→prt and prt→src).
-        ctrl may be a full DAG path or a short/namespace-qualified name.
-        """
-        leaf = ctrl.split("|")[-1]
-        if leaf in self.manual_pairs:
-            return self.manual_pairs[leaf]
-        # Reverse lookup — partner points back to source
-        for src, prt in self.manual_pairs.items():
-            if prt == leaf:
-                return src
-        return None
-
-    def is_excluded(self, ctrl):
-        """Return True if this control should be skipped during mirroring."""
-        leaf = ctrl.split("|")[-1]
-        return leaf in self.excluded_controls
-
-    def add_manual_pair(self, source_leaf, partner_leaf):
-        self.manual_pairs[source_leaf] = partner_leaf
-
-    def remove_manual_pair(self, source_leaf):
-        self.manual_pairs.pop(source_leaf, None)
-        # Also remove if it appears as a value (reverse pair)
-        to_remove = [k for k, v in self.manual_pairs.items() if v == source_leaf]
-        for k in to_remove:
-            del self.manual_pairs[k]
-
-    def set_excluded(self, ctrl_leaf, excluded=True):
-        if excluded:
-            if ctrl_leaf not in self.excluded_controls:
-                self.excluded_controls.append(ctrl_leaf)
-        else:
-            if ctrl_leaf in self.excluded_controls:
-                self.excluded_controls.remove(ctrl_leaf)
-
-
-# ---------------------------------------------------------------------------
-# SnapshotEditorDialog
+# SnapshotEditorDialog — per-channel flip rule editor (Character Snapshot)
 # ---------------------------------------------------------------------------
 
 class SnapshotEditorDialog(QtWidgets.QDialog):
     """
-    Displays the snapshot's controls grouped into pairs and middle controls.
-    Every attribute row has a dropdown for its mirror rule (copy / negate / ignore).
-    Changes are written back to the in-memory snapshot immediately; the user
-    must click "Save to Scene" to persist them.
+    Channel flip-rule editor backed by the Character Snapshot.
+
+    Lists every control recorded in the rig's Character Snapshot (grouped
+    into mirror pairs and middle controls) with a per-attribute dropdown:
+
+        (auto: …)  — use the rule auto-detected from the rig's default pose
+                     at snapshot time, or the runtime axis heuristic when no
+                     rule was stored
+        copy       — always transfer the value as-is
+        negate     — always invert the sign
+        ignore     — never touch this channel
+
+    Choosing copy / negate / ignore stores a per-channel override inside the
+    Character Snapshot, so the correction is shared by every ATK tool that
+    reads the snapshot. Choosing the (auto…) entry removes the override.
+    Click "Save to Scene" to persist.
     """
 
-    HEADERS = ["Name", "Type", "Rule"]
+    HEADERS = ["Name", "Side", "Rule"]
 
-    def __init__(self, snapshot, re_snapshot_callback=None, parent=None):
+    def __init__(self, adapter, prefix=None, re_snapshot_callback=None, parent=None):
         super().__init__(parent or maya_main_window())
-        self.snapshot              = snapshot
-        self.re_snapshot_callback  = re_snapshot_callback   # callable () -> RigSnapshot | None
-        self._prefix               = None   # set by the main dialog after creation
-        self.setWindowTitle("Rig Snapshot Editor")
+        self.adapter              = adapter
+        self._prefix              = prefix
+        self.re_snapshot_callback = re_snapshot_callback   # callable () -> adapter | None
+        self.setWindowTitle("Channel Flip Rules  —  Mirror Controls")
+        self.setStyleSheet(DARK_STYLESHEET)
         self.resize(680, 560)
         self._build_ui()
         self._populate()
 
-    # ------------------------------------------------------------------
-    # UI construction
     # ------------------------------------------------------------------
 
     def _build_ui(self):
@@ -1254,7 +656,6 @@ class SnapshotEditorDialog(QtWidgets.QDialog):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
 
-        # --- Info bar ---
         self.info_label = QtWidgets.QLabel()
         self.info_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(self.info_label)
@@ -1264,9 +665,9 @@ class SnapshotEditorDialog(QtWidgets.QDialog):
         sep.setFrameShadow(QtWidgets.QFrame.Sunken)
         layout.addWidget(sep)
 
-        # --- Hint ---
         hint = QtWidgets.QLabel(
             "Rules are per-attribute.  "
+            "<b>(auto)</b> = rule detected from the default-pose snapshot  ·  "
             "<b>copy</b> = transfer value as-is  ·  "
             "<b>negate</b> = transfer negated value  ·  "
             "<b>ignore</b> = skip this attribute"
@@ -1274,7 +675,6 @@ class SnapshotEditorDialog(QtWidgets.QDialog):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
-        # --- Tree ---
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setColumnCount(3)
         self.tree.setHeaderLabels(self.HEADERS)
@@ -1284,20 +684,20 @@ class SnapshotEditorDialog(QtWidgets.QDialog):
         hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         hdr.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(2, QtWidgets.QHeaderView.Fixed)
-        self.tree.header().resizeSection(2, 90)
+        self.tree.header().resizeSection(2, 130)
         layout.addWidget(self.tree)
 
-        # --- Buttons ---
         btn_row = QtWidgets.QHBoxLayout()
         self.re_snap_btn = QtWidgets.QPushButton("↺  Re-Snapshot")
         self.re_snap_btn.setToolTip(
-            "Re-sample the rig with current token and axis settings,\n"
-            "replacing all rules (user overrides will be lost)."
+            "Re-sample the rig at its current pose, replacing the stored\n"
+            "default-pose values and auto-detected rules.\n"
+            "Manual pairs, exclusions and rule overrides are preserved."
         )
-        self.expand_btn  = QtWidgets.QPushButton("Expand All")
+        self.expand_btn   = QtWidgets.QPushButton("Expand All")
         self.collapse_btn = QtWidgets.QPushButton("Collapse All")
-        self.save_btn    = QtWidgets.QPushButton("Save to Scene")
-        self.close_btn   = QtWidgets.QPushButton("Close")
+        self.save_btn     = QtWidgets.QPushButton("Save to Scene")
+        self.close_btn    = QtWidgets.QPushButton("Close")
 
         btn_row.addWidget(self.re_snap_btn)
         btn_row.addWidget(self.expand_btn)
@@ -1314,56 +714,51 @@ class SnapshotEditorDialog(QtWidgets.QDialog):
         self.close_btn.clicked.connect(self.close)
 
     # ------------------------------------------------------------------
-    # Tree population
-    # ------------------------------------------------------------------
 
     def _populate(self):
         self.tree.clear()
-        snap = self.snapshot
+        controls = self.adapter.cs_controls()
 
-        # Update info label
-        n_ctrls = len(snap.controls)
-        n_pairs = sum(
-            1 for d in snap.controls.values()
-            if d.get("partner") and d.get("side") == "left"
-               and snap.controls.get(d["partner"]) is not None
-        )
+        n_ctrls = len(controls)
+        n_pairs = self.adapter.pair_count()
         self.info_label.setText(
             "<b>{} controls</b>  ·  <b>{} pairs</b>  ·  "
             "Mirror axis: <b>{}</b>  ·  "
             "Left token: <b>{}</b>  ·  Right token: <b>{}</b>".format(
-                n_ctrls, n_pairs,
-                snap.mirror_axis, snap.left_token, snap.right_token,
+                n_ctrls, n_pairs, self.adapter.mirror_axis,
+                self.adapter.left_token, self.adapter.right_token,
             )
         )
 
-        # --- Identify pairs ---
-        seen    = set()
-        pairs   = []     # list of (lf_ctrl, rt_ctrl)
-        middles = []
+        # Partner names are stored as namespace-qualified short names while
+        # the control keys are full DAG paths — resolve through leaf names.
+        leaf_to_key = {k.split("|")[-1]: k for k in controls}
 
-        for ctrl, data in snap.controls.items():
+        seen    = set()
+        pairs   = []
+        middles = []
+        for ctrl, data in controls.items():
             if ctrl in seen:
                 continue
-            side    = data.get("side",    "middle")
-            partner = data.get("partner", None)
-            if side == "left" and partner and partner in snap.controls:
-                pairs.append((ctrl, partner))
+            side        = data.get("side", "middle")
+            partner     = data.get("partner")
+            partner_key = leaf_to_key.get(partner.split("|")[-1]) if partner else None
+            if side == "left" and partner_key:
+                pairs.append((ctrl, partner_key))
                 seen.add(ctrl)
-                seen.add(partner)
-            elif side == "right" and partner and partner in snap.controls:
-                if partner not in seen:
-                    pairs.append((partner, ctrl))
+                seen.add(partner_key)
+            elif side == "right" and partner_key:
+                if partner_key not in seen:
+                    pairs.append((partner_key, ctrl))
                 seen.add(ctrl)
-                seen.add(partner)
+                seen.add(partner_key)
             else:
-                if ctrl not in seen:
-                    middles.append(ctrl)
-                    seen.add(ctrl)
+                middles.append(ctrl)
+                seen.add(ctrl)
 
-        # --- Paired Controls section ---
         if pairs:
-            section = self._make_section_header("Paired Controls ({} pairs)".format(len(pairs)))
+            section = self._make_section_header(
+                "Paired Controls ({} pairs)".format(len(pairs)))
             self.tree.addTopLevelItem(section)
             for lf, rt in sorted(pairs):
                 pair_item = self._make_pair_item(lf, rt)
@@ -1372,9 +767,9 @@ class SnapshotEditorDialog(QtWidgets.QDialog):
                 for i in range(pair_item.childCount()):
                     pair_item.child(i).setExpanded(False)
 
-        # --- Middle Controls section ---
         if middles:
-            section = self._make_section_header("Middle Controls ({})".format(len(middles)))
+            section = self._make_section_header(
+                "Middle Controls ({})".format(len(middles)))
             self.tree.addTopLevelItem(section)
             for ctrl in sorted(middles):
                 ctrl_item = self._make_ctrl_item(ctrl)
@@ -1393,8 +788,8 @@ class SnapshotEditorDialog(QtWidgets.QDialog):
         return item
 
     def _make_pair_item(self, lf, rt):
-        lf_short = lf.split(":")[-1]
-        rt_short = rt.split(":")[-1]
+        lf_short = lf.split("|")[-1].split(":")[-1]
+        rt_short = rt.split("|")[-1].split(":")[-1]
         pair_item = QtWidgets.QTreeWidgetItem(
             ["  {} ↔ {}".format(lf_short, rt_short), "", ""]
         )
@@ -1402,45 +797,46 @@ class SnapshotEditorDialog(QtWidgets.QDialog):
         font = pair_item.font(0)
         font.setItalic(True)
         pair_item.setFont(0, font)
-
-        for ctrl in [lf, rt]:
-            ctrl_item = self._make_ctrl_item(ctrl)
-            pair_item.addChild(ctrl_item)
-
+        for ctrl in (lf, rt):
+            pair_item.addChild(self._make_ctrl_item(ctrl))
         return pair_item
 
     def _make_ctrl_item(self, ctrl):
-        side       = self.snapshot.controls.get(ctrl, {}).get("side", "middle")
-        ctrl_item  = QtWidgets.QTreeWidgetItem([ctrl, side, ""])
+        controls  = self.adapter.cs_controls()
+        data      = controls.get(ctrl, {})
+        side      = data.get("side", "middle")
+        leaf      = ctrl.split("|")[-1]
+        ctrl_item = QtWidgets.QTreeWidgetItem([leaf, side, ""])
         ctrl_item.setFlags(QtCore.Qt.ItemIsEnabled)
         font = ctrl_item.font(0)
         font.setBold(True)
         ctrl_item.setFont(0, font)
 
-        attrs = self.snapshot.controls.get(ctrl, {}).get("attributes", {})
-        for attr_name in sorted(attrs.keys()):
-            attr_data  = attrs[attr_name]
-            attr_type  = attr_data.get("type",  "custom")
-            rule       = attr_data.get("rule",  RULE_COPY)
-            is_override = attr_data.get("user_override", False)
+        attrs = data.get("attributes", [])
+        attr_names = sorted(attrs.keys()) if isinstance(attrs, dict) else sorted(attrs)
+        for attr_name in attr_names:
+            auto_rule = self.adapter.get_auto_rule(ctrl, attr_name)
+            override  = self.adapter.get_override(ctrl, attr_name)
 
-            row = QtWidgets.QTreeWidgetItem([attr_name, attr_type, ""])
+            row = QtWidgets.QTreeWidgetItem([attr_name, "", ""])
             row.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
-            if is_override:
+            if override in RULES:
                 font = row.font(0)
                 font.setItalic(True)
                 row.setFont(0, font)
                 row.setToolTip(0, "User override")
             ctrl_item.addChild(row)
 
+            auto_label = "(auto: {})".format(auto_rule) if auto_rule in RULES \
+                         else "(auto: heuristic)"
             combo = QtWidgets.QComboBox()
+            combo.addItem(auto_label)
             combo.addItems(RULES)
-            combo.setCurrentText(rule)
-            # Colour-code for quick scanning
-            self._style_combo(combo, rule)
+            combo.setCurrentText(override if override in RULES else auto_label)
+            self._style_combo(combo, override if override in RULES else None)
             combo.currentTextChanged.connect(
-                lambda new_rule, c=ctrl, a=attr_name, cb=combo:
-                    self._on_rule_changed(c, a, new_rule, cb)
+                lambda new_text, c=ctrl, a=attr_name, cb=combo:
+                    self._on_rule_changed(c, a, new_text, cb)
             )
             self.tree.setItemWidget(row, 2, combo)
 
@@ -1448,826 +844,50 @@ class SnapshotEditorDialog(QtWidgets.QDialog):
 
     @staticmethod
     def _style_combo(combo, rule):
-        palette = combo.palette()
         if rule == RULE_NEGATE:
             combo.setStyleSheet("QComboBox { color: #e8a060; }")
         elif rule == RULE_IGNORE:
             combo.setStyleSheet("QComboBox { color: #888888; }")
+        elif rule == RULE_COPY:
+            combo.setStyleSheet("QComboBox { color: #d4d4d4; }")
         else:
-            combo.setStyleSheet("")
+            combo.setStyleSheet("QComboBox { color: #8a9a8a; }")
 
     # ------------------------------------------------------------------
-    # Slots
-    # ------------------------------------------------------------------
 
-    def _on_rule_changed(self, ctrl, attr, new_rule, combo):
-        self.snapshot.set_rule(ctrl, attr, new_rule, user_override=True)
-        self._style_combo(combo, new_rule)
-        # Mark the row label italic to indicate it's been overridden
-        ctrl_data = self.snapshot.controls.get(ctrl, {})
-        attrs     = ctrl_data.get("attributes", {})
-        if attr in attrs:
-            attrs[attr]["user_override"] = True
+    def _on_rule_changed(self, ctrl, attr, new_text, combo):
+        if new_text in RULES:
+            self.adapter.set_rule(ctrl, attr, new_text)
+            self._style_combo(combo, new_text)
+        else:
+            # "(auto: …)" selected — remove the override.
+            self.adapter.clear_rule(ctrl, attr)
+            self._style_combo(combo, None)
 
     def _on_re_snapshot(self):
         if not self.re_snapshot_callback:
             return
-        new_snap = self.re_snapshot_callback()
-        if new_snap:
-            self.snapshot = new_snap
+        new_adapter = self.re_snapshot_callback()
+        if new_adapter:
+            self.adapter = new_adapter
             self._populate()
 
     def _on_save(self):
-        self.snapshot.save_to_scene(self._prefix)
+        self.adapter._dirty = True   # force write even if only combos touched
+        self.adapter.save()
         pfx_label = self._prefix if self._prefix and self._prefix != DEFAULT_PREFIX else "(scene)"
         QtWidgets.QMessageBox.information(
-            self, "Saved", "Snapshot saved for '{}'.".format(pfx_label)
-        )
-
-    # ------------------------------------------------------------------
-    # Public
-    # ------------------------------------------------------------------
-
-    def update_snapshot(self, snapshot):
-        self.snapshot = snapshot
-        self._populate()
-
-
-# ---------------------------------------------------------------------------
-# ManualPairEditorDialog
-# ---------------------------------------------------------------------------
-
-class ManualPairEditorDialog(QtWidgets.QDialog):
-    """
-    Window for manually assigning mirror partners to controls that the
-    token-swap heuristic cannot resolve (missing partner, wrong name, etc.).
-
-    Smart display
-    -------------
-    Controls that auto-pair correctly are NEVER shown unless the user
-    switches to "All" view — they don't need attention so they don't
-    clutter the table.  Only controls with problems are shown by default.
-
-    Workflow
-    --------
-    1.  Select a control in the Maya viewport.
-    2.  Click  ⊕ Src  to assign it as the SOURCE for a row, or
-        click  ⊕ Prt  to assign it as the PARTNER.
-    3.  Alternatively type the namespace:nodeName directly in the field.
-    4.  Click "Exclude" to permanently skip a control during mirroring.
-    5.  Click "Save to Scene" — pairs are written into the snapshot node.
-
-    Status badges
-    -------------
-      ✗  red    Unpaired  — no partner found by any method
-      ★  blue   Manual    — user-defined override pair
-      ✔  green  Auto OK   — token-swap found a valid partner (hidden by default)
-      ○  grey   Excluded  — skipped during mirror
-    """
-
-    STATUS_UNPAIRED = "unpaired"
-    STATUS_MANUAL   = "manual"
-    STATUS_AUTO_OK  = "auto_ok"
-    STATUS_EXCLUDED = "excluded"
-
-    COL_STATUS  = 0
-    COL_SOURCE  = 1
-    COL_ARROW   = 2
-    COL_PARTNER = 3
-    COL_PICK    = 4
-    COL_EXCL    = 5
-
-    # Background colours per status (subtle, theme-friendly)
-    _BG = {
-        STATUS_UNPAIRED: QtGui.QColor(80,  30,  30),
-        STATUS_MANUAL:   QtGui.QColor(30,  50,  80),
-        STATUS_AUTO_OK:  QtGui.QColor(30,  55,  30),
-        STATUS_EXCLUDED: QtGui.QColor(45,  45,  45),
-    }
-
-    def __init__(self, main_dialog, prefix=None, parent=None):
-        super().__init__(parent or maya_main_window())
-        self.main_dialog = main_dialog
-        self._prefix     = prefix
-        self._snapshot   = RigSnapshot.load_from_scene(prefix)
-        self._rows_data  = []
-        self.setWindowTitle("Manual Pair Editor  —  Mirror Controls")
-        self.setMinimumWidth(860)
-        self.resize(960, 620)
-        self._build_ui()
-        self._refresh()
-
-    # ------------------------------------------------------------------
-    # UI
-    # ------------------------------------------------------------------
-
-    def _build_ui(self):
-        root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(6)
-
-        # --- Info bar ---
-        self.info_label = QtWidgets.QLabel()
-        self.info_label.setWordWrap(True)
-        root.addWidget(self.info_label)
-
-        # --- How-to hint ---
-        hint = QtWidgets.QLabel(
-            "<i>Select a control in the Maya viewport, then click "
-            "<b>⊕ Src</b> or <b>⊕ Prt</b> to assign it to a row.  "
-            "Or type a <tt>namespace:nodeName</tt> directly in the field.</i>"
-        )
-        hint.setWordWrap(True)
-        root.addWidget(hint)
-
-        sep = QtWidgets.QFrame()
-        sep.setFrameShape(QtWidgets.QFrame.HLine)
-        sep.setFrameShadow(QtWidgets.QFrame.Sunken)
-        root.addWidget(sep)
-
-        # --- Filter bar ---
-        flt_row = QtWidgets.QHBoxLayout()
-        flt_row.addWidget(QtWidgets.QLabel("View:"))
-        self._flt_issues   = QtWidgets.QRadioButton("Needs Attention")
-        self._flt_issues.setChecked(True)
-        self._flt_all      = QtWidgets.QRadioButton("All Controls")
-        self._flt_manual   = QtWidgets.QRadioButton("Manual Overrides")
-        self._flt_excluded = QtWidgets.QRadioButton("Excluded")
-        for rb in (self._flt_issues, self._flt_all, self._flt_manual, self._flt_excluded):
-            flt_row.addWidget(rb)
-        flt_row.addStretch()
-
-        self._auto_select_chk = QtWidgets.QCheckBox("Select in viewport on click")
-        self._auto_select_chk.setChecked(True)
-        self._auto_select_chk.setToolTip(
-            "When checked, clicking a row automatically selects\n"
-            "the source control in the Maya viewport so you can\n"
-            "see which control it is before assigning a partner."
-        )
-        flt_row.addWidget(self._auto_select_chk)
-        root.addLayout(flt_row)
-
-        # --- Table ---
-        self.table = QtWidgets.QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(
-            ["", "Source Control", "", "Mirror Partner", "Pick", ""]
-        )
-        hdr = self.table.horizontalHeader()
-        hdr.setSectionResizeMode(self.COL_STATUS,  QtWidgets.QHeaderView.Fixed)
-        hdr.setSectionResizeMode(self.COL_SOURCE,  QtWidgets.QHeaderView.Stretch)
-        hdr.setSectionResizeMode(self.COL_ARROW,   QtWidgets.QHeaderView.Fixed)
-        hdr.setSectionResizeMode(self.COL_PARTNER, QtWidgets.QHeaderView.Stretch)
-        hdr.setSectionResizeMode(self.COL_PICK,    QtWidgets.QHeaderView.Fixed)
-        hdr.setSectionResizeMode(self.COL_EXCL,    QtWidgets.QHeaderView.Fixed)
-        self.table.setColumnWidth(self.COL_STATUS, 28)
-        self.table.setColumnWidth(self.COL_ARROW,  22)
-        self.table.setColumnWidth(self.COL_PICK,   130)
-        self.table.setColumnWidth(self.COL_EXCL,   80)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.table.setAlternatingRowColors(False)   # we control bg per-row
-        root.addWidget(self.table)
-
-        # --- Summary ---
-        self.summary_label = QtWidgets.QLabel()
-        root.addWidget(self.summary_label)
-
-        # --- Buttons ---
-        btn_row = QtWidgets.QHBoxLayout()
-        self.refresh_btn      = QtWidgets.QPushButton("↺  Refresh")
-        self.clear_manual_btn = QtWidgets.QPushButton("Clear All Manual Pairs")
-        self.save_btn         = QtWidgets.QPushButton("Save to Scene")
-        self.close_btn        = QtWidgets.QPushButton("Close")
-        self.save_btn.setDefault(True)
-        btn_row.addWidget(self.refresh_btn)
-        btn_row.addWidget(self.clear_manual_btn)
-        btn_row.addStretch()
-        btn_row.addWidget(self.save_btn)
-        btn_row.addWidget(self.close_btn)
-        root.addLayout(btn_row)
-
-        # Connections
-        self._flt_issues.toggled.connect(self._apply_filter)
-        self._flt_all.toggled.connect(self._apply_filter)
-        self._flt_manual.toggled.connect(self._apply_filter)
-        self._flt_excluded.toggled.connect(self._apply_filter)
-        self.refresh_btn.clicked.connect(self._on_refresh)
-        self.clear_manual_btn.clicked.connect(self._on_clear_manual)
-        self.save_btn.clicked.connect(self._on_save)
-        self.close_btn.clicked.connect(self.close)
-        self.table.currentItemChanged.connect(self._on_row_selected)
-
-    # ------------------------------------------------------------------
-    # Data
-    # ------------------------------------------------------------------
-
-    def _leaf(self, ctrl):
-        return ctrl.split("|")[-1]
-
-    def _refresh(self):
-        """Re-scan scene controls and rebuild rows_data from scratch."""
-        self._snapshot = RigSnapshot.load_from_scene(self._prefix) or RigSnapshot()
-
-        left_token  = self.main_dialog.get_left_name()
-        right_token = self.main_dialog.get_right_name()
-
-        manual_pairs      = dict(self._snapshot.manual_pairs)
-        excluded_controls = list(self._snapshot.excluded_controls)
-
-        # Only show controls belonging to this prefix's character rig.
-        if self._prefix:
-            all_ctrls = self.main_dialog._get_controls_for_prefix(self._prefix)
-        else:
-            all_ctrls = self.main_dialog._get_all_nurbs_controls()
-
-        rows = []
-        seen = set()   # leaves already accounted for
-
-        for ctrl in all_ctrls:
-            leaf = self._leaf(ctrl)
-            if leaf in seen:
-                continue
-
-            # Excluded
-            if leaf in excluded_controls:
-                rows.append({
-                    "status":      self.STATUS_EXCLUDED,
-                    "source":      leaf,
-                    "partner":     "",
-                    "source_full": ctrl,
-                    "editable":    False,
-                })
-                seen.add(leaf)
-                continue
-
-            # Manual pair
-            if leaf in manual_pairs:
-                partner_leaf = manual_pairs[leaf]
-                rows.append({
-                    "status":      self.STATUS_MANUAL,
-                    "source":      leaf,
-                    "partner":     partner_leaf,
-                    "source_full": ctrl,
-                    "editable":    True,
-                })
-                seen.add(leaf)
-                seen.add(partner_leaf)
-                continue
-
-            # Also check if this leaf is the partner in an existing manual pair
-            if leaf in manual_pairs.values():
-                seen.add(leaf)
-                continue
-
-            # Auto-pair
-            auto_partner = self.main_dialog.get_partner(
-                ctrl, left_token, right_token, snapshot=self._snapshot
-            )
-            if auto_partner and cmds.objExists(auto_partner):
-                auto_leaf = self._leaf(auto_partner)
-                rows.append({
-                    "status":      self.STATUS_AUTO_OK,
-                    "source":      leaf,
-                    "partner":     auto_leaf,
-                    "source_full": ctrl,
-                    "editable":    False,
-                })
-                seen.add(leaf)
-                seen.add(auto_leaf)
-            else:
-                # Only flag as unpaired if the control actually has a side token —
-                # centre controls (cn, spine, chest, jaw, etc.) don't have a mirror
-                # partner by design and should never appear in this editor.
-                base_name = leaf.split(":")[-1].lower()
-                has_side_token = (
-                    left_token.lower()  in base_name or
-                    right_token.lower() in base_name
-                )
-                if has_side_token:
-                    rows.append({
-                        "status":      self.STATUS_UNPAIRED,
-                        "source":      leaf,
-                        "partner":     "",
-                        "source_full": ctrl,
-                        "editable":    True,
-                    })
-                # Controls without a side token are silently skipped — they are
-                # centre/middle controls that don't mirror and need no action.
-                seen.add(leaf)
-
-        self._rows_data = rows
-
-        # Build info label
-        n_unpaired = sum(1 for r in rows if r["status"] == self.STATUS_UNPAIRED)
-        n_manual   = sum(1 for r in rows if r["status"] == self.STATUS_MANUAL)
-        n_auto     = sum(1 for r in rows if r["status"] == self.STATUS_AUTO_OK)
-        n_excl     = sum(1 for r in rows if r["status"] == self.STATUS_EXCLUDED)
-
-        if n_unpaired:
-            self.info_label.setText(
-                "<span style='color:#e06060;'><b>{} control{} need manual pairing.</b></span>  "
-                "Auto-matched: {}  ·  Manual overrides: {}  ·  Excluded: {}".format(
-                    n_unpaired, "s" if n_unpaired != 1 else "",
-                    n_auto, n_manual, n_excl
-                )
-            )
-        else:
-            self.info_label.setText(
-                "<span style='color:#60c060;'><b>All controls are paired ✔</b></span>  "
-                "Auto-matched: {}  ·  Manual overrides: {}  ·  Excluded: {}".format(
-                    n_auto, n_manual, n_excl
-                )
-            )
-
-        self._apply_filter()
-
-    # ------------------------------------------------------------------
-    # Filter + table rendering
-    # ------------------------------------------------------------------
-
-    def _visible_statuses(self):
-        if self._flt_issues.isChecked():
-            return {self.STATUS_UNPAIRED, self.STATUS_MANUAL}
-        if self._flt_manual.isChecked():
-            return {self.STATUS_MANUAL}
-        if self._flt_excluded.isChecked():
-            return {self.STATUS_EXCLUDED}
-        return {self.STATUS_UNPAIRED, self.STATUS_MANUAL,
-                self.STATUS_AUTO_OK, self.STATUS_EXCLUDED}
-
-    def _apply_filter(self):
-        visible = self._visible_statuses()
-        self.table.setRowCount(0)
-        for rd in self._rows_data:
-            if rd["status"] in visible:
-                self._insert_row(rd)
-        n = self.table.rowCount()
-        self.summary_label.setText(
-            "Showing {} row{}.".format(n, "s" if n != 1 else "")
-        )
-
-    def _insert_row(self, rd):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        self.table.setRowHeight(row, 30)
-
-        status = rd["status"]
-        bg     = self._BG.get(status, QtGui.QColor(50, 50, 50))
-
-        # Helper: create a plain item with the row background
-        def _item(text, align=QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, editable=False):
-            it = QtWidgets.QTableWidgetItem(text)
-            it.setTextAlignment(align)
-            it.setBackground(bg)
-            if not editable:
-                it.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
-            return it
-
-        # Col 0 — status badge
-        badge_map = {
-            self.STATUS_UNPAIRED: ("✗", "#e06060"),
-            self.STATUS_MANUAL:   ("★", "#6090e0"),
-            self.STATUS_AUTO_OK:  ("✔", "#60c060"),
-            self.STATUS_EXCLUDED: ("○", "#888888"),
-        }
-        badge_txt, badge_color = badge_map.get(status, ("?", "#ffffff"))
-        badge_item = _item(badge_txt, QtCore.Qt.AlignCenter)
-        badge_item.setForeground(QtGui.QColor(badge_color))
-        badge_item.setData(QtCore.Qt.UserRole, rd)   # stash row dict here
-        badge_item.setToolTip({
-            self.STATUS_UNPAIRED: "Unpaired — no partner found automatically",
-            self.STATUS_MANUAL:   "Manual override pair",
-            self.STATUS_AUTO_OK:  "Auto-matched — no action needed",
-            self.STATUS_EXCLUDED: "Excluded — skipped during mirror",
-        }.get(status, ""))
-        self.table.setItem(row, self.COL_STATUS, badge_item)
-
-        # Col 1 — source (always read-only display; Pick Src updates the underlying rd)
-        src_item = _item(rd["source"])
-        src_item.setToolTip(rd.get("source_full", rd["source"]))
-        self.table.setItem(row, self.COL_SOURCE, src_item)
-
-        # Col 2 — arrow
-        arr_item = _item("↔", QtCore.Qt.AlignCenter)
-        self.table.setItem(row, self.COL_ARROW, arr_item)
-
-        # Col 3 — partner field
-        if rd["editable"]:
-            le = QtWidgets.QLineEdit(rd["partner"])
-            le.setPlaceholderText("Select in Maya → click ⊕ Prt  (or type name)")
-            le.setStyleSheet("background: #2a3a4a; border: 1px solid #4a6a8a;")
-            le.textChanged.connect(lambda txt, r=rd: r.update({"partner": txt}))
-            self.table.setCellWidget(row, self.COL_PARTNER, le)
-        else:
-            prt_item = _item(rd["partner"])
-            if status == self.STATUS_EXCLUDED:
-                prt_item.setForeground(QtGui.QColor("#666"))
-            self.table.setItem(row, self.COL_PARTNER, prt_item)
-
-        # Col 4 — pick buttons (only for editable rows)
-        if rd["editable"]:
-            pick_w   = QtWidgets.QWidget()
-            pick_lay = QtWidgets.QHBoxLayout(pick_w)
-            pick_lay.setContentsMargins(2, 2, 2, 2)
-            pick_lay.setSpacing(3)
-
-            btn_src = QtWidgets.QPushButton("⊕ Src")
-            btn_src.setFixedHeight(22)
-            btn_src.setToolTip(
-                "Select the SOURCE control in the Maya viewport,\n"
-                "then click this button to populate the Source field."
-            )
-            btn_prt = QtWidgets.QPushButton("⊕ Prt")
-            btn_prt.setFixedHeight(22)
-            btn_prt.setToolTip(
-                "Select the PARTNER control in the Maya viewport,\n"
-                "then click this button to populate the Partner field."
-            )
-            pick_lay.addWidget(btn_src)
-            pick_lay.addWidget(btn_prt)
-
-            # Capture row index at connection time via the badge item reference
-            btn_src.clicked.connect(
-                lambda _chk=False, r=row: self._pick_from_selection(r, pick_source=True)
-            )
-            btn_prt.clicked.connect(
-                lambda _chk=False, r=row: self._pick_from_selection(r, pick_source=False)
-            )
-            self.table.setCellWidget(row, self.COL_PICK, pick_w)
-
-        # Col 5 — Exclude / Un-exclude button
-        excl_w   = QtWidgets.QWidget()
-        excl_lay = QtWidgets.QHBoxLayout(excl_w)
-        excl_lay.setContentsMargins(2, 2, 2, 2)
-        if status == self.STATUS_EXCLUDED:
-            btn_unex = QtWidgets.QPushButton("Un-Excl")
-            btn_unex.setFixedHeight(22)
-            btn_unex.setToolTip("Remove from exclusion list")
-            btn_unex.clicked.connect(
-                lambda _chk=False, leaf=rd["source"]: self._toggle_excluded(leaf, False)
-            )
-            excl_lay.addWidget(btn_unex)
-        else:
-            btn_excl = QtWidgets.QPushButton("Exclude")
-            btn_excl.setFixedHeight(22)
-            btn_excl.setToolTip(
-                "Permanently skip this control during mirror operations.\n"
-                "Useful for rig-internal controls, duplicate offset nodes, etc."
-            )
-            btn_excl.clicked.connect(
-                lambda _chk=False, leaf=rd["source"]: self._toggle_excluded(leaf, True)
-            )
-            excl_lay.addWidget(btn_excl)
-        self.table.setCellWidget(row, self.COL_EXCL, excl_w)
-
-    # ------------------------------------------------------------------
-    # Interaction
-    # ------------------------------------------------------------------
-
-    def _on_row_selected(self, current, previous):
-        """
-        Called whenever the active table row changes.
-        If 'Select in viewport' is checked, select the source control in Maya
-        so the user can see exactly which control they are looking at.
-        Also tries to select the partner control at the same time when one is
-        already assigned — both nodes are selected so the user can frame them
-        together in the viewport with 'F'.
-        """
-        if not self._auto_select_chk.isChecked():
-            return
-        if current is None:
-            return
-
-        # Retrieve the row data from the badge item in column 0
-        row       = current.row()
-        badge_item = self.table.item(row, self.COL_STATUS)
-        if badge_item is None:
-            return
-        rd = badge_item.data(QtCore.Qt.UserRole)
-        if rd is None:
-            return
-
-        to_select = []
-
-        # Source — prefer full DAG path stored in source_full, fall back to leaf
-        source_full = rd.get("source_full", rd.get("source", ""))
-        if source_full and cmds.objExists(source_full):
-            to_select.append(source_full)
-        elif rd.get("source") and cmds.objExists(rd["source"]):
-            to_select.append(rd["source"])
-
-        # Partner — select it too if it's already set and exists
-        partner = rd.get("partner", "").strip()
-        if partner and cmds.objExists(partner):
-            to_select.append(partner)
-
-        if to_select:
-            cmds.select(to_select, replace=True)
-            om.MGlobal.displayInfo(
-                "[ManualPairEditor] Selected: {}".format(
-                    "  +  ".join(n.split("|")[-1] for n in to_select)
-                )
-            )
-
-    def _pick_from_selection(self, table_row, pick_source):
-        """Read current Maya selection and populate Source or Partner for table_row."""
-        sel = cmds.ls(selection=True, long=False) or []
-        if not sel:
-            om.MGlobal.displayWarning(
-                "[ManualPairEditor] Nothing selected in Maya. "
-                "Select a control in the viewport first."
-            )
-            return
-        # Use first selected, strip any DAG prefix
-        picked = sel[0].split("|")[-1]
-
-        badge_item = self.table.item(table_row, self.COL_STATUS)
-        if badge_item is None:
-            return
-        rd = badge_item.data(QtCore.Qt.UserRole)
-        if rd is None:
-            return
-
-        if pick_source:
-            rd["source"] = picked
-            src_item = self.table.item(table_row, self.COL_SOURCE)
-            if src_item:
-                src_item.setText(picked)
-        else:
-            rd["partner"] = picked
-            widget = self.table.cellWidget(table_row, self.COL_PARTNER)
-            if isinstance(widget, QtWidgets.QLineEdit):
-                widget.setText(picked)
-
-        om.MGlobal.displayInfo(
-            "[ManualPairEditor] Assigned '{}' as {}.".format(
-                picked, "Source" if pick_source else "Partner"
-            )
-        )
-
-    def _toggle_excluded(self, leaf, exclude):
-        """
-        Add/remove a control from the exclusion list and refresh.
-
-        IMPORTANT: pending table edits (typed-but-not-yet-saved pairs) are
-        committed to the snapshot BEFORE saving so that clicking Exclude does
-        not discard unsaved manual pair entries from other rows.
-        """
-        # Commit any pending table edits first — this is the bug fix.
-        self._collect_pending_edits()
-
-        self._snapshot.set_excluded(leaf, exclude)
-        # Also remove from manual pairs if excluding
-        if exclude:
-            self._snapshot.remove_manual_pair(leaf)
-        self._snapshot.save_to_scene(self._prefix)
-        self._refresh()
-
-    # ------------------------------------------------------------------
-    # Save / refresh
-    # ------------------------------------------------------------------
-
-    def _collect_pending_edits(self):
-        """
-        Read every editable row's current source/partner values from the
-        live table widgets and commit them into self._snapshot.manual_pairs.
-
-        This must be called before any save_to_scene() call so that edits
-        typed into QLineEdit partner fields are not lost when the snapshot
-        is written and the table is subsequently refreshed.
-
-        IMPORTANT: partner values are read directly from the QLineEdit cell
-        widgets — NOT from the rd dict stored in UserRole data.  PySide6's
-        QTableWidgetItem.data() can return a detached copy of the original
-        dict, so the textChanged lambda that updates the captured rd object
-        may not be visible when reading back through data().
-        """
-        new_manual = {}
-        visible_sources = set()
-
-        for row in range(self.table.rowCount()):
-            badge_item = self.table.item(row, self.COL_STATUS)
-            if badge_item is None:
-                continue
-            rd = badge_item.data(QtCore.Qt.UserRole)
-            if rd is None or not rd.get("editable"):
-                continue
-
-            source = rd.get("source", "").strip()
-            if not source:
-                continue
-
-            # Read partner directly from the live QLineEdit widget —
-            # this is the authoritative value, not rd["partner"].
-            partner = ""
-            widget = self.table.cellWidget(row, self.COL_PARTNER)
-            if isinstance(widget, QtWidgets.QLineEdit):
-                partner = widget.text().strip()
-            else:
-                # Fallback for non-widget rows (shouldn't happen for editable)
-                partner = rd.get("partner", "").strip()
-
-            visible_sources.add(source)
-            if partner:
-                new_manual[source] = partner
-            # Blank partner → intentionally removing that pair; don't write it
-
-        # Remove stale entries for sources visible in this view, then apply fresh ones
-        for src in list(self._snapshot.manual_pairs.keys()):
-            if src in visible_sources:
-                del self._snapshot.manual_pairs[src]
-        self._snapshot.manual_pairs.update(new_manual)
-
-    def _on_save(self):
-        """Collect all editable rows and save manual pairs to snapshot."""
-        self._collect_pending_edits()
-        self._snapshot.save_to_scene(self._prefix)
-
-        n = len(self._snapshot.manual_pairs)
-        QtWidgets.QMessageBox.information(
             self, "Saved",
-            "{} manual pair{} saved to scene.".format(
-                n, "s" if n != 1 else "",
-            )
-        )
-        self._refresh()
-
-    def _on_refresh(self):
-        self._snapshot = RigSnapshot.load_from_scene(self._prefix) or RigSnapshot()
-        self._refresh()
-
-    def _on_clear_manual(self):
-        result = QtWidgets.QMessageBox.question(
-            self, "Clear Manual Pairs",
-            "Remove ALL manual pair assignments?\n"
-            "(Exclusions are not affected.  Auto-matched pairs still work.)",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-        )
-        if result == QtWidgets.QMessageBox.Yes:
-            self._snapshot.manual_pairs.clear()
-            self._snapshot.save_to_scene(self._prefix)
-            self._refresh()
-
-
-# ---------------------------------------------------------------------------
-# SnapshotManagerDialog
-# ---------------------------------------------------------------------------
-
-class SnapshotManagerDialog(QtWidgets.QDialog):
-    """
-    Manage per-character snapshots: view stored prefixes, export to JSON,
-    import from JSON, or delete individual character snapshots.
-    """
-
-    prefixes_changed = QtCore.Signal()   # emitted after any add/delete/import
-
-    def __init__(self, parent=None):
-        super().__init__(parent or maya_main_window())
-        self.setWindowTitle("Snapshot Manager  —  Mirror Controls")
-        self.setMinimumWidth(520)
-        self.resize(560, 380)
-        self.setStyleSheet(DARK_STYLESHEET)
-        self._build_ui()
-        self._refresh_list()
-
-    def _build_ui(self):
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-
-        info = QtWidgets.QLabel(
-            "<b>Stored Character Snapshots</b><br>"
-            "<span style='color:#999;font-size:11px;'>"
-            "Each character rig is stored under its namespace prefix.  "
-            "Export to share with other scenes, or delete to clean up.</span>"
-        )
-        info.setWordWrap(True)
-        layout.addWidget(info)
-
-        # --- List ---
-        self.list_widget = QtWidgets.QListWidget()
-        self.list_widget.setAlternatingRowColors(True)
-        self.list_widget.setStyleSheet(
-            "QListWidget { background: #333; border: 1px solid #555; border-radius: 4px; }"
-            "QListWidget::item { padding: 6px 10px; color: #d4d4d4; }"
-            "QListWidget::item:selected { background: #4a90d9; color: #fff; }"
-            "QListWidget::item:alternate { background: #383838; }"
-        )
-        layout.addWidget(self.list_widget)
-
-        # --- Buttons ---
-        btn_row = QtWidgets.QHBoxLayout()
-        btn_row.setSpacing(6)
-
-        self.export_btn = QtWidgets.QPushButton("📤  Export JSON")
-        self.export_btn.setToolTip("Export the selected character's snapshot\nto a .json file for use in other scenes.")
-        self.import_btn = QtWidgets.QPushButton("📥  Import JSON")
-        self.import_btn.setToolTip("Import a snapshot from a .json file.\nThe character prefix is read from the file.")
-        self.delete_btn = QtWidgets.QPushButton("🗑  Delete")
-        self.delete_btn.setToolTip("Remove the selected character's snapshot\nfrom this scene.")
-        self.delete_btn.setStyleSheet(
-            "QPushButton { color: #e08080; } QPushButton:hover { background: #4a2020; }"
+            "Channel rules saved to the Character Snapshot for '{}'.".format(pfx_label)
         )
 
-        btn_row.addWidget(self.export_btn)
-        btn_row.addWidget(self.import_btn)
-        btn_row.addStretch()
-        btn_row.addWidget(self.delete_btn)
-        layout.addLayout(btn_row)
+    # ------------------------------------------------------------------
 
-        # --- Close ---
-        close_row = QtWidgets.QHBoxLayout()
-        close_row.addStretch()
-        close_btn = QtWidgets.QPushButton("Close")
-        close_btn.clicked.connect(self.close)
-        close_row.addWidget(close_btn)
-        layout.addLayout(close_row)
-
-        # Connections
-        self.export_btn.clicked.connect(self._on_export)
-        self.import_btn.clicked.connect(self._on_import)
-        self.delete_btn.clicked.connect(self._on_delete)
-
-    def _refresh_list(self):
-        self.list_widget.clear()
-        prefixes = RigSnapshot.list_prefixes()
-        for pfx in prefixes:
-            snap = RigSnapshot.load_from_scene(pfx)
-            n_ctrls = len(snap.controls) if snap else 0
-            label = pfx if pfx != DEFAULT_PREFIX else "(no namespace)"
-            item = QtWidgets.QListWidgetItem(
-                "{}   —   {} controls".format(label, n_ctrls)
-            )
-            item.setData(QtCore.Qt.UserRole, pfx)
-            self.list_widget.addItem(item)
-
-        if not prefixes:
-            item = QtWidgets.QListWidgetItem("  No snapshots stored yet")
-            item.setFlags(QtCore.Qt.NoItemFlags)
-            self.list_widget.addItem(item)
-
-    def _selected_prefix(self):
-        item = self.list_widget.currentItem()
-        if item is None:
-            return None
-        return item.data(QtCore.Qt.UserRole)
-
-    def _on_export(self):
-        pfx = self._selected_prefix()
-        if pfx is None:
-            QtWidgets.QMessageBox.warning(
-                self, "No Selection", "Select a character from the list to export."
-            )
-            return
-        safe_name = pfx.replace(":", "_") if pfx != DEFAULT_PREFIX else "scene_snapshot"
-        filepath, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Export Snapshot — {}".format(pfx),
-            safe_name + ".json",
-            "JSON Files (*.json);;All Files (*)"
-        )
-        if filepath:
-            RigSnapshot.export_prefix(pfx, filepath)
-            QtWidgets.QMessageBox.information(
-                self, "Exported",
-                "Snapshot for '{}' exported to:\n{}".format(pfx, filepath)
-            )
-
-    def _on_import(self):
-        filepath, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Import Snapshot",
-            "", "JSON Files (*.json);;All Files (*)"
-        )
-        if not filepath:
-            return
-        prefix, snap = RigSnapshot.import_from_file(filepath)
+    def update_adapter(self, adapter, prefix=None):
+        self.adapter = adapter
         if prefix is not None:
-            self._refresh_list()
-            self.prefixes_changed.emit()
-            QtWidgets.QMessageBox.information(
-                self, "Imported",
-                "Snapshot for '{}' imported ({} controls).".format(
-                    prefix, len(snap.controls)
-                )
-            )
-
-    def _on_delete(self):
-        pfx = self._selected_prefix()
-        if pfx is None:
-            QtWidgets.QMessageBox.warning(
-                self, "No Selection", "Select a character from the list to delete."
-            )
-            return
-        result = QtWidgets.QMessageBox.question(
-            self, "Delete Snapshot",
-            "Delete the snapshot for '{}'?\n\n"
-            "This cannot be undone.  Consider exporting first.".format(pfx),
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-        )
-        if result == QtWidgets.QMessageBox.Yes:
-            RigSnapshot.delete_prefix(pfx)
-            self._refresh_list()
-            self.prefixes_changed.emit()
+            self._prefix = prefix
+        self._populate()
 
 
 # ---------------------------------------------------------------------------
@@ -2276,10 +896,9 @@ class SnapshotManagerDialog(QtWidgets.QDialog):
 
 class MirrorControls(QtWidgets.QDialog):
 
-    dlg_instance             = None
-    snapshot_editor_instance = None
+    dlg_instance                = None
+    snapshot_editor_instance    = None
     manual_pair_editor_instance = None
-    snapshot_manager_instance = None
 
     @classmethod
     def show_dialog(cls):
@@ -2291,9 +910,11 @@ class MirrorControls(QtWidgets.QDialog):
             cls.dlg_instance.raise_()
             cls.dlg_instance.activateWindow()
 
-    def __init__(self, parent=maya_main_window()):
-        super().__init__(parent)
-        self.setWindowTitle("Mirror Controls  v2.3.1")
+    def __init__(self, parent=None):
+        # Resolve the Maya main window lazily — evaluating it in the default
+        # argument runs at import time and crashes when the UI isn't up yet.
+        super().__init__(parent or maya_main_window())
+        self.setWindowTitle("Mirror Controls  v2.3.2")
         flags = self.windowFlags()
         flags ^= QtCore.Qt.WindowMinimizeButtonHint
         flags ^= QtCore.Qt.WindowMaximizeButtonHint
@@ -2308,6 +929,9 @@ class MirrorControls(QtWidgets.QDialog):
         self.create_widgets()
         self.create_layout()
         self.create_connections()
+        # One-time, non-destructive: adopt any legacy RigSnapshot data into
+        # the Character Snapshot store so old scenes keep their pairs/rules.
+        _migrate_legacy_snapshots()
         self._refresh_prefix_combobox()
         self._refresh_snapshot_status()
 
@@ -2318,35 +942,22 @@ class MirrorControls(QtWidgets.QDialog):
     def _create_menus(self):
         self.menu_bar = QtWidgets.QMenuBar(self)
 
-        # ---- File menu ----
-        file_menu = self.menu_bar.addMenu("File")
-
-        set_base_action = QtGui.QAction("Set Base Control", self)
-        set_base_action.setToolTip(
-            "Store the selected control as the reference base,\n"
-            "along with the current L/R naming tokens, on the scene node."
-        )
-        set_base_action.triggered.connect(self.set_base_control)
-        file_menu.addAction(set_base_action)
-
         # ---- Tools menu ----
         tools_menu = self.menu_bar.addMenu("Tools")
 
         take_snap_action = QtGui.QAction("  Take Snapshot", self)
         take_snap_action.setToolTip(
-            "Sample selected (or all scene) controls at rest pose\n"
-            "and store per-attribute mirror rules in the scene.\n\n"
-            "If controls are selected, only those are sampled.\n"
-            "If nothing is selected, every NURBS control is sampled."
+            "Capture a Character Snapshot of the selected rig at its\n"
+            "default pose. Records every controller, its mirror partner\n"
+            "and per-channel flip rules."
         )
         take_snap_action.triggered.connect(self.take_snapshot)
         tools_menu.addAction(take_snap_action)
 
-        edit_snap_action = QtGui.QAction("  Edit Snapshot Rules…", self)
+        edit_snap_action = QtGui.QAction("  Edit Channel Flip Rules…", self)
         edit_snap_action.setToolTip(
-            "Open the Snapshot Editor to review, override, or change\n"
-            "per-attribute mirror rules (copy / negate / ignore)\n"
-            "for every control in the stored snapshot."
+            "Review the auto-detected per-channel copy / negate rules and\n"
+            "store manual overrides in the Character Snapshot."
         )
         edit_snap_action.triggered.connect(self.open_snapshot_editor)
         tools_menu.addAction(edit_snap_action)
@@ -2355,8 +966,8 @@ class MirrorControls(QtWidgets.QDialog):
 
         manual_action = QtGui.QAction("  Manual Pair Editor…", self)
         manual_action.setToolTip(
-            "Open the Manual Pair Editor to assign mirror partners for\n"
-            "controls the auto-pairing heuristic cannot resolve,\n"
+            "Open the Character Snapshot Manual Pair Editor to assign\n"
+            "mirror partners that automatic matching cannot resolve,\n"
             "and to exclude rig-internal controls from mirroring."
         )
         manual_action.triggered.connect(self.open_manual_pair_editor)
@@ -2364,24 +975,22 @@ class MirrorControls(QtWidgets.QDialog):
 
         tools_menu.addSeparator()
 
-        flip_sign_action = QtGui.QAction("±  Flip Sign Rules (Selected)", self)
+        flip_sign_action = QtGui.QAction("±  Flip Sign (Selected)", self)
         flip_sign_action.setToolTip(
-            "Toggle copy ↔ negate for all transform attributes\n"
-            "on the currently selected controls.\n\n"
-            "Use this when a control mirrors with the wrong sign\n"
-            "due to how the rig was built (e.g. negated axes on one side).\n"
-            "Changes are saved to the snapshot immediately."
+            "Toggle whole-control sign inversion for the selected controls.\n"
+            "Use this when a control mirrors with the wrong sign due to how\n"
+            "the rig was built. Stored in the Character Snapshot."
         )
         flip_sign_action.triggered.connect(self.flip_sign_rules)
         tools_menu.addAction(flip_sign_action)
 
         tools_menu.addSeparator()
 
-        manage_action = QtGui.QAction("📋  Manage Character Snapshots…", self)
+        manage_action = QtGui.QAction("📋  Open Character Snapshot Tool…", self)
         manage_action.setToolTip(
-            "View all stored character snapshots by prefix.\n"
-            "Export snapshots to JSON for other scenes,\n"
-            "import from JSON, or delete character data."
+            "Open the Character Snapshot tool — the central manager for\n"
+            "rig snapshots (create, export/import JSON, rename prefixes,\n"
+            "manual pairs, delete)."
         )
         manage_action.triggered.connect(self.open_snapshot_manager)
         tools_menu.addAction(manage_action)
@@ -2439,7 +1048,7 @@ class MirrorControls(QtWidgets.QDialog):
             "  Flip to Frame — Flip and jump to the specified frame\n"
             "  Mirror Middle — Mirror centre controls (no L/R token)\n"
             "  Selected — Process only the currently selected controls\n"
-            "  Not Selected — Process all except selected"
+            "  Not Selected — Process all except selected (direction below)"
         )
         self.operation_cb.setCurrentText(OperationType.selected)
 
@@ -2464,7 +1073,7 @@ class MirrorControls(QtWidgets.QDialog):
         self.preserve_translation_cb.setToolTip(
             "If checked, translation channels are copied exactly\n"
             "rather than negated on the mirror axis.\n"
-            "(Only applies when no snapshot is loaded.)"
+            "(Only applies to channels without a snapshot rule.)"
         )
 
         self.preserve_rotation_cb = QtWidgets.QCheckBox("Preserve Rotation")
@@ -2472,7 +1081,7 @@ class MirrorControls(QtWidgets.QDialog):
         self.preserve_rotation_cb.setToolTip(
             "If checked, rotation channels are copied exactly\n"
             "rather than negated.\n"
-            "(Only applies when no snapshot is loaded.)"
+            "(Only applies to channels without a snapshot rule.)"
         )
 
         # ---- Naming ----
@@ -2481,7 +1090,10 @@ class MirrorControls(QtWidgets.QDialog):
         self.left_ctrl_name_le.setToolTip(
             "Left-side naming token used in the rig's control names.\n"
             "Example: 'lf' matches ac_lf_handIK\n"
-            "Leave blank to use the default 'lf'."
+            "Leave blank to use the default 'lf'.\n\n"
+            "When a Character Snapshot exists its stored tokens are used;\n"
+            "common conventions (L/R, left/right, lt/rt, …) are also tried\n"
+            "automatically."
         )
         self.right_ctrl_name_le = QtWidgets.QLineEdit()
         self.right_ctrl_name_le.setPlaceholderText("rt")
@@ -2497,52 +1109,56 @@ class MirrorControls(QtWidgets.QDialog):
         self.mirror_btn.setToolTip(
             "Execute the mirror operation with the current settings.\n\n"
             "If controls are selected, only those are processed.\n"
-            "If nothing is selected, all scene controls are mirrored."
+            "If nothing is selected, all rig controls are mirrored."
         )
 
         # ---- Snapshot Tools ----
         self.take_snap_btn = self._make_icon_btn(
             "◉", "Take Snapshot",
-            "Sample selected (or all) controls at rest pose and\n"
-            "store per-attribute mirror rules in the scene.\n\n"
-            "This must be done once per rig before the snapshot\n"
-            "system can provide accurate mirroring.",
+            "Capture a Character Snapshot of the selected rig at its\n"
+            "DEFAULT POSE. This records every controller, its mirror\n"
+            "partner and per-channel flip rules, and is required for\n"
+            "reliable mirror matching.",
             "snapshotBtn"
         )
         self.edit_snap_btn = self._make_icon_btn(
             "✎", "Edit Rules",
-            "Open the Snapshot Editor to review or override\n"
-            "per-attribute mirror rules (copy / negate / ignore).",
+            "Review the auto-detected per-channel copy / negate rules\n"
+            "and store manual overrides in the Character Snapshot.",
             "snapshotBtn"
         )
         self.manual_pairs_btn = self._make_icon_btn(
             "⇌", "Manual Pairs",
-            "Open the Manual Pair Editor to fix controls that\n"
-            "the automatic name-matching could not resolve.\n\n"
+            "Open the Character Snapshot Manual Pair Editor to fix\n"
+            "controls that automatic name-matching could not resolve.\n\n"
             "Also lets you exclude rig-internal nodes that\n"
             "should never be mirrored.",
             "snapshotBtn"
         )
         self.flip_sign_btn = self._make_icon_btn(
             "±", "Flip Sign",
-            "Toggle copy ↔ negate for all transform attributes\n"
-            "on the currently selected controls.\n\n"
+            "Toggle whole-control sign inversion for the selected\n"
+            "controls.\n\n"
             "Use when a control mirrors with the wrong sign due\n"
             "to how the rig was built (e.g. negated axes on one side).\n"
-            "Changes are saved to the snapshot immediately.",
+            "Stored in the Character Snapshot immediately.",
             "flipSignBtn"
         )
 
         # ---- Character prefix selector ----
         self.prefix_cb = QtWidgets.QComboBox()
         self.prefix_cb.setToolTip(
-            "Select which character rig's snapshot to use for mirroring.\n\n"
-            "Auto-detected from selection when taking a snapshot.\n"
+            "Select which character rig's Character Snapshot to use.\n\n"
+            "Auto-detected from the selection when mirroring.\n"
             "Each character namespace gets its own stored snapshot."
         )
+        self.refresh_prefix_btn = QtWidgets.QPushButton("↺")
+        self.refresh_prefix_btn.setFixedWidth(28)
+        self.refresh_prefix_btn.setToolTip("Refresh the character list")
         self.manage_snaps_btn = self._make_icon_btn(
             "📋", "Manage",
-            "Open the Snapshot Manager to view, export,\nimport, or delete character snapshots.",
+            "Open the Character Snapshot tool to create, export,\n"
+            "import, rename or delete character snapshots.",
             "snapshotBtn"
         )
 
@@ -2606,7 +1222,7 @@ class MirrorControls(QtWidgets.QDialog):
         main_layout.addWidget(naming_grp)
 
         # ── Snapshot Tools group ──
-        snap_grp = QtWidgets.QGroupBox("Snapshot Tools")
+        snap_grp = QtWidgets.QGroupBox("Character Snapshot")
         snap_grp.setStyleSheet(
             "QGroupBox { border-color: #4a6a4a; }"
             "QGroupBox::title { color: #90c890; background-color: #2f3a2f; }"
@@ -2618,6 +1234,7 @@ class MirrorControls(QtWidgets.QDialog):
         prefix_row = QtWidgets.QHBoxLayout()
         prefix_row.addWidget(QtWidgets.QLabel("Character:"))
         prefix_row.addWidget(self.prefix_cb, 1)
+        prefix_row.addWidget(self.refresh_prefix_btn)
         prefix_row.addWidget(self.manage_snaps_btn)
         snap_lay.addLayout(prefix_row)
 
@@ -2658,6 +1275,7 @@ class MirrorControls(QtWidgets.QDialog):
         self.manual_pairs_btn.clicked.connect(self.open_manual_pair_editor)
         self.flip_sign_btn.clicked.connect(self.flip_sign_rules)
         self.prefix_cb.currentTextChanged.connect(self._on_prefix_changed)
+        self.refresh_prefix_btn.clicked.connect(self._on_refresh_prefixes)
         self.manage_snaps_btn.clicked.connect(self.open_snapshot_manager)
 
     # ------------------------------------------------------------------
@@ -2696,8 +1314,7 @@ class MirrorControls(QtWidgets.QDialog):
             return active
 
         leaves = {c.split("|")[-1] for c in controls}
-        prefixes = _list_character_snapshot_prefixes()
-        for pfx in prefixes:
+        for pfx in _list_character_snapshot_prefixes():
             snap = _load_character_snapshot_for(pfx)
             if snap is None:
                 continue
@@ -2742,6 +1359,10 @@ class MirrorControls(QtWidgets.QDialog):
         self.prefix_cb.blockSignals(False)
         self._active_prefix = self.get_active_prefix()
 
+    def _on_refresh_prefixes(self):
+        self._refresh_prefix_combobox()
+        self._refresh_snapshot_status()
+
     def _on_prefix_changed(self, text):
         """Called when the user changes the character prefix dropdown."""
         if text == "(none)" or text == "(no namespace)":
@@ -2756,162 +1377,157 @@ class MirrorControls(QtWidgets.QDialog):
         If prefix is DEFAULT_PREFIX, returns controls with no namespace.
         """
         all_ctrls = self._get_all_nurbs_controls()
-        result = []
-        for ctrl in all_ctrls:
-            p = _detect_prefix(ctrl)
-            if p == prefix:
-                result.append(ctrl)
-        return result
+        return [c for c in all_ctrls if _detect_prefix(c) == prefix]
 
     def open_snapshot_manager(self):
-        """Open the Snapshot Manager dialog."""
-        cls = MirrorControls
-        if cls.snapshot_manager_instance and not cls.snapshot_manager_instance.isHidden():
-            cls.snapshot_manager_instance.raise_()
-            cls.snapshot_manager_instance.activateWindow()
-            cls.snapshot_manager_instance._refresh_list()
-        else:
-            cls.snapshot_manager_instance = SnapshotManagerDialog(parent=self)
-            cls.snapshot_manager_instance.prefixes_changed.connect(
-                self._refresh_prefix_combobox
+        """Open the Character Snapshot tool (the central snapshot manager)."""
+        cs_mod = _try_import_character_snapshot()
+        if cs_mod is None:
+            self._show_character_snapshot_missing()
+            return
+        try:
+            cs_mod.show_dialog()
+        except Exception as exc:
+            om.MGlobal.displayError(
+                "[Mirror Controls] Could not launch Character Snapshot: {}".format(exc)
             )
-            cls.snapshot_manager_instance.prefixes_changed.connect(
-                self._refresh_snapshot_status
-            )
-            cls.snapshot_manager_instance.show()
+
+    def _show_character_snapshot_missing(self):
+        QtWidgets.QMessageBox.critical(
+            self, "Character Snapshot Tool Not Found",
+            "The Character Snapshot module (character_snapshot_v1_0_0) could "
+            "not be imported.\n\n"
+            "Mirror Controls relies on the Character Snapshot tool for all "
+            "snapshot and matching data. Please install it from the Animation "
+            "Tool Kit (Character_Snapshot_1_0_0 folder) and try again."
+        )
 
     # ------------------------------------------------------------------
-    # Snapshot — take & edit
+    # Snapshot — take & edit  (delegates to Character Snapshot)
     # ------------------------------------------------------------------
 
-    def take_snapshot(self):
-        """
-        Sample selected (or all scene) controls and build + save a snapshot.
+    def _resolve_snapshot_targets(self):
+        """Determine (prefix, ctrl_list) for snapshotting.
 
-        Prefix auto-detection:
-        - If one or more controls are selected, the namespace prefix is
-          detected from the first selected control. All NURBS controls
-          sharing that namespace are then included in the snapshot.
-        - If nothing is selected, all scene controls are sampled and
-          grouped by their detected prefix.
+        Selection: prefix detected from the first selected control, expanded
+        to every control sharing that namespace. No selection: the active
+        combobox prefix, or all scene controls grouped under the first
+        detected prefix. Returns (None, []) when nothing usable is found.
         """
-        left_token   = self.get_left_name()
-        right_token  = self.get_right_name()
-        mirror_axis  = self.get_mirror_axis()
-
         sel = cmds.ls(selection=True, long=True)
         if sel:
-            # Detect prefix from first selected control
             prefix = _detect_prefix(sel[0])
+            ctrl_list = self._get_controls_for_prefix(prefix) or sel
+            return prefix, ctrl_list
 
-            # Expand to ALL controls sharing that prefix
-            ctrl_list = self._get_controls_for_prefix(prefix)
-            if not ctrl_list:
-                ctrl_list = sel  # fallback: just use what's selected
+        active = self._active_prefix or self.get_active_prefix()
+        if active and active != DEFAULT_PREFIX:
+            return active, self._get_controls_for_prefix(active)
 
-            om.MGlobal.displayInfo(
-                "[Mirror Controls] Taking snapshot for '{}' — "
-                "{} controls…".format(prefix, len(ctrl_list))
+        ctrl_list = self._get_all_nurbs_controls()
+        if not ctrl_list:
+            return None, []
+        prefix = DEFAULT_PREFIX
+        for c in ctrl_list:
+            p = _detect_prefix(c)
+            if p != DEFAULT_PREFIX:
+                prefix = p
+                break
+        # Re-filter to just this prefix to avoid mixing characters
+        filtered = self._get_controls_for_prefix(prefix)
+        return prefix, (filtered or ctrl_list)
+
+    def take_snapshot(self):
+        """Capture a Character Snapshot for the selected rig.
+
+        The snapshot should be taken at the rig's DEFAULT POSE — the stored
+        pose values drive the automatic per-channel flip detection. Manual
+        pairs, exclusions and metadata of an existing snapshot are preserved
+        on replace.
+        """
+        cs_mod = _try_import_character_snapshot()
+        if cs_mod is None:
+            self._show_character_snapshot_missing()
+            return
+
+        left_token  = self.get_left_name()
+        right_token = self.get_right_name()
+        mirror_axis = self.get_mirror_axis()
+
+        prefix, ctrl_list = self._resolve_snapshot_targets()
+        if not ctrl_list:
+            QtWidgets.QMessageBox.warning(
+                self, "No Controls Found",
+                "No NURBS controls were found to snapshot.\n"
+                "Select a control on the rig you want to capture and try again."
             )
-        else:
-            # No selection — use active prefix if one is set, otherwise scan all
-            active = self._active_prefix or self.get_active_prefix()
-            if active and active != DEFAULT_PREFIX:
-                prefix = active
-                ctrl_list = self._get_controls_for_prefix(prefix)
-            else:
-                ctrl_list = self._get_all_nurbs_controls()
+            return
 
-            if not ctrl_list:
-                om.MGlobal.displayError(
-                    "[Mirror Controls] No NURBS controls found in scene."
-                )
-                return
+        om.MGlobal.displayInfo(
+            "[Mirror Controls] Taking Character Snapshot for '{}' — "
+            "{} controls…".format(prefix, len(ctrl_list))
+        )
 
-            if not active or active == DEFAULT_PREFIX:
-                # Detect prefix from the controls
-                prefix = DEFAULT_PREFIX
-                for c in ctrl_list:
-                    p = _detect_prefix(c)
-                    if p != DEFAULT_PREFIX:
-                        prefix = p
-                        break
-                # Re-filter to just this prefix to avoid mixing characters
-                filtered = self._get_controls_for_prefix(prefix)
-                if filtered:
-                    ctrl_list = filtered
-
-            om.MGlobal.displayInfo(
-                "[Mirror Controls] Taking snapshot for '{}' — "
-                "{} scene controls…".format(prefix, len(ctrl_list))
-            )
-
-        snap = RigSnapshot.build(ctrl_list, left_token, right_token, mirror_axis)
-
-        # --- Overwrite guard ---
-        existing = RigSnapshot.load_from_scene(prefix)
+        existing = cs_mod.load_snapshot(prefix)
+        rig_name     = prefix.split(":")[-1] if prefix != DEFAULT_PREFIX else ""
+        description  = ""
+        manual_pairs = {}
+        excluded     = []
+        metadata     = {}
+        created      = None
         if existing is not None:
-            n_existing = len(existing.controls)
-            n_new      = len(snap.controls)
-            is_subset  = n_new < n_existing
-
-            msg = (
-                "A snapshot already exists with {} controls.\n"
-                "You are about to snapshot {} control{}.\n\n"
-                "Replace  —  discard existing snapshot entirely.\n"
-                "Merge    —  update only these {} control{}, keep the rest.\n"
-                "Cancel   —  abort."
-            ).format(
-                n_existing,
-                n_new, "s" if n_new != 1 else "",
-                n_new, "s" if n_new != 1 else "",
+            result = QtWidgets.QMessageBox.question(
+                self, "Snapshot Already Exists",
+                "A Character Snapshot already exists for '{}' with {} "
+                "controls.\n\n"
+                "Replace it with a fresh capture of the current pose?\n"
+                "(Manual pairs, exclusions and rule overrides are kept.)".format(
+                    prefix, existing.control_count()
+                ),
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel,
             )
-
-            replace_btn = QtWidgets.QPushButton("Replace")
-            merge_btn   = QtWidgets.QPushButton("Merge")
-            cancel_btn  = QtWidgets.QPushButton("Cancel")
-
-            box = QtWidgets.QMessageBox(self)
-            box.setWindowTitle("Snapshot Already Exists")
-            box.setText(msg)
-            box.addButton(replace_btn, QtWidgets.QMessageBox.AcceptRole)
-            box.addButton(merge_btn,   QtWidgets.QMessageBox.ActionRole)
-            box.addButton(cancel_btn,  QtWidgets.QMessageBox.RejectRole)
-            if is_subset:
-                box.setDefaultButton(merge_btn)
-            else:
-                box.setDefaultButton(replace_btn)
-            box.exec()
-
-            clicked = box.clickedButton()
-            if clicked is cancel_btn:
+            if result != QtWidgets.QMessageBox.Yes:
                 return
-            elif clicked is merge_btn:
-                snap = RigSnapshot.merge_into_scene(snap, prefix)
-            else:
-                snap.save_to_scene(prefix)
-        else:
-            snap.save_to_scene(prefix)
+            rig_name     = existing.rig_name or rig_name
+            description  = existing.description
+            manual_pairs = dict(existing.manual_pairs)
+            excluded     = list(existing.excluded_controls)
+            metadata     = dict(existing.metadata or {})
+            created      = existing.created
+            # Reuse the rig's stored tokens when the UI is at its defaults so
+            # re-snapshotting doesn't silently revert a custom convention.
+            if not self.left_ctrl_name_le.text().strip():
+                left_token = existing.left_token
+            if not self.right_ctrl_name_le.text().strip():
+                right_token = existing.right_token
+
+        snap = cs_mod.CharacterSnapshot.build(
+            ctrl_list, prefix=prefix, rig_name=rig_name,
+            description=description, left_token=left_token,
+            right_token=right_token, mirror_axis=mirror_axis,
+        )
+        snap.manual_pairs      = manual_pairs
+        snap.excluded_controls = excluded
+        snap.metadata          = metadata
+        if created:
+            snap.created = created
+        snap.save_to_scene()
 
         self._active_prefix = prefix
         self._refresh_prefix_combobox()
-        # Select the newly created prefix in the combobox
         label = prefix if prefix != DEFAULT_PREFIX else "(no namespace)"
         idx = self.prefix_cb.findText(label)
         if idx >= 0:
             self.prefix_cb.setCurrentIndex(idx)
         self._refresh_snapshot_status()
 
-        # --- Analyse pairing results using shared helper ---
-        unique_pairs, unpaired = self._analyse_snapshot_pairing(snap)
-        n_unpaired = len(unpaired)
-
-        # Build the post-snapshot message
-        if n_unpaired == 0:
+        # --- Pairing report ---
+        unique_pairs, unpaired = snap.analyse_pairing()
+        if not unpaired:
             msg = (
                 "✔  All {} controls paired successfully  ({} pairs).\n\n"
-                "Would you like to open the Snapshot Editor to review "
-                "per-attribute mirror rules?".format(len(snap.controls), unique_pairs)
+                "Would you like to review the per-channel flip rules?".format(
+                    snap.control_count(), unique_pairs)
             )
             btns = QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
             box  = QtWidgets.QMessageBox(
@@ -2919,56 +1535,46 @@ class MirrorControls(QtWidgets.QDialog):
             )
             box.setDefaultButton(QtWidgets.QMessageBox.No)
             if box.exec() == QtWidgets.QMessageBox.Yes:
-                self._open_editor_with_snapshot(snap)
-
+                self.open_snapshot_editor()
         else:
-            # Show up to 10 unpaired names, then a count for the rest
             sample  = unpaired[:10]
-            surplus = n_unpaired - len(sample)
+            surplus = len(unpaired) - len(sample)
             names   = "\n".join("  •  {}".format(n) for n in sample)
             if surplus > 0:
                 names += "\n  … and {} more".format(surplus)
-
             msg = (
                 "Snapshot saved — {} controls, {} pair{} found.\n\n"
                 "⚠  {} control{} could not be automatically paired:\n\n"
                 "{}\n\n"
                 "These controls need manual partner assignment.\n"
-                "Open the Manual Pairs editor now?".format(
-                    len(snap.controls),
+                "Open the Manual Pair Editor now?".format(
+                    snap.control_count(),
                     unique_pairs, "s" if unique_pairs != 1 else "",
-                    n_unpaired,   "s" if n_unpaired   != 1 else "",
+                    len(unpaired), "s" if len(unpaired) != 1 else "",
                     names,
                 )
             )
-            open_manual_btn    = QtWidgets.QPushButton("Open Manual Pairs…")
-            open_snapshot_btn  = QtWidgets.QPushButton("Open Snapshot Editor…")
-            dismiss_btn        = QtWidgets.QPushButton("Dismiss")
-
             box = QtWidgets.QMessageBox(
                 QtWidgets.QMessageBox.Warning, "Snapshot — Pairing Issues", msg, parent=self
             )
-            box.addButton(open_manual_btn,   QtWidgets.QMessageBox.AcceptRole)
-            box.addButton(open_snapshot_btn, QtWidgets.QMessageBox.ActionRole)
-            box.addButton(dismiss_btn,       QtWidgets.QMessageBox.RejectRole)
+            open_manual_btn = box.addButton("Open Manual Pairs…", QtWidgets.QMessageBox.AcceptRole)
+            box.addButton("Dismiss", QtWidgets.QMessageBox.RejectRole)
             box.setDefaultButton(open_manual_btn)
             box.exec()
-
-            clicked = box.clickedButton()
-            if clicked is open_manual_btn:
+            if box.clickedButton() is open_manual_btn:
                 self.open_manual_pair_editor()
-            elif clicked is open_snapshot_btn:
-                self._open_editor_with_snapshot(snap)
 
     def open_snapshot_editor(self):
-        """Open the editor for the active prefix's snapshot."""
+        """Open the channel flip-rule editor for the active rig's snapshot."""
         prefix = self._active_prefix or self.get_active_prefix()
-        snap = RigSnapshot.load_from_scene(prefix)
-        if snap is None:
+        sel = cmds.ls(selection=True, long=True) or []
+        if sel:
+            prefix = self._resolve_prefix_for_controls(sel)
+        adapter = self._load_snapshot_for_mirroring(prefix, announce=False)
+        if adapter is None:
             result = QtWidgets.QMessageBox.question(
-                self,
-                "No Snapshot",
-                "No snapshot found{}.\n"
+                self, "No Character Snapshot",
+                "No Character Snapshot found{}.\n"
                 "Would you like to take one now?".format(
                     " for '{}'".format(prefix) if prefix and prefix != DEFAULT_PREFIX else ""
                 ),
@@ -2977,69 +1583,98 @@ class MirrorControls(QtWidgets.QDialog):
             if result == QtWidgets.QMessageBox.Yes:
                 self.take_snapshot()
             return
-        self._open_editor_with_snapshot(snap, prefix)
+        self._open_editor_with_adapter(adapter, prefix)
 
     def open_manual_pair_editor(self):
-        """Open the Manual Pair Editor window."""
+        """Open the Character Snapshot Manual Pair Editor."""
+        cs_mod = _try_import_character_snapshot()
+        if cs_mod is None:
+            self._show_character_snapshot_missing()
+            return
+
+        prefix = self._active_prefix or self.get_active_prefix()
+        sel = cmds.ls(selection=True, long=True) or []
+        if sel:
+            prefix = self._resolve_prefix_for_controls(sel)
+
+        if not prefix or cs_mod.load_snapshot(prefix) is None:
+            result = QtWidgets.QMessageBox.question(
+                self, "No Character Snapshot",
+                "Manual pairs are stored in the rig's Character Snapshot, "
+                "and none was found{}.\n\n"
+                "Take a Character Snapshot now?".format(
+                    " for '{}'".format(prefix) if prefix and prefix != DEFAULT_PREFIX else ""
+                ),
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            )
+            if result == QtWidgets.QMessageBox.Yes:
+                self.take_snapshot()
+            return
+
         cls = MirrorControls
-        if cls.manual_pair_editor_instance and not cls.manual_pair_editor_instance.isHidden():
-            cls.manual_pair_editor_instance.raise_()
-            cls.manual_pair_editor_instance.activateWindow()
-            cls.manual_pair_editor_instance._on_refresh()
-        else:
-            prefix = self._active_prefix or self.get_active_prefix()
-            cls.manual_pair_editor_instance = ManualPairEditorDialog(
-                main_dialog=self,
-                prefix=prefix,
-                parent=self,
+        if (cls.manual_pair_editor_instance
+                and not cls.manual_pair_editor_instance.isHidden()):
+            cls.manual_pair_editor_instance.close()
+        try:
+            cls.manual_pair_editor_instance = cs_mod.ManualPairEditorDialog(
+                prefix=prefix, parent=self
             )
             cls.manual_pair_editor_instance.show()
+        except Exception as exc:
+            om.MGlobal.displayError(
+                "[Mirror Controls] Could not open the Manual Pair Editor: {}".format(exc)
+            )
 
-    def _open_editor_with_snapshot(self, snap, prefix=None):
+    def _open_editor_with_adapter(self, adapter, prefix=None):
         cls = MirrorControls
         if cls.snapshot_editor_instance and not cls.snapshot_editor_instance.isHidden():
-            cls.snapshot_editor_instance.update_snapshot(snap)
-            cls.snapshot_editor_instance._prefix = prefix
+            cls.snapshot_editor_instance.update_adapter(adapter, prefix)
             cls.snapshot_editor_instance.raise_()
             cls.snapshot_editor_instance.activateWindow()
         else:
             cls.snapshot_editor_instance = SnapshotEditorDialog(
-                snap,
+                adapter,
+                prefix=prefix,
                 re_snapshot_callback=self._do_re_snapshot,
                 parent=self,
             )
-            cls.snapshot_editor_instance._prefix = prefix
             cls.snapshot_editor_instance.show()
 
     def _do_re_snapshot(self):
-        """Callback used by the SnapshotEditorDialog to re-build the snapshot."""
-        left_token  = self.get_left_name()
-        right_token = self.get_right_name()
-        mirror_axis = self.get_mirror_axis()
-        prefix      = self._active_prefix or self.get_active_prefix()
+        """Re-capture the active rig's Character Snapshot (used by the rule
+        editor). Returns a fresh adapter, or None."""
+        cs_mod = _try_import_character_snapshot()
+        if cs_mod is None:
+            self._show_character_snapshot_missing()
+            return None
 
-        sel = cmds.ls(selection=True, long=True)
-        if sel:
-            prefix = _detect_prefix(sel[0])
-            ctrl_list = self._get_controls_for_prefix(prefix)
-            if not ctrl_list:
-                ctrl_list = sel
-        else:
-            # No selection — re-snapshot the active prefix's controls only
-            if prefix:
-                ctrl_list = self._get_controls_for_prefix(prefix)
-            else:
-                ctrl_list = self._get_all_nurbs_controls()
-
+        prefix, ctrl_list = self._resolve_snapshot_targets()
         if not ctrl_list:
             om.MGlobal.displayError("[Mirror Controls] No controls found for re-snapshot.")
             return None
-        snap = RigSnapshot.build(ctrl_list, left_token, right_token, mirror_axis)
-        snap.save_to_scene(prefix)
+
+        existing = cs_mod.load_snapshot(prefix)
+        left_token  = existing.left_token  if existing else self.get_left_name()
+        right_token = existing.right_token if existing else self.get_right_name()
+        mirror_axis = existing.mirror_axis if existing else self.get_mirror_axis()
+
+        snap = cs_mod.CharacterSnapshot.build(
+            ctrl_list, prefix=prefix,
+            rig_name=existing.rig_name if existing else "",
+            description=existing.description if existing else "",
+            left_token=left_token, right_token=right_token,
+            mirror_axis=mirror_axis,
+        )
+        if existing is not None:
+            snap.manual_pairs      = dict(existing.manual_pairs)
+            snap.excluded_controls = list(existing.excluded_controls)
+            snap.metadata          = dict(existing.metadata or {})
+            snap.created           = existing.created
+        snap.save_to_scene()
         self._refresh_prefix_combobox()
         self._refresh_snapshot_status()
-        # Report any newly unpaired controls in the Script Editor
-        _, unpaired = self._analyse_snapshot_pairing(snap)
+
+        _, unpaired = snap.analyse_pairing()
         if unpaired:
             om.MGlobal.displayWarning(
                 "[Mirror Controls] Re-snapshot: {} control{} still unpaired: {}".format(
@@ -3048,41 +1683,7 @@ class MirrorControls(QtWidgets.QDialog):
                     ", ".join(unpaired[:20]),
                 )
             )
-        return snap
-
-    def _analyse_snapshot_pairing(self, snap):
-        """
-        Inspect snap and return (paired_count, unpaired_leaves).
-        paired_count  : int   — number of unique confirmed pairs
-        unpaired_leaves : list of str — leaf names with no valid partner
-        """
-        paired   = set()
-        unpaired = []
-
-        for ctrl_key, ctrl_data in snap.controls.items():
-            leaf = ctrl_key.split("|")[-1]
-            side = ctrl_data.get("side", "middle")
-
-            if side == "middle":
-                continue
-
-            # Avoid reporting both directions as unpaired
-            if leaf in paired:
-                continue
-
-            auto_partner = ctrl_data.get("partner")
-            manual       = snap.get_manual_partner(ctrl_key)
-            partner      = manual or auto_partner
-
-            if partner and cmds.objExists(partner):
-                partner_leaf = partner.split("|")[-1]
-                paired.add(leaf)
-                paired.add(partner_leaf)
-            else:
-                unpaired.append(leaf)
-
-        unique_pairs = len(paired) // 2
-        return unique_pairs, unpaired
+        return _CharacterSnapshotAdapter(snap)
 
     def _refresh_snapshot_status(self):
         prefix = self._active_prefix or self.get_active_prefix()
@@ -3175,69 +1776,35 @@ class MirrorControls(QtWidgets.QDialog):
                         pass
         return result
 
-    def get_controllers(self, side_con=None, prefix=None):
-        left_token  = self.get_left_name()
-        right_token = self.get_right_name()
-        # Filter by prefix when specified to avoid mixing characters
-        if prefix:
-            all_ctrls = self._get_controls_for_prefix(prefix)
-        else:
-            all_ctrls = self._get_all_nurbs_controls()
-        left_ctrls  = []
-        right_ctrls = []
-        middle_ctrls = []
-        for ctrl in all_ctrls:
-            has_lt = _has_side_token(ctrl, left_token)
-            has_rt = _has_side_token(ctrl, right_token)
-            if has_lt and not has_rt:
-                left_ctrls.append(ctrl)
-            elif has_rt and not has_lt:
-                right_ctrls.append(ctrl)
-            else:
-                middle_ctrls.append(ctrl)
+    def _control_side(self, ctrl, left_token, right_token, snapshot=None):
+        """Return 'left' / 'right' / 'middle' for *ctrl*.
 
-        pair_dict    = {"controls": {}, "pairNumber": {}}
-        pair_number  = 0
-        paired_left  = []
-        paired_right = []
-        for l in left_ctrls:
-            l_name = l.split(":")[-1].lower()
-            root   = l_name.replace(left_token.lower(), "")
-            found  = False
-            for r in right_ctrls:
-                r_name = r.split(":")[-1].lower()
-                if root and root in r_name:
-                    pair_dict["controls"][l] = pair_number
-                    pair_dict["controls"][r] = pair_number
-                    pair_dict["pairNumber"][pair_number] = [l, r]
-                    paired_left.append(l)
-                    paired_right.append(r)
-                    pair_number += 1
-                    found = True
-                    break
-            if not found:
-                middle_ctrls.append(l)
-        for r in right_ctrls:
-            if r not in paired_right:
-                middle_ctrls.append(r)
-
-        return {
-            "left":   left_ctrls,
-            "right":  right_ctrls,
-            "middle": middle_ctrls,
-            "all":    list(set(all_ctrls)),
-            "pair":   pair_dict,
-        }
+        The Character Snapshot's stored classification wins; controls the
+        snapshot doesn't know fall back to boundary-aware token matching.
+        """
+        if snapshot is not None:
+            side = snapshot.get_side(ctrl)
+            if side in ("left", "right", "middle"):
+                return side
+        has_l = _has_side_token(ctrl, left_token)
+        has_r = _has_side_token(ctrl, right_token)
+        if has_l and not has_r:
+            return "left"
+        if has_r and not has_l:
+            return "right"
+        return "middle"
 
     # ------------------------------------------------------------------
-    # Axis vector helpers  (retained for heuristic fallback)
+    # Axis vector helpers  (heuristic fallback when no snapshot rule)
     # ------------------------------------------------------------------
 
     def get_vectors_dominating_axis(self, vector):
         denominator = sum(abs(val) for val in vector)
-        pct         = [abs(val) / denominator for val in vector]
-        index       = pct.index(max(pct))
-        labels      = ["X", "Y", "Z"]
+        if denominator == 0:
+            return "X"
+        pct    = [abs(val) / denominator for val in vector]
+        index  = pct.index(max(pct))
+        labels = ["X", "Y", "Z"]
         return ("-" + labels[index]) if vector[index] < 0 else labels[index]
 
     def get_mirror_axis_dominent_vector(self, mirror_axis, x_dom, y_dom, z_dom):
@@ -3256,13 +1823,20 @@ class MirrorControls(QtWidgets.QDialog):
             cur_pos[ctrl] = self.get_attribute_data([ctrl])
             self.rotate_ctrl_to_zero(ctrl)
         for ctrl in ctrl_list:
-            wm = cmds.xform(ctrl, matrix=True, worldSpace=True, query=True)
-            wm = [round(v, 3) for v in wm]
-            vector_dict[ctrl] = {
-                "x_axis": wm[0:3],
-                "y_axis": wm[4:7],
-                "z_axis": wm[8:11],
-            }
+            try:
+                wm = cmds.xform(ctrl, matrix=True, worldSpace=True, query=True)
+                wm = [round(v, 3) for v in wm]
+                vector_dict[ctrl] = {
+                    "x_axis": wm[0:3],
+                    "y_axis": wm[4:7],
+                    "z_axis": wm[8:11],
+                }
+            except Exception:
+                vector_dict[ctrl] = {
+                    "x_axis": [1, 0, 0],
+                    "y_axis": [0, 1, 0],
+                    "z_axis": [0, 0, 1],
+                }
         for ctrl in ctrl_list:
             self.rotate_ctrl_to_data(ctrl, cur_pos[ctrl])
         return vector_dict
@@ -3284,10 +1858,16 @@ class MirrorControls(QtWidgets.QDialog):
         data = {}
         for ctrl in ctrl_list:
             data[ctrl] = {}
-            attributes = cmds.listAttr(ctrl, keyable=True, unlocked=True)
+            try:
+                attributes = cmds.listAttr(ctrl, keyable=True, unlocked=True)
+            except Exception:
+                attributes = None
             if attributes:
                 for attr in attributes:
-                    value = cmds.getAttr("{}.{}".format(ctrl, attr))
+                    try:
+                        value = cmds.getAttr("{}.{}".format(ctrl, attr))
+                    except Exception:
+                        continue
                     if isinstance(value, (int, float)):
                         data[ctrl][attr] = value
         return data
@@ -3306,8 +1886,12 @@ class MirrorControls(QtWidgets.QDialog):
         if auto_key:
             cmds.autoKeyframe(state=False)
         for ax in ["X", "Y", "Z"]:
-            if cmds.listAttr("{}.rotate{}".format(ctrl, ax), keyable=True, unlocked=True):
-                self.set_attr("{}.rotate{}".format(ctrl, ax), 0)
+            try:
+                if cmds.listAttr("{}.rotate{}".format(ctrl, ax),
+                                 keyable=True, unlocked=True):
+                    self.set_attr("{}.rotate{}".format(ctrl, ax), 0)
+            except Exception:
+                pass
         if auto_key:
             cmds.autoKeyframe(state=True)
 
@@ -3317,46 +1901,40 @@ class MirrorControls(QtWidgets.QDialog):
             cmds.autoKeyframe(state=False)
         for ax in ["X", "Y", "Z"]:
             key = "rotate{}".format(ax)
-            if key in data[ctrl]:
+            if ctrl in data and key in data[ctrl]:
                 self.set_attr("{}.{}".format(ctrl, key), data[ctrl][key])
         if auto_key:
             cmds.autoKeyframe(state=True)
 
     def get_partner(self, ctrl, left_token, right_token, snapshot=None):
         """
-        Return the mirror partner name for ctrl.
+        Return the scene-validated mirror partner for *ctrl*, or None.
 
         Priority order:
-          1.  Manual pair stored in snapshot.manual_pairs  (user-defined)
-          2.  Token-swap heuristic on the leaf node name   (automatic)
-
-        Handles full DAG paths (parent|child) by stripping to the leaf node
-        name before doing the token swap.  Returns a namespace-qualified
-        short name that Maya can resolve unambiguously.
-
-        Uses word-boundary-aware matching so tokens embedded in words
-        (e.g. "rt" inside "shirt") are not falsely swapped.
+          1. Character Snapshot — manual pair → recorded partner →
+             multi-convention token swap (centralised in the Character
+             Snapshot module, every candidate validated against the scene).
+          2. Local token-swap fallback when no snapshot is available
+             (heuristic mode), also scene-validated.
         """
-        # 1. Check manual pairs in snapshot
         if snapshot is not None:
-            manual = snapshot.get_manual_partner(ctrl)
-            if manual:
-                return manual
+            if snapshot.is_excluded(ctrl):
+                return None
+            partner = snapshot.find_partner(ctrl)
+            if partner:
+                return partner
 
-        # 2. Token-swap on leaf name
         leaf = ctrl.split("|")[-1]
-
         if ":" in leaf:
             ns, base = leaf.rsplit(":", 1)
             ns_prefix = ns + ":"
         else:
             ns_prefix = ""
             base = leaf
-
-        swapped = _swap_side_token(base, left_token, right_token)
-        if swapped is None:
-            return None
-        return ns_prefix + swapped
+        for cand in _mirror_name_candidates(base, left_token, right_token):
+            if cmds.objExists(ns_prefix + cand):
+                return ns_prefix + cand
+        return None
 
     # ------------------------------------------------------------------
     # mirror_pair  — snapshot-aware
@@ -3366,14 +1944,14 @@ class MirrorControls(QtWidgets.QDialog):
         """
         Copy / negate attributes from ctrl to partner.
 
-        If a snapshot is supplied and contains an entry for ctrl, each attribute's
-        stored rule is used directly (copy / negate / ignore).  User overrides in
-        the editor are also honoured here.
-
-        If the snapshot has no entry for the attribute — or no snapshot at all —
-        the original axis-vector heuristic runs as a fallback.
+        If a snapshot is supplied, each attribute's effective rule (user
+        override → auto-detected from the default pose) is used directly
+        (copy / negate / ignore). Attributes with no stored rule — or no
+        snapshot at all — run the original axis-vector heuristic.
         """
         if ctrl not in vector_data or partner not in vector_data:
+            return
+        if ctrl not in data:
             return
 
         x_axis     = vector_data[ctrl]["x_axis"]
@@ -3393,8 +1971,8 @@ class MirrorControls(QtWidgets.QDialog):
             mirror_axis, x_dom, y_dom, z_dom
         )
 
-        # Per-control sign-flip override (Character Snapshot only).
-        # When the user clicks "± Flip Sign Rules" the leaf is added to the
+        # Per-control sign-flip override (stored in the Character Snapshot).
+        # When the user clicks "± Flip Sign" the leaf is added to the
         # snapshot's flip-sign list. We invert mirrored numeric channels here
         # so every downstream code path (snapshot rule or heuristic fallback)
         # automatically writes the opposite sign to the partner control.
@@ -3425,7 +2003,7 @@ class MirrorControls(QtWidgets.QDialog):
                 ):
                     value = -value
 
-            # --- Snapshot path ---
+            # --- Snapshot rule path ---
             if snapshot is not None:
                 rule = snapshot.get_rule(ctrl, attr)
                 if rule is not None:
@@ -3509,230 +2087,269 @@ class MirrorControls(QtWidgets.QDialog):
                 # Custom / unknown attribute — copy as-is in heuristic mode too
                 self.set_attr(target, value)
 
+    def _mirror_middle_attrs(self, ctrl, attrs, mirror_axis):
+        """Flip a centre control's pose across the mirror axis in place."""
+        for attr, value in attrs.items():
+            if "translate" in attr:
+                if mirror_axis.upper() in attr:
+                    self.set_attr("{}.{}".format(ctrl, attr), -value)
+                else:
+                    self.set_attr("{}.{}".format(ctrl, attr), value)
+            elif "rotate" in attr:
+                self.set_attr("{}.{}".format(ctrl, attr), -value)
+            else:
+                self.set_attr("{}.{}".format(ctrl, attr), value)
+
     # ------------------------------------------------------------------
     # mirror_control  — main entry point
     # ------------------------------------------------------------------
 
     def mirror_control(self):
-        # Resolve which prefix we're mirroring before opening an undo chunk so
-        # the Character Snapshot reminder popup (if shown) doesn't leave an
-        # empty undo entry behind when the user cancels.
+        """Run the selected mirror operation.
+
+        Works in three modes:
+          * Selection mode — operate on the selected controls.
+          * Scene mode (no selection) — operate on every control of the
+            active rig.
+          * Not Selected — operate on every rig control EXCEPT the selected
+            ones, in the direction chosen by the radio buttons.
+
+        All pairing questions are answered by the Character Snapshot; when
+        none exists the user is prompted to create one (and may explicitly
+        continue with the axis-vector heuristic).
+        """
         left_token  = self.get_left_name()
         right_token = self.get_right_name()
         mirror_axis = self.get_mirror_axis()
         op          = self.get_operation()
 
-        # Load snapshot for the appropriate prefix.
-        # Selection-mode: detect prefix from the first selected control.
-        # Scene-mode: use the active prefix from the combobox.
-        sel = cmds.ls(selection=True, long=True)
+        sel = cmds.ls(selection=True, long=True) or []
         if sel:
             prefix = self._resolve_prefix_for_controls(sel)
         else:
             prefix = self._active_prefix or self.get_active_prefix()
 
+        # Resolve snapshot BEFORE opening an undo chunk so the reminder
+        # popup (if shown) doesn't leave an empty undo entry on cancel.
         snapshot = self._load_snapshot_for_mirroring(prefix)
         if snapshot is None:
-            # No CharacterSnapshot AND no legacy RigSnapshot for this rig.
-            # Remind the user to capture one for accurate mirroring.
             if not self._prompt_create_character_snapshot(prefix):
                 return
+        else:
+            left_token  = snapshot.left_token or left_token
+            right_token = snapshot.right_token or right_token
+
+        # ---- Build the working pool + effective operation ----
+        if op == OperationType.not_selected:
+            if not sel:
+                QtWidgets.QMessageBox.warning(
+                    self, "Nothing Selected",
+                    "The 'Not Selected' operation needs a selection to exclude.\n"
+                    "Select the controls you want to leave untouched, then try again."
+                )
+                return
+            pool_source = (self._get_controls_for_prefix(prefix)
+                           if prefix else self._get_all_nurbs_controls())
+            sel_set    = set(sel)
+            sel_leaves = {c.split("|")[-1] for c in sel}
+            ctrl_pool = [c for c in pool_source
+                         if c not in sel_set and c.split("|")[-1] not in sel_leaves]
+            if self.right_to_left_rb.isChecked():
+                eff_op = OperationType.right_to_left
+            elif self.flip_rb.isChecked():
+                eff_op = OperationType.flip
+            else:
+                eff_op = OperationType.left_to_right
+        elif sel:
+            ctrl_pool = list(sel)
+            eff_op    = op
+        else:
+            if op == OperationType.selected:
+                QtWidgets.QMessageBox.warning(
+                    self, "Nothing Selected",
+                    "The 'Selected' operation needs at least one selected control.\n"
+                    "Select the controls you want to mirror, then try again."
+                )
+                return
+            ctrl_pool = (self._get_controls_for_prefix(prefix)
+                         if prefix else self._get_all_nurbs_controls())
+            eff_op = op
+
+        if not ctrl_pool:
+            self.no_nurbs_in_scene()
+            return
+
+        is_flip = eff_op in (OperationType.flip, OperationType.flip_to_frame)
+        in_selection_mode = bool(sel) and op != OperationType.not_selected
+
+        # Leaf → full DAG path lookup so short partner names resolve to the
+        # unambiguous paths used as data keys (rigs with nested finger chains
+        # can have identical leaf names at several DAG depths).
+        _all_ctrls   = self._get_all_nurbs_controls()
+        _leaf_to_dag = {c.split("|")[-1]: c for c in _all_ctrls}
+
+        def _to_dag(name):
+            return _leaf_to_dag.get(name.split("|")[-1], _resolve_long(name))
+
+        # ---- Plan the work: (source, target) actions + middle flips ----
+        actions   = []
+        middles   = []
+        unmatched = []
+        excluded  = 0
+        processed = set()
+        pool_set  = set(ctrl_pool)
+
+        for ctrl in ctrl_pool:
+            if ctrl in processed:
+                continue
+            if snapshot is not None and snapshot.is_excluded(ctrl):
+                excluded += 1
+                continue
+
+            side = self._control_side(ctrl, left_token, right_token, snapshot)
+
+            if eff_op == OperationType.left_to_right and side != "left":
+                continue
+            if eff_op == OperationType.right_to_left and side != "right":
+                continue
+            if eff_op == OperationType.mirror_middle:
+                if side == "middle":
+                    middles.append(ctrl)
+                    processed.add(ctrl)
+                continue
+            if is_flip and side == "middle" and not in_selection_mode:
+                # Scene-wide flips leave middles untouched (no partner).
+                continue
+
+            partner = self.get_partner(ctrl, left_token, right_token, snapshot=snapshot)
+            if not partner or not cmds.objExists(partner):
+                # Only sided controls (or explicit selections) are reported —
+                # centre controls have no partner by design.
+                if side != "middle" or in_selection_mode:
+                    unmatched.append(ctrl.split("|")[-1])
+                processed.add(ctrl)
+                continue
+
+            partner = _to_dag(partner)
+            processed.add(ctrl)
+            if partner in pool_set:
+                processed.add(partner)
+
+            actions.append((ctrl, partner))
+            if is_flip:
+                actions.append((partner, ctrl))
+
+        if not actions and not middles:
+            self._report_mirror_result(eff_op, 0, unmatched, excluded)
+            return
 
         cmds.undoInfo(openChunk=True)
+        try:
+            if eff_op == OperationType.flip_to_frame:
+                self.set_time(self.get_flip_frame())
 
-        if sel:
-            # ---- Selection mode ----
-            # Build a leaf→DAG lookup from all NURBS controls so we can
-            # resolve the short partner names returned by get_partner()
-            # to unambiguous full DAG paths.  This avoids "More than one
-            # object matches name" errors on rigs with deeply nested
-            # finger chains where multiple nodes share the same leaf name.
-            _all_ctrls = self._get_all_nurbs_controls()
-            _sel_leaf_to_dag = {}
-            for c in _all_ctrls:
-                _sel_leaf_to_dag[c.split("|")[-1]] = c
+            # Capture EVERYTHING before any write so Flip is a true swap and
+            # chained pairs can't read half-mirrored values.
+            nodes = []
+            for src, dst in actions:
+                for n in (src, dst):
+                    if n not in nodes:
+                        nodes.append(n)
+            vector_data = self.get_vector_data(nodes) if nodes else {}
+            data        = self.get_attribute_data(nodes) if nodes else {}
+            middle_data = self.get_attribute_data(middles) if middles else {}
 
-            processed = set()
-            for ctrl in sel:
-                if ctrl in processed:
-                    continue
+            for src, dst in actions:
+                self.mirror_pair(src, dst, data, vector_data, mirror_axis, snapshot)
+            for ctrl in middles:
+                self._mirror_middle_attrs(ctrl, middle_data.get(ctrl, {}), mirror_axis)
+        finally:
+            cmds.undoInfo(closeChunk=True)
 
-                # Skip excluded controls
-                if snapshot and snapshot.is_excluded(ctrl):
-                    om.MGlobal.displayInfo(
-                        "[Mirror Controls] Skipping excluded control '{}'".format(ctrl)
-                    )
-                    continue
+        n_mirrored = (len(actions) // 2 if is_flip else len(actions)) + len(middles)
+        self._report_mirror_result(eff_op, n_mirrored, unmatched, excluded)
 
-                partner = self.get_partner(ctrl, left_token, right_token, snapshot=snapshot)
-                if not partner or not cmds.objExists(partner):
-                    om.MGlobal.displayWarning(
-                        "No valid partner found for '{}'".format(ctrl)
-                    )
-                    continue
+    def _report_mirror_result(self, op, n_mirrored, unmatched, excluded):
+        """Summarise the mirror run — the tool must never finish silently."""
+        parts = ["[Mirror Controls] {}: {} control{} mirrored".format(
+            op, n_mirrored, "" if n_mirrored == 1 else "s")]
+        if excluded:
+            parts.append("{} excluded".format(excluded))
+        if unmatched:
+            parts.append("{} unmatched".format(len(unmatched)))
+        summary = ", ".join(parts) + "."
 
-                # Resolve partner to full DAG path
-                partner = _sel_leaf_to_dag.get(partner, _resolve_long(partner))
-
-                processed.add(ctrl)
-                # Check if partner is in selection (compare full paths)
-                if partner in sel:
-                    processed.add(partner)
-
-                if op == OperationType.left_to_right:
-                    if not _has_side_token(ctrl, left_token):
-                        continue
-                elif op == OperationType.right_to_left:
-                    if not _has_side_token(ctrl, right_token):
-                        continue
-                elif op == OperationType.mirror_middle:
-                    if _has_side_token(ctrl, left_token) or _has_side_token(ctrl, right_token):
-                        continue
-                elif op in (OperationType.flip, OperationType.flip_to_frame):
-                    if op == OperationType.flip_to_frame:
-                        self.set_time(self.get_flip_frame())
-
-                vector_data = self.get_vector_data([ctrl, partner])
-                data        = self.get_attribute_data([ctrl])
-                self.mirror_pair(ctrl, partner, data, vector_data, mirror_axis, snapshot)
-
+        if unmatched:
+            om.MGlobal.displayWarning(
+                summary + "  No mirror partner found for: {}{}  "
+                "Assign partners in the Character Snapshot Manual Pair Editor.".format(
+                    ", ".join(unmatched[:10]),
+                    " …" if len(unmatched) > 10 else "",
+                )
+            )
+        elif n_mirrored == 0:
+            om.MGlobal.displayWarning(
+                summary + "  Nothing matched the current operation — check the "
+                "operation direction, the selection and the rig's Character Snapshot."
+            )
         else:
-            # ---- Scene mode ----
-            controls  = self.get_controllers([left_token, right_token], prefix=prefix)
-            ctrl_list = controls["all"]
-
-            if not ctrl_list:
-                self.no_nurbs_in_scene()
-                cmds.undoInfo(closeChunk=True)
-                return
-
-            # Filter out excluded controls before heavy processing
-            if snapshot and snapshot.excluded_controls:
-                ctrl_list = [
-                    c for c in ctrl_list
-                    if not snapshot.is_excluded(c)
-                ]
-
-            vector_data = self.get_vector_data(ctrl_list)
-            data        = self.get_attribute_data(ctrl_list)
-
-            # Build a leaf-name → full-DAG-path lookup so that partner names
-            # returned by get_partner() (which are short namespace:name strings)
-            # can be resolved to the full DAG paths used as keys in vector_data
-            # and data.  Without this mapping, `partner not in vector_data`
-            # always fails because the formats don't match.
-            _leaf_to_dag = {}
-            for c in ctrl_list:
-                _leaf_to_dag[c.split("|")[-1]] = c
-
-            def _resolve(partner_short):
-                """Resolve short partner name to full DAG path, or return as-is."""
-                if partner_short in vector_data:
-                    return partner_short          # already a full path
-                return _leaf_to_dag.get(partner_short, partner_short)
-
-            if op == OperationType.left_to_right:
-                valid = [c for c in ctrl_list if _has_side_token(c, left_token)]
-                for ctrl in valid:
-                    partner = self.get_partner(ctrl, left_token, right_token, snapshot=snapshot)
-                    partner = _resolve(partner) if partner else None
-                    if not partner or partner not in vector_data:
-                        continue
-                    self.mirror_pair(ctrl, partner, data, vector_data, mirror_axis, snapshot)
-
-            elif op == OperationType.right_to_left:
-                valid = [c for c in ctrl_list if _has_side_token(c, right_token)]
-                for ctrl in valid:
-                    partner = self.get_partner(ctrl, left_token, right_token, snapshot=snapshot)
-                    partner = _resolve(partner) if partner else None
-                    if not partner or partner not in vector_data:
-                        continue
-                    self.mirror_pair(ctrl, partner, data, vector_data, mirror_axis, snapshot)
-
-            elif op in (OperationType.flip, OperationType.flip_to_frame):
-                if op == OperationType.flip_to_frame:
-                    self.set_time(self.get_flip_frame())
-                for ctrl in ctrl_list:
-                    partner = self.get_partner(ctrl, left_token, right_token, snapshot=snapshot)
-                    partner = _resolve(partner) if partner else None
-                    if not partner or partner not in vector_data:
-                        continue
-                    self.mirror_pair(ctrl, partner, data, vector_data, mirror_axis, snapshot)
-
-            elif op == OperationType.mirror_middle:
-                valid = [c for c in ctrl_list
-                         if not _has_side_token(c, left_token) and
-                            not _has_side_token(c, right_token)]
-                for ctrl in valid:
-                    for attr, value in data[ctrl].items():
-                        if "translate" in attr:
-                            if mirror_axis.upper() in attr:
-                                self.set_attr("{}.{}".format(ctrl, attr), -value)
-                            else:
-                                self.set_attr("{}.{}".format(ctrl, attr), value)
-                        elif "rotate" in attr:
-                            self.set_attr("{}.{}".format(ctrl, attr), -value)
-                        else:
-                            self.set_attr("{}.{}".format(ctrl, attr), value)
-
-            else:   # Selected (default) / Left to Right fallback
-                valid = [c for c in ctrl_list if _has_side_token(c, left_token)]
-                for ctrl in valid:
-                    partner = self.get_partner(ctrl, left_token, right_token, snapshot=snapshot)
-                    partner = _resolve(partner) if partner else None
-                    if not partner or partner not in vector_data:
-                        continue
-                    self.mirror_pair(ctrl, partner, data, vector_data, mirror_axis, snapshot)
-
-        cmds.undoInfo(closeChunk=True)
+            om.MGlobal.displayInfo(summary)
 
     # ------------------------------------------------------------------
-    # Snapshot resolution  (CharacterSnapshot first, RigSnapshot fallback)
+    # Snapshot resolution  (Character Snapshot only)
     # ------------------------------------------------------------------
 
-    def _load_snapshot_for_mirroring(self, prefix):
-        """Return a CharacterSnapshot adapter for *prefix*, or None.
+    def _load_snapshot_for_mirroring(self, prefix, announce=True):
+        """Return a Character Snapshot adapter for *prefix*, or None.
 
-        Mirror Controls now relies exclusively on the Animation Tool Kit
-        Character Snapshot. The legacy RigSnapshot path is no longer consulted
-        — capture or import a Character Snapshot via the Character Snapshot
-        tool to give Mirror Controls authoritative pair / exclusion / sign
-        data. Returns None when no Character Snapshot exists for *prefix*; the
-        caller is expected to prompt the user.
+        Mirror Controls relies exclusively on the Animation Tool Kit
+        Character Snapshot — capture or import one via the Character
+        Snapshot tool to give Mirror Controls authoritative pair / exclusion
+        / channel-rule data. Returns None when no Character Snapshot exists
+        for *prefix*; the caller is expected to prompt the user.
+
+        A stored snapshot whose controls have mostly vanished from the scene
+        (renamed namespace, different rig version) triggers a staleness
+        warning so animators know their match data needs attention.
         """
         if not prefix:
             return None
         cs_snap = _load_character_snapshot_for(prefix)
         if cs_snap is None:
             return None
-        om.MGlobal.displayInfo(
-            "[Mirror Controls] Using Character Snapshot for '{}'.".format(prefix)
-        )
-        return _CharacterSnapshotAdapter(cs_snap)
+        adapter = _CharacterSnapshotAdapter(cs_snap)
+        if announce:
+            om.MGlobal.displayInfo(
+                "[Mirror Controls] Using Character Snapshot for '{}'.".format(prefix)
+            )
+            report = adapter.validate_against_scene()
+            if report and report.get("stale"):
+                om.MGlobal.displayWarning(
+                    "[Mirror Controls] {}".format(report.get("message", ""))
+                )
+        return adapter
 
     def _prompt_create_character_snapshot(self, prefix):
         """Show the "no Character Snapshot" reminder. Return True if mirroring
         should continue (with the axis-vector heuristic), False if the user
         cancelled or asked to open the Character Snapshot tool instead.
         """
-        label = prefix if prefix and prefix != DEFAULT_PREFIX else "the selected rig"
+        label = prefix if prefix and prefix != DEFAULT_PREFIX else "this rig"
         cs_mod = _try_import_character_snapshot()
         cs_available = cs_mod is not None
 
         box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("Mirror Controls — No Character Snapshot")
+        box.setWindowTitle("Mirror Controls — Character Snapshot Required")
         box.setIcon(QtWidgets.QMessageBox.Warning)
         box.setTextFormat(QtCore.Qt.RichText)
         message = (
-            "<p>No <b>Character Snapshot</b> was found for "
-            "<b>{}</b>.</p>"
-            "<p>Mirror Controls uses the Character Snapshot tool as the "
-            "source of manual pairs, exclusions and sign-flip overrides for "
-            "the rig. Please create a Character Snapshot for this rig "
-            "before mirroring for accurate results.</p>"
+            "<p><b>Character Snapshot data was not found for {}.</b></p>"
+            "<p>Please create a Character Snapshot in the character's "
+            "default pose before using mirror matching. This allows ATK to "
+            "identify matching controls more reliably.</p>"
             "<p>You can continue without a snapshot — the tool will fall "
-            "back to the axis-vector heuristic, which may misfire on rigs "
-            "with non-standard naming or geometry.</p>"
+            "back to the axis-vector naming heuristic, which may misfire on "
+            "rigs with non-standard naming or geometry.</p>"
         ).format(label)
         box.setText(message)
 
@@ -3743,7 +2360,7 @@ class MirrorControls(QtWidgets.QDialog):
             open_btn.setToolTip("character_snapshot_v1_0_0 module not found on sys.path.")
         continue_btn = box.addButton("Continue Without Snapshot",
                                      QtWidgets.QMessageBox.DestructiveRole)
-        cancel_btn = box.addButton("Cancel", QtWidgets.QMessageBox.RejectRole)
+        box.addButton("Cancel", QtWidgets.QMessageBox.RejectRole)
         box.setDefaultButton(open_btn if cs_available else continue_btn)
         box.exec()
 
@@ -3758,35 +2375,19 @@ class MirrorControls(QtWidgets.QDialog):
             return False
         if clicked is continue_btn:
             return True
-        # cancel_btn or dialog dismissed
+        # cancel or dialog dismissed
         return False
 
-    # ------------------------------------------------------------------
-    # Scene-node helpers
-    # ------------------------------------------------------------------
-
-    def set_base_control(self):
-        sel = cmds.ls(selection=True)
-        if not sel:
-            om.MGlobal.displayError("Please select a base control before using 'Set Base Control'.")
-            return
-        base_ctrl = sel[0]
-        node      = SNAPSHOT_NODE
-        if not cmds.objExists(node):
-            node = cmds.createNode("transform", name=node)
-            cmds.setAttr("{}.visibility".format(node), 0)
-        for attr, val in [("baseControl",  base_ctrl),
-                          ("leftToken",    self.get_left_name()),
-                          ("rightToken",   self.get_right_name())]:
-            if not cmds.attributeQuery(attr, node=node, exists=True):
-                cmds.addAttr(node, longName=attr, dataType="string")
-            cmds.setAttr("{}.{}".format(node, attr), val, type="string")
-        om.MGlobal.displayInfo(
-            "Base control and naming tokens stored on node '{}'.".format(node)
-        )
-
     def no_nurbs_in_scene(self):
-        om.MGlobal.displayError("Couldn't find nurbsCurve or nurbsSurface in scene.")
+        om.MGlobal.displayError(
+            "[Mirror Controls] Couldn't find any NURBS controls to mirror."
+        )
+        QtWidgets.QMessageBox.warning(
+            self, "No Controls Found",
+            "No NURBS controls were found to mirror.\n"
+            "Reference the rig into the scene (or check the Character "
+            "selection) and try again."
+        )
 
     # ------------------------------------------------------------------
     # Flip Sign Rules
@@ -3804,8 +2405,7 @@ class MirrorControls(QtWidgets.QDialog):
         This gives instant feedback and a keyable corrected channel value.
 
         Overrides are stored in the Character Snapshot's metadata (under
-        'mirror_controls_flip_signs'). Mirror Controls relies exclusively on
-        the Character Snapshot tool, so a Character Snapshot must exist for
+        'mirror_controls_flip_signs'), so a Character Snapshot must exist for
         the selected rig.
         """
         sel = cmds.ls(selection=True, long=True)
@@ -3818,21 +2418,20 @@ class MirrorControls(QtWidgets.QDialog):
             return
 
         prefix   = self._resolve_prefix_for_controls(sel)
-        snapshot = self._load_snapshot_for_mirroring(prefix)
+        snapshot = self._load_snapshot_for_mirroring(prefix, announce=False)
         if snapshot is None:
-            label = prefix if prefix and prefix != DEFAULT_PREFIX else "the selected rig"
+            label = prefix if prefix and prefix != DEFAULT_PREFIX else "this rig"
             cs_mod = _try_import_character_snapshot()
 
             box = QtWidgets.QMessageBox(self)
-            box.setWindowTitle("Mirror Controls — No Character Snapshot")
+            box.setWindowTitle("Mirror Controls — Character Snapshot Required")
             box.setIcon(QtWidgets.QMessageBox.Warning)
             box.setTextFormat(QtCore.Qt.RichText)
             box.setText(
-                "<p>No <b>Character Snapshot</b> was found for "
-                "<b>{}</b>.</p>"
+                "<p><b>Character Snapshot data was not found for {}.</b></p>"
                 "<p>The ± Flip Sign override is stored on the Character "
-                "Snapshot for the rig, so a snapshot must exist before sign "
-                "overrides can be saved.</p>".format(label)
+                "Snapshot for the rig, so please create a Character Snapshot "
+                "in the character's default pose first.</p>".format(label)
             )
             open_btn   = box.addButton("Open Character Snapshot…",
                                        QtWidgets.QMessageBox.AcceptRole)
@@ -3851,12 +2450,16 @@ class MirrorControls(QtWidgets.QDialog):
 
         flipped_on  = []
         flipped_off = []
-        for ctrl in sel:
-            leaf = ctrl.split("|")[-1]
-            new_state = snapshot.toggle_flip_sign(ctrl)
-            self._apply_live_flip_fix(ctrl, snapshot)
-            label = leaf.split(":")[-1] if ":" in leaf else leaf
-            (flipped_on if new_state else flipped_off).append(label)
+        cmds.undoInfo(openChunk=True)
+        try:
+            for ctrl in sel:
+                leaf = ctrl.split("|")[-1]
+                new_state = snapshot.toggle_flip_sign(ctrl)
+                self._apply_live_flip_fix(ctrl, snapshot)
+                label = leaf.split(":")[-1] if ":" in leaf else leaf
+                (flipped_on if new_state else flipped_off).append(label)
+        finally:
+            cmds.undoInfo(closeChunk=True)
 
         snapshot.save()
         self._refresh_snapshot_status()
@@ -3925,76 +2528,59 @@ class MirrorControls(QtWidgets.QDialog):
             "<h4>① Quick Start — Mirror a Pose</h4>"
             "<ol>"
             "<li>Select the rig controls you want to mirror (or leave the selection "
-            "empty to process all controls in the scene).</li>"
+            "empty to process all controls of the active rig).</li>"
             "<li>Choose the <b>Operation</b> (e.g. Left to Right, Flip, Selected).</li>"
             "<li>Click the <b>⟳ Mirror</b> button.</li>"
             "</ol>"
 
-            "<h4>② Snapshot System (Recommended)</h4>"
-            "<p>The snapshot system gives more accurate results than the default "
-            "axis-vector heuristic by storing per-attribute rules for every control.</p>"
+            "<h4>② Character Snapshot (Required for Reliable Matching)</h4>"
+            "<p>Mirror Controls reads all of its matching data from the Animation "
+            "Tool Kit <b>Character Snapshot</b>: control lists, left/right "
+            "classification, mirror partners (automatic and manual), exclusions "
+            "and per-channel flip rules.</p>"
             "<ol>"
-            "<li>Pose the rig at its <b>rest / bind pose</b> (all controls zeroed).</li>"
-            "<li>Click <b>◉ Take Snapshot</b> — this samples every control and "
-            "assigns default copy/negate/ignore rules.</li>"
-            "<li>The snapshot is stored in the Maya scene file and persists across saves.</li>"
+            "<li>Pose the rig at its <b>default pose</b> (all controls zeroed).</li>"
+            "<li>Select any control on the rig and click <b>◉ Take Snapshot</b>.</li>"
+            "<li>The snapshot is stored in the Maya scene and persists across saves.</li>"
             "</ol>"
 
-            "<h4>③ Editing Snapshot Rules</h4>"
-            "<p>Click <b>✎ Edit Rules</b> to open the Snapshot Editor.  Each attribute "
-            "on each control has a dropdown (copy / negate / ignore).  Changes are "
-            "written back when you click <b>Save to Scene</b>.</p>"
+            "<h4>③ Automatic Matching</h4>"
+            "<p>Partners are found from the snapshot's manual pairs first, then the "
+            "partner recorded at snapshot time, then by swapping naming tokens.  "
+            "Common conventions are tried automatically: <tt>lf/rt</tt>, "
+            "<tt>lt/rt</tt>, <tt>L/R</tt> (any position), <tt>left/right</tt> "
+            "(any casing, including camelCase), <tt>lf/rf</tt> and more.</p>"
 
             "<h4>④ Manual Pair Editor</h4>"
-            "<p>If the automatic name-matching cannot find a mirror partner for a control "
-            "(e.g. the rig uses non-standard naming), open the <b>⇌ Manual Pairs</b> editor.</p>"
-            "<ul>"
-            "<li>Select a control in the Maya viewport, then click <b>⊕ Src</b> or <b>⊕ Prt</b> "
-            "to assign it as source or partner.</li>"
-            "<li>Use <b>Exclude</b> to permanently skip internal rig nodes.</li>"
-            "<li>Click <b>Save to Scene</b> to persist your assignments.</li>"
-            "</ul>"
+            "<p>If automatic matching cannot find a partner, click "
+            "<b>⇌ Manual Pairs</b> — this opens the Character Snapshot Manual "
+            "Pair Editor.  Pairs you save there are validated against the scene "
+            "and shared by every ATK tool.</p>"
 
-            "<h4>⑤ Flip Sign Rules</h4>"
-            "<p>If a control mirrors with the <b>wrong sign</b> (values are positive when "
-            "they should be negative, or vice versa) due to how the rig was built:</p>"
-            "<ol>"
-            "<li>Select the problematic control(s) in the Maya viewport.</li>"
-            "<li>Click <b>± Flip Sign</b> — this toggles all copy ↔ negate rules "
-            "for those controls.</li>"
-            "<li>Changes are saved to the snapshot immediately.</li>"
-            "</ol>"
+            "<h4>⑤ Channel Flip Rules</h4>"
+            "<p>Each channel's copy/negate behaviour is auto-detected from the "
+            "default-pose snapshot (e.g. if the left IK hand rests at "
+            "<tt>tx&nbsp;=&nbsp;+5</tt> and the right at <tt>tx&nbsp;=&nbsp;−5</tt>, "
+            "translateX is negated when mirrored).  Click <b>✎ Edit Rules</b> to "
+            "review and override any channel (copy / negate / ignore).  "
+            "<b>± Flip Sign</b> inverts every mirrored channel of the selected "
+            "controls as a whole-control override.</p>"
 
             "<h4>⑥ Per-Character Snapshots</h4>"
-            "<p>Snapshots are stored <b>per character rig</b>, keyed by namespace prefix "
-            "(e.g. <tt>ProRigs_Chris_v01_10_L</tt>).  Multiple rigs in one scene each "
-            "get their own independent snapshot data.</p>"
-            "<ul>"
-            "<li><b>Auto-detection:</b> when you select any controller and click "
-            "Take Snapshot, the tool detects the namespace from your selection and "
-            "automatically expands to capture <i>all</i> controls sharing that namespace.</li>"
-            "<li><b>Character dropdown:</b> use the <b>Character</b> combobox in the "
-            "Snapshot Tools section to switch between stored character rigs.</li>"
-            "<li><b>Manage:</b> click <b>📋 Manage</b> (or Tools &gt; Manage Character "
-            "Snapshots) to export snapshots as <tt>.json</tt> files, import them into "
-            "other scenes, or delete character data you no longer need.</li>"
-            "<li><b>Legacy migration:</b> if you open a scene with an older single-snapshot "
-            "format, it is automatically migrated to the new per-character system on first "
-            "access — no action needed.</li>"
-            "</ul>"
+            "<p>Snapshots are stored <b>per character rig</b>, keyed by namespace "
+            "prefix.  Use the <b>Character</b> dropdown to switch rigs and "
+            "<b>📋 Manage</b> to open the Character Snapshot tool (export/import "
+            "JSON, rename prefixes, delete).</p>"
 
             "<h4>⑦ Naming Convention</h4>"
-            "<p>The tool detects left/right controls by looking for naming tokens "
-            "as delimited segments in the control name (separated by underscores).</p>"
-            "<p>Default tokens: <b>lf</b> and <b>rt</b><br>"
-            "Example: <tt>ac_<b>lf</b>_handIK</tt> ↔ <tt>ac_<b>rt</b>_handIK</tt></p>"
-            "<p>If your rig uses different tokens (e.g. <tt>L</tt> / <tt>R</tt>), "
-            "type them in the Naming Convention fields.</p>"
+            "<p>The Left/Right token fields are used when taking a snapshot and as "
+            "a fallback when mirroring without one.  Tokens match as delimited "
+            "segments only — <tt>rt</tt> never matches inside <tt>shirt</tt>.</p>"
 
             "<h4>⑧ Preserve Translation / Rotation</h4>"
-            "<p>These checkboxes only apply when <b>no snapshot</b> is loaded.  "
-            "When checked, the corresponding channels are copied exactly rather "
-            "than being negated by the axis heuristic.</p>"
+            "<p>These checkboxes only apply to channels with <b>no snapshot "
+            "rule</b>.  When checked, the corresponding channels are copied "
+            "exactly rather than negated by the axis heuristic.</p>"
         )
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle("How To Use — Mirror Controls")
@@ -4010,7 +2596,7 @@ class MirrorControls(QtWidgets.QDialog):
     def show_about(self):
         about_text = (
             "<h3>Mirror Controls</h3>"
-            "<p style='color:#8ab4f8;'>Version 2.3.1</p>"
+            "<p style='color:#8ab4f8;'>Version 2.3.2</p>"
             "<p style='color:#888; font-size:10px;'>Formerly digetMirrorControl</p>"
             "<hr>"
 
@@ -4022,43 +2608,23 @@ class MirrorControls(QtWidgets.QDialog):
             "<td>David Shepstone</td></tr>"
             "</table>"
 
-            "<h4>What's New in 2.3.1</h4>"
+            "<h4>What's New in 2.3.2</h4>"
             "<ul>"
-            "<li><b>Character Snapshot is the sole snapshot source</b> — the "
-            "legacy RigSnapshot fallback has been removed from runtime "
-            "mirroring, the prefix combobox, the status label and the ± "
-            "Flip Sign button.</li>"
-            "<li><b>± Flip Sign now stores per-control overrides</b> in the "
-            "Character Snapshot's metadata. Flipped controls have their "
-            "translate / rotate values inverted before mirroring, so the "
-            "partner control receives the opposite sign on those channels.</li>"
-            "<li><b>Cleaner reminder popup</b> — clicking ± Flip Sign without "
-            "a Character Snapshot for the rig now offers a one-click launcher "
-            "for the Character Snapshot tool.</li>"
-            "</ul>"
-
-            "<h4>What's New in 2.3.0</h4>"
-            "<ul>"
-            "<li><b>Renamed to Mirror Controls</b> — the tool now lives under a "
-            "clearer name in the Animation Tool Kit toolbar.</li>"
-            "<li><b>Character Snapshot integration</b> — when a Character Snapshot "
-            "exists for the selected rig prefix it is used as the authoritative "
-            "source of manual pairs, exclusions and side classification.</li>"
-            "<li><b>Snapshot reminder popup</b> — when the selected rig has no "
-            "Character Snapshot the tool prompts the user to create one for "
-            "accurate mirroring, with a one-click launcher for the Character "
-            "Snapshot tool.</li>"
-            "</ul>"
-
-            "<h4>Previous Highlights</h4>"
-            "<ul>"
-            "<li><b>v2.2.5</b> — Per-character snapshots stored per rig namespace "
-            "prefix; ± Flip Sign Rules; word-boundary token matching; DAG path "
-            "resolution fixes; Manual Pair Editor edit-preservation fixes.</li>"
-            "<li><b>v2.2.0</b> — Manual Pair Editor for per-rig partner overrides "
-            "and control exclusions.</li>"
-            "<li><b>v2.1.0</b> — Rig Snapshot system with per-attribute mirror rules "
-            "(copy / negate / ignore) and the Snapshot Editor.</li>"
+            "<li><b>Character Snapshot is the single source of truth</b> — the "
+            "duplicated legacy snapshot system was removed; snapshots, manual "
+            "pairs, exclusions and channel rules are all read from and written "
+            "to the Character Snapshot scene data (legacy data is migrated "
+            "automatically).</li>"
+            "<li><b>Multi-convention automatic matching</b> — lt/rt, L/R, "
+            "left/right, lf/rf and more are tried automatically, with "
+            "scene-validated results.</li>"
+            "<li><b>Automatic channel-flip detection</b> from the rig's "
+            "default pose, with per-channel manual overrides and the "
+            "± Flip Sign whole-control override.</li>"
+            "<li><b>Fixes</b> — Flip now truly swaps both sides in selection "
+            "mode, Mirror Middle works on selections, 'Not Selected' is "
+            "implemented, undo chunks are exception-safe, and every run "
+            "reports a clear summary.</li>"
             "</ul>"
 
             "<p style='color:#888; font-size:10px;'>Python · PySide6 · Maya 2025+</p>"
