@@ -3,7 +3,7 @@ Inbetweener Tool - Maya Animation Breakdown Tool
 A high-performance tweening utility for Maya animators to break down poses and manage arcs.
 
 Author: Pipeline Tools
-Version: 2.2.2
+Version: 2.2.3
 """
 
 import math
@@ -1800,6 +1800,7 @@ class VertexTickedSlider(QtWidgets.QSlider):
                 # Click on the track: jump the handle to the click position.
                 # Clicks on the visible handle box grab it without jumping.
                 self.setSliderPosition(self._value_at(event.pos()))
+            self.update()
             event.accept()
             return
         super(VertexTickedSlider, self).mousePressEvent(event)
@@ -1815,6 +1816,7 @@ class VertexTickedSlider(QtWidgets.QSlider):
         if self._groove_drag and event.button() == QtCore.Qt.LeftButton:
             self._groove_drag = False
             self.setSliderDown(False)             # emits sliderReleased
+            self.update()
             event.accept()
             return
         super(VertexTickedSlider, self).mouseReleaseEvent(event)
@@ -1876,19 +1878,53 @@ class VertexTickedSlider(QtWidgets.QSlider):
             ])
             painter.drawPolygon(diamond)
 
-        # --- Handle: dark rounded box with the mode label in accent color ---
+        # --- Handle: rounded box with the mode label ---
+        # Idle: dark box with the label in the accent color.
+        # While dragging: box fills with the accent color (dark label) so the
+        # active slider reads at a glance.
+        dragging = self.isSliderDown()
         box_rect = self._handle_box_rect()
-        painter.setPen(QtGui.QPen(QtGui.QColor(110, 110, 110), 1.2))
-        painter.setBrush(QtGui.QColor(58, 58, 58))
+        if dragging:
+            painter.setPen(QtGui.QPen(QtGui.QColor(accent).darker(150), 1.2))
+            painter.setBrush(accent)
+            label_color = QtGui.QColor(34, 34, 34)
+        else:
+            painter.setPen(QtGui.QPen(QtGui.QColor(110, 110, 110), 1.2))
+            painter.setBrush(QtGui.QColor(58, 58, 58))
+            label_color = accent
         painter.drawRoundedRect(box_rect, 5, 5)
 
+        font = QtGui.QFont()
+        font.setPointSize(9)
+        font.setBold(True)
+        painter.setFont(font)
         if self.label_text:
-            painter.setPen(QtGui.QPen(accent))
-            font = QtGui.QFont()
-            font.setPointSize(9)
-            font.setBold(True)
-            painter.setFont(font)
+            painter.setPen(QtGui.QPen(label_color))
             painter.drawText(box_rect, QtCore.Qt.AlignCenter, self.label_text)
+
+        # --- Live value readout while dragging ---
+        # Shows the current percentage inside the track (right end, or left
+        # end when the handle is over it). Disappears again on release.
+        if dragging:
+            txt = "{}%".format(self.value())
+            fm = QtGui.QFontMetricsF(font)
+            try:
+                text_w = fm.horizontalAdvance(txt)
+            except AttributeError:
+                text_w = fm.width(txt)
+            pad = 12.0
+            tx = track.right() - pad - text_w
+            if box_rect.right() >= tx - 8.0:
+                tx = track.left() + pad
+            text_rect = QtCore.QRectF(tx, cy - fm.height() / 2.0,
+                                      text_w, fm.height())
+            # Mask the ticks behind the readout so the number stays legible
+            mask = text_rect.adjusted(-5, -2, 5, 2)
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QColor(46, 46, 46))
+            painter.drawRoundedRect(mask, 3, 3)
+            painter.setPen(QtGui.QPen(QtGui.QColor(175, 175, 175)))
+            painter.drawText(text_rect, QtCore.Qt.AlignCenter, txt)
 
         painter.end()
 
@@ -2131,7 +2167,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
             parent = shiboken.wrapInstance(int(ptr), QtWidgets.QWidget)
         super(VertexTweenerUI, self).__init__(parent)
         
-        self.setWindowTitle("Inbetweener v2.2.2")
+        self.setWindowTitle("Inbetweener v2.2.3")
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
         self.setMinimumWidth(420)
 
@@ -3068,7 +3104,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
 
     def show_help_dialog(self):
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Inbetweener v2.2.2 - Help")
+        dialog.setWindowTitle("Inbetweener v2.2.3 - Help")
         dialog.setMinimumSize(520, 600)
         layout = QtWidgets.QVBoxLayout(dialog)
 
@@ -3090,7 +3126,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
             <p>The <b>Inbetweener Tool</b> provides five slider modes for creating breakdowns
             and refining animation curves in Autodesk Maya. It works with <b>transforms, joints,
             NURBS curve controls</b>, and any object with keyable attributes.</p>
-            <p>Version 2.2.2 &mdash; Pipeline Tools</p>
+            <p>Version 2.2.3 &mdash; Pipeline Tools</p>
         </div>
 
         <h2>Local Tweener (LT)</h2>

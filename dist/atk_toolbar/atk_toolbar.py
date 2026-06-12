@@ -766,9 +766,18 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
             main.addWidget(unavailable)
             return
 
+        mode_names = {
+            "LT": "Local Tweener",
+            "WT": "World Tweener (ONE controller at a time)",
+            "BN": "Blend to Neighbor",
+            "BD": "Blend to Default",
+            "BE": "Blend to Ease",
+        }
         self.slider_type_combo = QtWidgets.QComboBox()
-        for key in self.SLIDER_TYPES:
+        for idx, key in enumerate(self.SLIDER_TYPES):
             self.slider_type_combo.addItem(key)
+            self.slider_type_combo.setItemData(
+                idx, mode_names.get(key, key), QtCore.Qt.ToolTipRole)
         self.slider_type_combo.setToolTip(
             "Choose Inbetweener slider mode\n"
             "LT: Local Tweener\n"
@@ -777,7 +786,10 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
             "BD: Blend to Default\n"
             "BE: Blend to Ease"
         )
-        self.slider_type_combo.setFixedWidth(54)
+        self.slider_type_combo.setFixedWidth(56)
+        self.slider_type_combo.setFixedHeight(24)
+        self.slider_type_combo.setStyleSheet(self._combo_style(
+            self._config.get("LT", {}).get("color", "#6BB5FF")))
         main.addWidget(self.slider_type_combo)
 
         self.slider = self._vt.VertexTickedSlider(QtCore.Qt.Horizontal, label_text="LT")
@@ -798,6 +810,26 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
         except Exception as exc:
             cmds.warning("ATK Toolbar: failed to initialize Inbetweener slider defaults: {}".format(exc))
 
+    @staticmethod
+    def _combo_style(accent):
+        """Dark, rounded combo styling; the selected mode reads in its
+        accent color and the popup list matches the toolbar's dark theme."""
+        return (
+            "QComboBox {"
+            "  background: #3a3a3a; color: ACCENT; border: 1px solid #555;"
+            "  border-radius: 4px; padding: 2px 2px 2px 8px;"
+            "  font-weight: bold; font-size: 11px;"
+            "}"
+            "QComboBox:hover { background: #444444; border-color: #777; }"
+            "QComboBox:on { background: #333333; border-color: ACCENT; }"
+            "QComboBox::drop-down { border: none; width: 16px; }"
+            "QComboBox QAbstractItemView {"
+            "  background: #2f2f2f; color: #dddddd; border: 1px solid #555;"
+            "  selection-background-color: ACCENT; selection-color: #000000;"
+            "  outline: none; padding: 2px;"
+            "}"
+        ).replace("ACCENT", accent)
+
     def _on_type_changed(self, key):
         try:
             if key not in self._config:
@@ -807,6 +839,8 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
             self.slider.is_tw = cfg["is_tw"]
             self.slider.is_world = cfg["is_world"]
             self.slider.label_text = cfg["label"]
+            self.slider_type_combo.setStyleSheet(
+                self._combo_style(cfg.get("color", "#6BB5FF")))
             overshoot_key = getattr(self._vt, "PREF_OVERSHOOT_MODE", "vertexTweener_overshootMode")
             overshoot = self._pref_bool(overshoot_key, False)
             # Block signals so the reset never fires _on_changed and applies
