@@ -50,6 +50,20 @@ Author:
     David Shepstone
 
 Version:
+    1.3.0 - Manual Pair Editor and import workflow improvements:
+              * Fixed the Pick / Exclude cell buttons being clipped at the
+                bottom of table rows (rows are now 36px and button height is
+                stylesheet-driven instead of fighting setFixedHeight).
+              * Centre / unique controls (root, spine, hair, tail, ...) that
+                carry a side-like token but have no resolvable partner are no
+                longer reported as "needs manual pairing" — at snapshot time
+                or in the Manual Pair Editor. Mirroring is unaffected: any
+                control whose partner CAN be resolved still pairs normally.
+              * Import / Export JSON buttons restored in the manager panel.
+              * Importing a snapshot whose prefix has no match in the scene
+                now pops up a prefix-remap dialog (with scene-namespace
+                suggestions and an Apply button) so the imported control set
+                is rewritten to this scene's namespace in one step.
     1.2.0 - UI cleanup pass:
               * Removed redundant left-panel buttons (Import JSON, Export
                 JSON, Delete) and the Update / Replace Prefix button — all
@@ -104,7 +118,7 @@ import maya.OpenMaya as om
 # ---------------------------------------------------------------------------
 
 TOOL_NAME       = "Character Snapshot"
-TOOL_VERSION    = "1.2.0"
+TOOL_VERSION    = "1.3.0"
 
 SNAPSHOT_NODE   = "characterSnapshotData"
 SNAPSHOT_ATTR   = "characterSnapshots"     # multi-prefix store
@@ -243,6 +257,34 @@ def _has_side_token(ctrl, token):
     base = leaf.split(":")[-1] if ":" in leaf else leaf
     for _m in _iter_token_matches(base, token):
         return True
+    return False
+
+
+# Name fragments that mark a control as a probable centre / unique
+# controller (root, spine, hair, tail, ...). Used ONLY to keep obviously
+# partner-less controls out of "needs manual pairing" lists and reports —
+# never to block mirroring: a control whose partner CAN be resolved still
+# pairs and mirrors normally, whatever its name.
+CENTER_NAME_HINTS = [
+    "root", "spine", "cog", "pelvis", "chest", "torso", "neck", "head",
+    "jaw", "mouth", "tongue", "teeth", "nose", "chin", "hair", "tail",
+    "belly", "stomach", "body", "main", "master", "global", "placement",
+    "world", "center", "centre", "middle",
+]
+
+
+def _is_probable_center(base_name):
+    """True if *base_name* looks like a centre / unique control.
+
+    Underscore segments are compared prefix-wise so 'hairA_1', 'spine01'
+    and 'tailEnd_Ctrl' all match their hints.
+    """
+    for seg in base_name.lower().split("_"):
+        if not seg:
+            continue
+        for hint in CENTER_NAME_HINTS:
+            if seg.startswith(hint):
+                return True
     return False
 
 
@@ -1324,7 +1366,9 @@ class CharacterSnapshot(object):
             if partner_ok:
                 paired.add(leaf)
                 paired.add(partner.split("|")[-1])
-            else:
+            elif not _is_probable_center(leaf.split(":")[-1]):
+                # Centre-looking controls (root/spine/hair/...) without a
+                # resolvable partner are treated as unique, not failures.
                 unpaired.append(leaf)
         return len(paired) // 2, unpaired
 
@@ -1675,6 +1719,7 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
         self.table.setColumnWidth(self.COL_PICK,   170)
         self.table.setColumnWidth(self.COL_EXCL,   110)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(36)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(False)
@@ -1787,9 +1832,13 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
                 # the common conventions): only flag as unpaired if the
                 # control is actually sided. Centre / unique controls
                 # (e.g. ac_cn_jaw, spine, head) have no mirror partner by
-                # design and are silently skipped.
+                # design and are silently skipped — as are controls whose
+                # names mark them as centre rig parts (root, spine, hair,
+                # tail, ...) even when they carry a side-like token, since
+                # those are usually asymmetric one-offs.
                 base = leaf.split(":")[-1]
-                if _classify_side(base, left_token, right_token) != "middle":
+                if (_classify_side(base, left_token, right_token) != "middle"
+                        and not _is_probable_center(base)):
                     rows.append({
                         "status":      self.STATUS_UNPAIRED,
                         "source":      leaf,
@@ -1845,7 +1894,9 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
     def _insert_row(self, rd):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        self.table.setRowHeight(row, 30)
+        # 36px rows leave room for the 26px cell buttons plus margins —
+        # 30px rows clipped the buttons' bottom edge on Windows.
+        self.table.setRowHeight(row, 36)
         bg = self._BG.get(rd["status"], QtGui.QColor(50, 50, 50))
 
         def _item(text, align=QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, editable=False):
@@ -1889,10 +1940,13 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
 
         # Compact stylesheet for inline cell buttons — overrides the dialog-wide
         # QPushButton padding (5px 14px) which clips small labels in narrow cells.
+        # Height is constrained via the stylesheet only — mixing
+        # setFixedHeight() with a QSS min-height made the effective button
+        # box taller than the row and clipped it at the bottom.
         cell_btn_qss = (
             "QPushButton {"
-            "  padding: 2px 6px; min-height: 22px; min-width: 0px;"
-            "  font-size: 11px;"
+            "  padding: 1px 6px; min-height: 24px; max-height: 24px;"
+            "  min-width: 0px; font-size: 11px;"
             "}"
         )
 
@@ -1905,7 +1959,6 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
             btn_prt = QtWidgets.QPushButton("+ Prt")
             for b in (btn_src, btn_prt):
                 b.setStyleSheet(cell_btn_qss)
-                b.setFixedHeight(22)
                 b.setMinimumWidth(72)
                 b.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
             pick_lay.addWidget(btn_src)
@@ -1924,7 +1977,6 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
             btn = QtWidgets.QPushButton("Exclude")
             btn.clicked.connect(lambda _c=False, leaf=rd["source"]: self._toggle_excluded(leaf, True))
         btn.setStyleSheet(cell_btn_qss)
-        btn.setFixedHeight(22)
         btn.setMinimumWidth(96)
         btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         excl_lay.addWidget(btn)
@@ -2103,10 +2155,16 @@ class RenamePrefixDialog(QtWidgets.QDialog):
     stored snapshot. Mirrors Studio Library's pose prefix search/replace.
     """
 
-    def __init__(self, current_prefix, parent=None):
+    def __init__(self, current_prefix, parent=None, title=None, message=None):
         super().__init__(parent or maya_main_window())
         self.current_prefix = current_prefix
-        self.setWindowTitle("Update / Replace Prefix")
+        self._title   = title or "Update / Replace Prefix"
+        self._message = message or (
+            "Use this when the same rig is referenced in another scene under "
+            "a different namespace prefix. Every stored control name, manual "
+            "pair, and excluded entry will be rewritten to use the new prefix."
+        )
+        self.setWindowTitle(self._title)
         self.setStyleSheet(DARK_STYLESHEET)
         self.setMinimumWidth(460)
         self._build_ui()
@@ -2117,12 +2175,9 @@ class RenamePrefixDialog(QtWidgets.QDialog):
         layout.setSpacing(8)
 
         info = QtWidgets.QLabel(
-            "<b>Update / Replace Prefix</b><br>"
-            "<span style='color:#999;font-size:11px;'>"
-            "Use this when the same rig is referenced in another scene under "
-            "a different namespace prefix. Every stored control name, manual "
-            "pair, and excluded entry will be rewritten to use the new prefix."
-            "</span>"
+            "<b>{}</b><br>"
+            "<span style='color:#999;font-size:11px;'>{}</span>".format(
+                self._title, self._message)
         )
         info.setWordWrap(True)
         layout.addWidget(info)
@@ -2379,11 +2434,26 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         list_btn_row.addWidget(self.refresh_btn)
         left_lay.addLayout(list_btn_row)
 
-        # Import / Export / Delete live in the File menu — no duplicate
-        # buttons here keeps the panel compact and avoids accidental deletes.
+        list_btn_row2 = QtWidgets.QHBoxLayout()
+        self.import_btn = QtWidgets.QPushButton("Import JSON…")
+        self.import_btn.setToolTip(
+            "Import a rig snapshot from a .json file.\n"
+            "If the stored prefix doesn't match this scene you will be\n"
+            "prompted to remap it to the rig's namespace here."
+        )
+        self.export_btn = QtWidgets.QPushButton("Export JSON…")
+        self.export_btn.setToolTip(
+            "Save the selected rig snapshot as a .json file so it can be\n"
+            "reused in other scenes or shared with other animators."
+        )
+        list_btn_row2.addWidget(self.import_btn)
+        list_btn_row2.addWidget(self.export_btn)
+        left_lay.addLayout(list_btn_row2)
+
+        # Delete stays menu-only to avoid one-click accidental deletes.
         menu_hint = QtWidgets.QLabel(
             "<span style='color:#777;font-size:10px;'>"
-            "Import / Export / Delete are in the <b>File</b> menu."
+            "Delete Snapshot is in the <b>File</b> menu."
             "</span>"
         )
         menu_hint.setWordWrap(True)
@@ -2492,6 +2562,8 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         self.list_widget.currentItemChanged.connect(self._on_list_selection)
         self.new_btn.clicked.connect(self.create_snapshot)
         self.refresh_btn.clicked.connect(self._refresh_list)
+        self.import_btn.clicked.connect(self.import_snapshot)
+        self.export_btn.clicked.connect(self.export_selected)
         self.save_meta_btn.clicked.connect(self._save_details)
         self.manual_btn.clicked.connect(self.open_manual_pairs)
         self.select_btn.clicked.connect(self.select_controls_in_scene)
@@ -2556,7 +2628,7 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         for w in (self.rig_name_le, self.description_te,
                   self.left_token_le, self.right_token_le, self.mirror_axis_cb,
                   self.save_meta_btn, self.manual_btn,
-                  self.select_btn, self.resnap_btn):
+                  self.select_btn, self.resnap_btn, self.export_btn):
             w.setEnabled(enabled)
         if not enabled:
             self.prefix_le.setText("")
@@ -2917,6 +2989,49 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
                     )
                     return
 
+        # --- Scene-match check ---------------------------------------
+        # When none of the imported controls exist in this scene under the
+        # stored prefix (the rig was referenced under a different namespace),
+        # offer to remap the prefix right away so the snapshot works without
+        # a separate Update / Replace Prefix step.
+        report = snap.validate_against_scene()
+        if snap.control_count() and report["in_scene"] == 0:
+            shown = snap.prefix if snap.prefix != DEFAULT_PREFIX else "(no namespace)"
+            dlg = RenamePrefixDialog(
+                snap.prefix, parent=self,
+                title="Imported Prefix Not Found in Scene",
+                message=(
+                    "None of the imported snapshot's controls exist in this "
+                    "scene under the prefix '<b>{}</b>'.<br>"
+                    "Pick (or type) the namespace prefix this character's "
+                    "rig controls use in <i>this</i> scene and click "
+                    "<b>Apply</b> — every stored control name, manual pair "
+                    "and excluded entry will be rewritten to match.".format(shown)
+                ),
+            )
+            if dlg.exec() == QtWidgets.QDialog.Accepted:
+                new_prefix = dlg.get_new_prefix()
+                if new_prefix and new_prefix != snap.prefix:
+                    if new_prefix in list_prefixes():
+                        QtWidgets.QMessageBox.warning(
+                            self, "Prefix In Use",
+                            "A snapshot already exists for '{}'.\n"
+                            "The import keeps its original prefix — delete "
+                            "the existing snapshot first if you want to "
+                            "remap onto it.".format(new_prefix)
+                        )
+                    else:
+                        snap.rename_prefix(new_prefix)
+                        report = snap.validate_against_scene()
+            if report["in_scene"] == 0:
+                QtWidgets.QMessageBox.warning(
+                    self, "No Scene Match",
+                    "No imported controls were found in the scene under "
+                    "'{}'.\n\nThe snapshot was imported anyway — use "
+                    "Edit > Update / Replace Prefix… once the rig is "
+                    "referenced into the scene.".format(snap.prefix)
+                )
+
         snap.save_to_scene()
         self._refresh_list()
         for i in range(self.list_widget.count()):
@@ -2925,7 +3040,9 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
                 break
         QtWidgets.QMessageBox.information(
             self, "Imported",
-            "Imported '{}' ({} controls).".format(snap.prefix, snap.control_count()),
+            "Imported '{}' — {} controls, {} found in the current scene.".format(
+                snap.prefix, snap.control_count(), report["in_scene"]
+                if snap.control_count() else 0),
         )
 
     # ------------------------------------------------------------------
