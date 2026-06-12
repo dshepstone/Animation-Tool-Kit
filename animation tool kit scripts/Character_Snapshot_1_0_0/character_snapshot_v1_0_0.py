@@ -50,6 +50,14 @@ Author:
     David Shepstone
 
 Version:
+    1.4.0 - Manual Pair Editor: "Add From Selection" button. Controls the
+            list filters out automatically (centre-named, asymmetric, from
+            another prefix, ...) can now be added manually: select one
+            control in the viewport to add it as a source row, or select
+            two to add a ready-made source + partner pair. Added rows
+            persist across refreshes until saved (Save to Scene), excluded,
+            or the dialog is closed, and adding a row never discards edits
+            typed into other rows.
     1.3.0 - Manual Pair Editor and import workflow improvements:
               * Fixed the Pick / Exclude cell buttons being clipped at the
                 bottom of table rows (rows are now 36px and button height is
@@ -118,7 +126,7 @@ import maya.OpenMaya as om
 # ---------------------------------------------------------------------------
 
 TOOL_NAME       = "Character Snapshot"
-TOOL_VERSION    = "1.3.0"
+TOOL_VERSION    = "1.4.0"
 
 SNAPSHOT_NODE   = "characterSnapshotData"
 SNAPSHOT_ATTR   = "characterSnapshots"     # multi-prefix store
@@ -1631,8 +1639,13 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
       1. Select a control in the Maya viewport.
       2. Click  + Src  or  + Prt  to assign it to a row.
       3. Or type a namespace:nodeName directly into the Partner field.
-      4. Click "Exclude" to permanently skip a control.
-      5. Click "Save to Scene" — pairs are written into the snapshot.
+      4. Controls not listed (centre-filtered, asymmetric, etc.) can be added
+         manually: select them in the viewport and click "Add From
+         Selection" — one selected control adds a source row, two selected
+         controls add source + partner in one step.
+      5. Click "Exclude" to permanently skip a control.
+      6. Click "Save to Scene" — pairs are written into the snapshot.
+         Re-saving later updates the stored set in place.
     """
 
     STATUS_UNPAIRED = "unpaired"
@@ -1655,7 +1668,12 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
         self._snapshot  = CharacterSnapshot.load_from_scene(prefix) or CharacterSnapshot()
         if self._snapshot.prefix == DEFAULT_PREFIX and prefix:
             self._snapshot.prefix = prefix
-        self._rows_data = []
+        self._rows_data  = []
+        # Rows the user added explicitly via "Add From Selection":
+        # {source_leaf: {"full": dag_path, "partner": leaf_or_empty}}.
+        # They persist across refreshes until saved as a manual pair,
+        # excluded, or the dialog is closed.
+        self._user_added = {}
         self.setWindowTitle("Manual Pair Editor — {}".format(prefix or "(no rig)"))
         self.setMinimumWidth(860)
         self.resize(960, 620)
@@ -1676,8 +1694,10 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
 
         hint = QtWidgets.QLabel(
             "<i>Select a control in the Maya viewport, then click "
-            "<b>+ Src</b> or <b>+ Prt</b> to assign it to a row. "
-            "Or type a <tt>namespace:nodeName</tt> directly in the field.</i>"
+            "<b>+ Src</b> or <b>+ Prt</b> to assign it to a row, or type a "
+            "<tt>namespace:nodeName</tt> directly in the field. "
+            "A control that isn't listed? Select it (optionally with its "
+            "match) and click <b>Add From Selection</b>.</i>"
         )
         hint.setWordWrap(True)
         root.addWidget(hint)
@@ -1729,11 +1749,23 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
         root.addWidget(self.summary_label)
 
         btn_row = QtWidgets.QHBoxLayout()
+        self.add_sel_btn      = QtWidgets.QPushButton("Add From Selection")
+        self.add_sel_btn.setObjectName("snapshotBtn")
+        self.add_sel_btn.setToolTip(
+            "Add the selected viewport control(s) to the list as a manual\n"
+            "pair row.\n\n"
+            "Select ONE control to add it as a source (fill its partner\n"
+            "afterwards), or select TWO controls to add source + partner in\n"
+            "one step (first selected = source, second = partner).\n\n"
+            "Use this for controls the list filters out automatically, e.g.\n"
+            "centre-named controls (hair, spine, ...) that do have a mirror."
+        )
         self.refresh_btn      = QtWidgets.QPushButton("Refresh")
         self.clear_manual_btn = QtWidgets.QPushButton("Clear All Manual Pairs")
         self.save_btn         = QtWidgets.QPushButton("Save to Scene")
         self.save_btn.setObjectName("primaryBtn")
         self.close_btn        = QtWidgets.QPushButton("Close")
+        btn_row.addWidget(self.add_sel_btn)
         btn_row.addWidget(self.refresh_btn)
         btn_row.addWidget(self.clear_manual_btn)
         btn_row.addStretch()
@@ -1745,6 +1777,7 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
         self._flt_all.toggled.connect(self._apply_filter)
         self._flt_manual.toggled.connect(self._apply_filter)
         self._flt_excluded.toggled.connect(self._apply_filter)
+        self.add_sel_btn.clicked.connect(self._on_add_from_selection)
         self.refresh_btn.clicked.connect(self._on_refresh)
         self.clear_manual_btn.clicked.connect(self._on_clear_manual)
         self.save_btn.clicked.connect(self._on_save)
@@ -1757,10 +1790,18 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
     def _leaf(ctrl):
         return ctrl.split("|")[-1]
 
-    def _refresh(self):
-        self._snapshot = CharacterSnapshot.load_from_scene(self._prefix) or CharacterSnapshot()
-        if self._snapshot.prefix == DEFAULT_PREFIX and self._prefix:
-            self._snapshot.prefix = self._prefix
+    def _refresh(self, reload=True):
+        """Rebuild the table rows.
+
+        reload=False keeps the current in-memory snapshot (with any
+        collected-but-unsaved edits) instead of re-reading the scene store —
+        used by "Add From Selection" so adding a row never discards edits
+        typed into other rows.
+        """
+        if reload:
+            self._snapshot = CharacterSnapshot.load_from_scene(self._prefix) or CharacterSnapshot()
+            if self._snapshot.prefix == DEFAULT_PREFIX and self._prefix:
+                self._snapshot.prefix = self._prefix
 
         left_token  = self._snapshot.left_token
         right_token = self._snapshot.right_token
@@ -1780,12 +1821,33 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
             if self._leaf(snap_ctrl) not in scene_leaves:
                 combined.append(snap_ctrl)
 
+        # User-added entries that have since been saved as manual pairs or
+        # excluded are now represented by their normal rows — drop them.
+        for ua_leaf in list(self._user_added.keys()):
+            if ua_leaf in manual or ua_leaf in excluded:
+                del self._user_added[ua_leaf]
+
         rows = []
         seen = set()
 
         for ctrl in combined:
             leaf = self._leaf(ctrl)
             if leaf in seen:
+                continue
+
+            # Explicitly added by the user — render as an editable manual
+            # row even if it would otherwise be auto-paired or filtered out.
+            if leaf in self._user_added:
+                ua = self._user_added[leaf]
+                rows.append({
+                    "status":      self.STATUS_MANUAL,
+                    "source":      leaf,
+                    "partner":     ua.get("partner", ""),
+                    "source_full": ua.get("full") or ctrl,
+                    "editable":    True,
+                    "user_added":  True,
+                })
+                seen.add(leaf)
                 continue
 
             if leaf in excluded:
@@ -1847,6 +1909,21 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
                         "editable":    True,
                     })
                 seen.add(leaf)
+
+        # User-added controls that didn't appear in the scene/snapshot scan
+        # at all (e.g. a control from outside this prefix) still get a row.
+        for ua_leaf, ua in self._user_added.items():
+            if ua_leaf in seen:
+                continue
+            rows.append({
+                "status":      self.STATUS_MANUAL,
+                "source":      ua_leaf,
+                "partner":     ua.get("partner", ""),
+                "source_full": ua.get("full", ua_leaf),
+                "editable":    True,
+                "user_added":  True,
+            })
+            seen.add(ua_leaf)
 
         self._rows_data = rows
 
@@ -2060,6 +2137,8 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
             else:
                 partner = rd.get("partner", "").strip()
             visible_sources.add(source)
+            if rd.get("user_added") and source in self._user_added:
+                self._user_added[source]["partner"] = partner
             if partner:
                 new_manual[source] = partner
         for src in list(self._snapshot.manual_pairs.keys()):
@@ -2128,6 +2207,77 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
                 )
             )
         self._refresh()
+
+    def _on_add_from_selection(self):
+        """Add the selected viewport control(s) to the list as a manual row.
+
+        One selected control becomes a source row with an empty partner;
+        two selected controls become a pre-filled source + partner pair
+        (first selected = source). The row is editable like any other and
+        is persisted by "Save to Scene".
+        """
+        sel = cmds.ls(selection=True, long=True) or []
+        if not sel:
+            QtWidgets.QMessageBox.information(
+                self, "Nothing Selected",
+                "Select a control in the Maya viewport first.\n\n"
+                "Tip: select the control AND its mirror match together to "
+                "add them as a ready-made pair (first selected = source)."
+            )
+            return
+
+        src      = sel[0]
+        src_leaf = self._leaf(src)
+        prt_leaf = self._leaf(sel[1]) if len(sel) > 1 else ""
+        if prt_leaf == src_leaf:
+            prt_leaf = ""
+        if len(sel) > 2:
+            om.MGlobal.displayWarning(
+                "[{}] {} controls selected — using the first two as "
+                "source / partner.".format(TOOL_NAME, len(sel))
+            )
+
+        if self._snapshot.is_excluded(src):
+            QtWidgets.QMessageBox.warning(
+                self, "Control Is Excluded",
+                "'{}' is currently excluded from mirroring.\n"
+                "Un-exclude it first (see the Excluded view).".format(src_leaf)
+            )
+            return
+
+        # Keep anything typed into other rows, then register the new entry.
+        self._collect_pending_edits()
+        entry = self._user_added.setdefault(src_leaf, {"full": src, "partner": ""})
+        entry["full"] = src
+        if prt_leaf:
+            entry["partner"] = prt_leaf
+
+        self._refresh(reload=False)
+        if self._flt_excluded.isChecked():
+            # Make sure the new row's view is active so the user sees it.
+            self._flt_issues.setChecked(True)
+        self._focus_source_row(src_leaf)
+        om.MGlobal.displayInfo(
+            "[{}] Added '{}'{} — click Save to Scene to store the pair.".format(
+                TOOL_NAME, src_leaf,
+                " ↔ '{}'".format(prt_leaf) if prt_leaf else ""
+            )
+        )
+
+    def _focus_source_row(self, source_leaf):
+        """Select and scroll to the table row whose source is *source_leaf*."""
+        for row in range(self.table.rowCount()):
+            badge_item = self.table.item(row, self.COL_STATUS)
+            if badge_item is None:
+                continue
+            rd = badge_item.data(QtCore.Qt.UserRole)
+            if rd and rd.get("source") == source_leaf:
+                self.table.setCurrentCell(row, self.COL_SOURCE)
+                self.table.scrollToItem(
+                    self.table.item(row, self.COL_SOURCE),
+                    QtWidgets.QAbstractItemView.PositionAtCenter,
+                )
+                return
 
     def _on_refresh(self):
         self._refresh()
