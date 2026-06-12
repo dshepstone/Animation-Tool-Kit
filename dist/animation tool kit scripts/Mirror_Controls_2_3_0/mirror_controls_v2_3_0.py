@@ -42,6 +42,16 @@ Authors:
     Updated by: David Shepstone
 
 Version:
+    2.3.3 - UI cleanup pass:
+             * Removed the redundant "Take Snapshot" button — snapshot
+               capture lives in the Tools menu and in the Character Snapshot
+               tool (which the Manage button opens); the missing-snapshot
+               prompts still offer to take one.
+             * Snapshot action buttons consolidated into a single row
+               (Edit Rules / Manual Pairs / Flip Sign).
+             * Replaced emoji button icons (which render as empty boxes in
+               Maya's UI font on Windows) with plain text labels; the
+               character-list refresh button now uses a proper Qt icon.
     2.3.2 - Character Snapshot is now the single source of truth.
              * Removed the duplicated legacy RigSnapshot system (snapshot
                builder, Manual Pair Editor, Snapshot Manager). "Take
@@ -688,7 +698,7 @@ class SnapshotEditorDialog(QtWidgets.QDialog):
         layout.addWidget(self.tree)
 
         btn_row = QtWidgets.QHBoxLayout()
-        self.re_snap_btn = QtWidgets.QPushButton("↺  Re-Snapshot")
+        self.re_snap_btn = QtWidgets.QPushButton("Re-Snapshot")
         self.re_snap_btn.setToolTip(
             "Re-sample the rig at its current pose, replacing the stored\n"
             "default-pose values and auto-detected rules.\n"
@@ -914,7 +924,7 @@ class MirrorControls(QtWidgets.QDialog):
         # Resolve the Maya main window lazily — evaluating it in the default
         # argument runs at import time and crashes when the UI isn't up yet.
         super().__init__(parent or maya_main_window())
-        self.setWindowTitle("Mirror Controls  v2.3.2")
+        self.setWindowTitle("Mirror Controls  v2.3.3")
         flags = self.windowFlags()
         flags ^= QtCore.Qt.WindowMinimizeButtonHint
         flags ^= QtCore.Qt.WindowMaximizeButtonHint
@@ -945,7 +955,7 @@ class MirrorControls(QtWidgets.QDialog):
         # ---- Tools menu ----
         tools_menu = self.menu_bar.addMenu("Tools")
 
-        take_snap_action = QtGui.QAction("  Take Snapshot", self)
+        take_snap_action = QtGui.QAction("Take Snapshot", self)
         take_snap_action.setToolTip(
             "Capture a Character Snapshot of the selected rig at its\n"
             "default pose. Records every controller, its mirror partner\n"
@@ -954,7 +964,7 @@ class MirrorControls(QtWidgets.QDialog):
         take_snap_action.triggered.connect(self.take_snapshot)
         tools_menu.addAction(take_snap_action)
 
-        edit_snap_action = QtGui.QAction("  Edit Channel Flip Rules…", self)
+        edit_snap_action = QtGui.QAction("Edit Channel Flip Rules…", self)
         edit_snap_action.setToolTip(
             "Review the auto-detected per-channel copy / negate rules and\n"
             "store manual overrides in the Character Snapshot."
@@ -964,7 +974,7 @@ class MirrorControls(QtWidgets.QDialog):
 
         tools_menu.addSeparator()
 
-        manual_action = QtGui.QAction("  Manual Pair Editor…", self)
+        manual_action = QtGui.QAction("Manual Pair Editor…", self)
         manual_action.setToolTip(
             "Open the Character Snapshot Manual Pair Editor to assign\n"
             "mirror partners that automatic matching cannot resolve,\n"
@@ -975,7 +985,7 @@ class MirrorControls(QtWidgets.QDialog):
 
         tools_menu.addSeparator()
 
-        flip_sign_action = QtGui.QAction("±  Flip Sign (Selected)", self)
+        flip_sign_action = QtGui.QAction("Flip Sign (Selected)", self)
         flip_sign_action.setToolTip(
             "Toggle whole-control sign inversion for the selected controls.\n"
             "Use this when a control mirrors with the wrong sign due to how\n"
@@ -986,7 +996,7 @@ class MirrorControls(QtWidgets.QDialog):
 
         tools_menu.addSeparator()
 
-        manage_action = QtGui.QAction("📋  Open Character Snapshot Tool…", self)
+        manage_action = QtGui.QAction("Open Character Snapshot Tool…", self)
         manage_action.setToolTip(
             "Open the Character Snapshot tool — the central manager for\n"
             "rig snapshots (create, export/import JSON, rename prefixes,\n"
@@ -1013,9 +1023,10 @@ class MirrorControls(QtWidgets.QDialog):
     # Widgets
     # ------------------------------------------------------------------
 
-    def _make_icon_btn(self, icon_text, label, tooltip, obj_name=None):
-        """Create a styled button with a unicode icon prefix."""
-        btn = QtWidgets.QPushButton("{}  {}".format(icon_text, label))
+    def _make_icon_btn(self, label, tooltip, obj_name=None):
+        """Create a styled, tooltipped button. Plain text labels only —
+        emoji icons render as empty boxes in Maya's UI font on Windows."""
+        btn = QtWidgets.QPushButton(label)
         btn.setToolTip(tooltip)
         if obj_name:
             btn.setObjectName(obj_name)
@@ -1104,7 +1115,7 @@ class MirrorControls(QtWidgets.QDialog):
         )
 
         # ---- Mirror button ----
-        self.mirror_btn = QtWidgets.QPushButton("⟳   Mirror")
+        self.mirror_btn = QtWidgets.QPushButton("Mirror")
         self.mirror_btn.setObjectName("mirrorBtn")
         self.mirror_btn.setToolTip(
             "Execute the mirror operation with the current settings.\n\n"
@@ -1113,22 +1124,17 @@ class MirrorControls(QtWidgets.QDialog):
         )
 
         # ---- Snapshot Tools ----
-        self.take_snap_btn = self._make_icon_btn(
-            "◉", "Take Snapshot",
-            "Capture a Character Snapshot of the selected rig at its\n"
-            "DEFAULT POSE. This records every controller, its mirror\n"
-            "partner and per-channel flip rules, and is required for\n"
-            "reliable mirror matching.",
-            "snapshotBtn"
-        )
+        # Snapshot capture is intentionally NOT a button here — it lives in
+        # the Tools menu and in the Character Snapshot tool (Manage button),
+        # which is the source of truth for snapshot data.
         self.edit_snap_btn = self._make_icon_btn(
-            "✎", "Edit Rules",
+            "Edit Rules",
             "Review the auto-detected per-channel copy / negate rules\n"
             "and store manual overrides in the Character Snapshot.",
             "snapshotBtn"
         )
         self.manual_pairs_btn = self._make_icon_btn(
-            "⇌", "Manual Pairs",
+            "Manual Pairs",
             "Open the Character Snapshot Manual Pair Editor to fix\n"
             "controls that automatic name-matching could not resolve.\n\n"
             "Also lets you exclude rig-internal nodes that\n"
@@ -1136,7 +1142,7 @@ class MirrorControls(QtWidgets.QDialog):
             "snapshotBtn"
         )
         self.flip_sign_btn = self._make_icon_btn(
-            "±", "Flip Sign",
+            "Flip Sign",
             "Toggle whole-control sign inversion for the selected\n"
             "controls.\n\n"
             "Use when a control mirrors with the wrong sign due\n"
@@ -1152,13 +1158,17 @@ class MirrorControls(QtWidgets.QDialog):
             "Auto-detected from the selection when mirroring.\n"
             "Each character namespace gets its own stored snapshot."
         )
-        self.refresh_prefix_btn = QtWidgets.QPushButton("↺")
+        # Use a Qt standard icon — arrow/emoji glyphs render as empty
+        # boxes in Maya's UI font on Windows.
+        self.refresh_prefix_btn = QtWidgets.QPushButton()
+        self.refresh_prefix_btn.setIcon(
+            self.style().standardIcon(QtWidgets.QStyle.SP_BrowserReload))
         self.refresh_prefix_btn.setFixedWidth(28)
         self.refresh_prefix_btn.setToolTip("Refresh the character list")
         self.manage_snaps_btn = self._make_icon_btn(
-            "📋", "Manage",
-            "Open the Character Snapshot tool to create, export,\n"
-            "import, rename or delete character snapshots.",
+            "Manage",
+            "Open the Character Snapshot tool to take snapshots and to\n"
+            "create, export, import, rename or delete character data.",
             "snapshotBtn"
         )
 
@@ -1238,16 +1248,11 @@ class MirrorControls(QtWidgets.QDialog):
         prefix_row.addWidget(self.manage_snaps_btn)
         snap_lay.addLayout(prefix_row)
 
-        snap_btn_row1 = QtWidgets.QHBoxLayout()
-        snap_btn_row1.addWidget(self.take_snap_btn)
-        snap_btn_row1.addWidget(self.edit_snap_btn)
-        snap_btn_row1.addWidget(self.manual_pairs_btn)
-        snap_lay.addLayout(snap_btn_row1)
-
-        snap_btn_row2 = QtWidgets.QHBoxLayout()
-        snap_btn_row2.addWidget(self.flip_sign_btn)
-        snap_btn_row2.addStretch()
-        snap_lay.addLayout(snap_btn_row2)
+        snap_btn_row = QtWidgets.QHBoxLayout()
+        snap_btn_row.addWidget(self.edit_snap_btn)
+        snap_btn_row.addWidget(self.manual_pairs_btn)
+        snap_btn_row.addWidget(self.flip_sign_btn)
+        snap_lay.addLayout(snap_btn_row)
 
         # Status
         snap_lay.addWidget(self.snapshot_status_label)
@@ -1270,7 +1275,6 @@ class MirrorControls(QtWidgets.QDialog):
     def create_connections(self):
         self.operation_cb.currentTextChanged.connect(self.on_operation_change)
         self.mirror_btn.clicked.connect(self.mirror_control)
-        self.take_snap_btn.clicked.connect(self.take_snapshot)
         self.edit_snap_btn.clicked.connect(self.open_snapshot_editor)
         self.manual_pairs_btn.clicked.connect(self.open_manual_pair_editor)
         self.flip_sign_btn.clicked.connect(self.flip_sign_rules)
@@ -2530,7 +2534,7 @@ class MirrorControls(QtWidgets.QDialog):
             "<li>Select the rig controls you want to mirror (or leave the selection "
             "empty to process all controls of the active rig).</li>"
             "<li>Choose the <b>Operation</b> (e.g. Left to Right, Flip, Selected).</li>"
-            "<li>Click the <b>⟳ Mirror</b> button.</li>"
+            "<li>Click the <b>Mirror</b> button.</li>"
             "</ol>"
 
             "<h4>② Character Snapshot (Required for Reliable Matching)</h4>"
@@ -2540,7 +2544,7 @@ class MirrorControls(QtWidgets.QDialog):
             "and per-channel flip rules.</p>"
             "<ol>"
             "<li>Pose the rig at its <b>default pose</b> (all controls zeroed).</li>"
-            "<li>Select any control on the rig and click <b>◉ Take Snapshot</b>.</li>"
+            "<li>Select any control on the rig and use Tools &gt; <b>Take Snapshot</b> (or the Character Snapshot tool via <b>Manage</b>).</li>"
             "<li>The snapshot is stored in the Maya scene and persists across saves.</li>"
             "</ol>"
 
@@ -2553,7 +2557,7 @@ class MirrorControls(QtWidgets.QDialog):
 
             "<h4>④ Manual Pair Editor</h4>"
             "<p>If automatic matching cannot find a partner, click "
-            "<b>⇌ Manual Pairs</b> — this opens the Character Snapshot Manual "
+            "<b>Manual Pairs</b> — this opens the Character Snapshot Manual "
             "Pair Editor.  Pairs you save there are validated against the scene "
             "and shared by every ATK tool.</p>"
 
@@ -2561,15 +2565,15 @@ class MirrorControls(QtWidgets.QDialog):
             "<p>Each channel's copy/negate behaviour is auto-detected from the "
             "default-pose snapshot (e.g. if the left IK hand rests at "
             "<tt>tx&nbsp;=&nbsp;+5</tt> and the right at <tt>tx&nbsp;=&nbsp;−5</tt>, "
-            "translateX is negated when mirrored).  Click <b>✎ Edit Rules</b> to "
+            "translateX is negated when mirrored).  Click <b>Edit Rules</b> to "
             "review and override any channel (copy / negate / ignore).  "
-            "<b>± Flip Sign</b> inverts every mirrored channel of the selected "
+            "<b>Flip Sign</b> inverts every mirrored channel of the selected "
             "controls as a whole-control override.</p>"
 
             "<h4>⑥ Per-Character Snapshots</h4>"
             "<p>Snapshots are stored <b>per character rig</b>, keyed by namespace "
             "prefix.  Use the <b>Character</b> dropdown to switch rigs and "
-            "<b>📋 Manage</b> to open the Character Snapshot tool (export/import "
+            "<b>Manage</b> to open the Character Snapshot tool (export/import "
             "JSON, rename prefixes, delete).</p>"
 
             "<h4>⑦ Naming Convention</h4>"
@@ -2596,7 +2600,7 @@ class MirrorControls(QtWidgets.QDialog):
     def show_about(self):
         about_text = (
             "<h3>Mirror Controls</h3>"
-            "<p style='color:#8ab4f8;'>Version 2.3.2</p>"
+            "<p style='color:#8ab4f8;'>Version 2.3.3</p>"
             "<p style='color:#888; font-size:10px;'>Formerly digetMirrorControl</p>"
             "<hr>"
 
@@ -2607,6 +2611,15 @@ class MirrorControls(QtWidgets.QDialog):
             "<tr><td style='color:#90c890;'>Updated by:</td>"
             "<td>David Shepstone</td></tr>"
             "</table>"
+
+            "<h4>What's New in 2.3.3</h4>"
+            "<ul>"
+            "<li><b>UI cleanup</b> — removed the redundant Take Snapshot "
+            "button (still in the Tools menu and the Character Snapshot "
+            "tool), consolidated the snapshot buttons into one row, and "
+            "replaced emoji icons that rendered as empty boxes in Maya's "
+            "UI font.</li>"
+            "</ul>"
 
             "<h4>What's New in 2.3.2</h4>"
             "<ul>"

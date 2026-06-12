@@ -188,7 +188,7 @@ TOOL_REGISTRY = [
         "icon_file": "snapshot.png",
         "icon_key":  "snap",
         "group":     "rigging",
-        "version":   "1.1.0",
+        "version":   "1.2.0",
     },
     {
         "id":        "mirror_controls",
@@ -199,7 +199,7 @@ TOOL_REGISTRY = [
         "icon_file": "mirror.png",
         "icon_key":  "mirror",
         "group":     "rigging",
-        "version":   "2.3.2",
+        "version":   "2.3.3",
     },
     {
         "id":        "saveplus",

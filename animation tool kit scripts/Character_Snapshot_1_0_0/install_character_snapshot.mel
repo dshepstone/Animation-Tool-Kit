@@ -1,7 +1,7 @@
 // =============================================================================
 // install_character_snapshot.mel
 //
-// DRAG AND DROP INSTALLER — Character Snapshot v1.1.0 for Maya
+// DRAG AND DROP INSTALLER — Character Snapshot v1.2.0 for Maya
 //
 // How to use:
 //   Drag this .mel file from Windows Explorer / Finder onto the Maya viewport.
@@ -173,7 +173,7 @@ global proc cs__install()
     string $pyFile     = "character_snapshot_v1_0_0.py";
     string $iconFile   = "snapshot.png";
     string $shelfLabel = "Character Snapshot";
-    string $annotation = "Open Character Snapshot v1.1.0";
+    string $annotation = "Open Character Snapshot v1.2.0";
 
     // Build the Python command the shelf button will run.
     string $pyCmd = "";
@@ -259,7 +259,7 @@ global proc cs__install()
                   + "Click the shelf button to launch the tool.")
         -button  "OK";
 
-    inViewMessage -amg "<hl>Character Snapshot v1.1.0</hl> installed!" -pos midCenter -fade;
+    inViewMessage -amg "<hl>Character Snapshot v1.2.0</hl> installed!" -pos midCenter -fade;
 }
 
 // Run immediately on drag-and-drop

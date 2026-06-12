@@ -50,6 +50,13 @@ Author:
     David Shepstone
 
 Version:
+    1.2.0 - UI cleanup pass:
+              * Removed redundant left-panel buttons (Import JSON, Export
+                JSON, Delete) and the Update / Replace Prefix button — all
+                of these remain available from the File / Edit menus.
+              * Replaced emoji button icons (which render as empty boxes in
+                Maya's UI font on Windows) with plain text labels.
+              * Manual Pair Editor pick buttons relabelled "+ Src" / "+ Prt".
     1.1.0 - Snapshot data is now the authoritative source for ATK mirror
             matching (schema 2):
               * Multi-convention automatic matching — configured tokens are
@@ -97,7 +104,7 @@ import maya.OpenMaya as om
 # ---------------------------------------------------------------------------
 
 TOOL_NAME       = "Character Snapshot"
-TOOL_VERSION    = "1.1.0"
+TOOL_VERSION    = "1.2.0"
 
 SNAPSHOT_NODE   = "characterSnapshotData"
 SNAPSHOT_ATTR   = "characterSnapshots"     # multi-prefix store
@@ -1578,7 +1585,7 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
 
     Workflow:
       1. Select a control in the Maya viewport.
-      2. Click  ⊕ Src  or  ⊕ Prt  to assign it to a row.
+      2. Click  + Src  or  + Prt  to assign it to a row.
       3. Or type a namespace:nodeName directly into the Partner field.
       4. Click "Exclude" to permanently skip a control.
       5. Click "Save to Scene" — pairs are written into the snapshot.
@@ -1625,7 +1632,7 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
 
         hint = QtWidgets.QLabel(
             "<i>Select a control in the Maya viewport, then click "
-            "<b>⊕ Src</b> or <b>⊕ Prt</b> to assign it to a row. "
+            "<b>+ Src</b> or <b>+ Prt</b> to assign it to a row. "
             "Or type a <tt>namespace:nodeName</tt> directly in the field.</i>"
         )
         hint.setWordWrap(True)
@@ -1677,7 +1684,7 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
         root.addWidget(self.summary_label)
 
         btn_row = QtWidgets.QHBoxLayout()
-        self.refresh_btn      = QtWidgets.QPushButton("↺  Refresh")
+        self.refresh_btn      = QtWidgets.QPushButton("Refresh")
         self.clear_manual_btn = QtWidgets.QPushButton("Clear All Manual Pairs")
         self.save_btn         = QtWidgets.QPushButton("Save to Scene")
         self.save_btn.setObjectName("primaryBtn")
@@ -1870,7 +1877,7 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
 
         if rd["editable"]:
             le = QtWidgets.QLineEdit(rd["partner"])
-            le.setPlaceholderText("Select in Maya → click ⊕ Prt  (or type name)")
+            le.setPlaceholderText("Select in Maya, then click + Prt  (or type name)")
             le.setStyleSheet("background: #2a3a4a; border: 1px solid #4a6a8a;")
             le.textChanged.connect(lambda txt, r=rd: r.update({"partner": txt}))
             self.table.setCellWidget(row, self.COL_PARTNER, le)
@@ -1894,8 +1901,8 @@ class ManualPairEditorDialog(QtWidgets.QDialog):
             pick_lay = QtWidgets.QHBoxLayout(pick_w)
             pick_lay.setContentsMargins(2, 2, 2, 2)
             pick_lay.setSpacing(4)
-            btn_src = QtWidgets.QPushButton("⊕ Src")
-            btn_prt = QtWidgets.QPushButton("⊕ Prt")
+            btn_src = QtWidgets.QPushButton("+ Src")
+            btn_prt = QtWidgets.QPushButton("+ Prt")
             for b in (btn_src, btn_prt):
                 b.setStyleSheet(cell_btn_qss)
                 b.setFixedHeight(22)
@@ -2360,26 +2367,27 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         left_lay.addWidget(self.list_widget, 1)
 
         list_btn_row = QtWidgets.QHBoxLayout()
-        self.new_btn     = QtWidgets.QPushButton("◉  New from Selection")
+        self.new_btn     = QtWidgets.QPushButton("New from Selection")
         self.new_btn.setObjectName("snapshotBtn")
-        self.refresh_btn = QtWidgets.QPushButton("↺  Refresh")
+        self.new_btn.setToolTip(
+            "Capture a new Character Snapshot of the rig under the\n"
+            "current selection (pose the rig at its default pose first)."
+        )
+        self.refresh_btn = QtWidgets.QPushButton("Refresh")
+        self.refresh_btn.setToolTip("Re-read the stored snapshots from the scene.")
         list_btn_row.addWidget(self.new_btn)
         list_btn_row.addWidget(self.refresh_btn)
         left_lay.addLayout(list_btn_row)
 
-        list_btn_row2 = QtWidgets.QHBoxLayout()
-        self.import_btn = QtWidgets.QPushButton("📥  Import JSON")
-        self.export_btn = QtWidgets.QPushButton("📤  Export JSON")
-        list_btn_row2.addWidget(self.import_btn)
-        list_btn_row2.addWidget(self.export_btn)
-        left_lay.addLayout(list_btn_row2)
-
-        list_btn_row3 = QtWidgets.QHBoxLayout()
-        self.delete_btn = QtWidgets.QPushButton("🗑  Delete")
-        self.delete_btn.setObjectName("dangerBtn")
-        list_btn_row3.addWidget(self.delete_btn)
-        list_btn_row3.addStretch()
-        left_lay.addLayout(list_btn_row3)
+        # Import / Export / Delete live in the File menu — no duplicate
+        # buttons here keeps the panel compact and avoids accidental deletes.
+        menu_hint = QtWidgets.QLabel(
+            "<span style='color:#777;font-size:10px;'>"
+            "Import / Export / Delete are in the <b>File</b> menu."
+            "</span>"
+        )
+        menu_hint.setWordWrap(True)
+        left_lay.addWidget(menu_hint)
 
         splitter.addWidget(left)
 
@@ -2432,11 +2440,9 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         meta_form.addRow("Mirror:",      token_row)
 
         meta_btn_row = QtWidgets.QHBoxLayout()
-        self.save_meta_btn = QtWidgets.QPushButton("💾  Save Details")
+        self.save_meta_btn = QtWidgets.QPushButton("Save Details")
         self.save_meta_btn.setObjectName("primaryBtn")
-        self.rename_btn    = QtWidgets.QPushButton("⇆  Update / Replace Prefix…")
         meta_btn_row.addWidget(self.save_meta_btn)
-        meta_btn_row.addWidget(self.rename_btn)
         meta_btn_row.addStretch()
         meta_form.addRow("", meta_btn_row)
         right_lay.addWidget(meta_grp)
@@ -2454,10 +2460,14 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         stats_lay.addWidget(self.stats_label)
 
         actions_row = QtWidgets.QHBoxLayout()
-        self.manual_btn = QtWidgets.QPushButton("⇌  Manual Pair Editor")
+        self.manual_btn = QtWidgets.QPushButton("Manual Pair Editor")
         self.manual_btn.setObjectName("snapshotBtn")
         self.select_btn = QtWidgets.QPushButton("Select Rig Controls in Scene")
-        self.resnap_btn = QtWidgets.QPushButton("↻  Re-Snapshot")
+        self.resnap_btn = QtWidgets.QPushButton("Re-Snapshot")
+        self.resnap_btn.setToolTip(
+            "Re-capture this rig at its current pose, preserving manual\n"
+            "pairs, exclusions, rule overrides and metadata."
+        )
         actions_row.addWidget(self.manual_btn)
         actions_row.addWidget(self.select_btn)
         actions_row.addWidget(self.resnap_btn)
@@ -2482,11 +2492,7 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         self.list_widget.currentItemChanged.connect(self._on_list_selection)
         self.new_btn.clicked.connect(self.create_snapshot)
         self.refresh_btn.clicked.connect(self._refresh_list)
-        self.import_btn.clicked.connect(self.import_snapshot)
-        self.export_btn.clicked.connect(self.export_selected)
-        self.delete_btn.clicked.connect(self.delete_selected)
         self.save_meta_btn.clicked.connect(self._save_details)
-        self.rename_btn.clicked.connect(self.rename_selected_prefix)
         self.manual_btn.clicked.connect(self.open_manual_pairs)
         self.select_btn.clicked.connect(self.select_controls_in_scene)
         self.resnap_btn.clicked.connect(self.resnap_selected)
@@ -2549,9 +2555,8 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
     def _set_detail_enabled(self, enabled):
         for w in (self.rig_name_le, self.description_te,
                   self.left_token_le, self.right_token_le, self.mirror_axis_cb,
-                  self.save_meta_btn, self.rename_btn, self.manual_btn,
-                  self.select_btn, self.resnap_btn, self.export_btn,
-                  self.delete_btn):
+                  self.save_meta_btn, self.manual_btn,
+                  self.select_btn, self.resnap_btn):
             w.setEnabled(enabled)
         if not enabled:
             self.prefix_le.setText("")
@@ -2975,27 +2980,27 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
             "contain neither token are treated as <i>unique</i> and will "
             "not be paired or shown in the Manual Pair Editor.</li>"
             "<li>Select <i>any single</i> controller on the rig.</li>"
-            "<li>Click <b>◉ New from Selection</b> — every controller sharing the "
+            "<li>Click <b>New from Selection</b> — every controller sharing the "
             "same namespace prefix is captured automatically and classified "
             "as left / right / unique using the tokens you specified.</li>"
             "</ol>"
             "<h4>② Edit Metadata</h4>"
             "<p>Fill in the <b>Rig Name</b>, <b>Description</b>, and mirror tokens / axis "
-            "in the right-hand panel and click <b>💾 Save Details</b>.</p>"
+            "in the right-hand panel and click <b>Save Details</b>.</p>"
             "<h4>③ Manual Pair Editor</h4>"
             "<p>For controls whose mirror partner can't be detected by the "
             "<tt>lf</tt>↔<tt>rt</tt> token-swap heuristic, open the "
-            "<b>⇌ Manual Pair Editor</b> and assign partners by selecting them "
-            "in the viewport and clicking <b>⊕ Src</b> / <b>⊕ Prt</b>.</p>"
+            "<b>Manual Pair Editor</b> and assign partners by selecting them "
+            "in the viewport and clicking <b>+ Src</b> / <b>+ Prt</b>.</p>"
             "<h4>④ Export / Import JSON</h4>"
             "<p>Snapshots live in the scene file by default, but you can also "
-            "<b>📤 Export</b> them as <tt>.json</tt> for sharing between scenes "
-            "and <b>📥 Import</b> them back. Mirror-tool exports are accepted "
-            "and converted automatically.</p>"
+            "<b>Export</b> them as <tt>.json</tt> for sharing between scenes "
+            "and <b>Import</b> them back (File menu). Mirror-tool exports are "
+            "accepted and converted automatically.</p>"
             "<h4>⑤ Update / Replace Prefix</h4>"
             "<p>If the same rig is referenced into another scene under a "
-            "<i>different</i> namespace, import the JSON and use "
-            "<b>⇆ Update / Replace Prefix…</b> to rewrite every stored "
+            "<i>different</i> namespace, import the JSON and use Edit &gt; "
+            "<b>Update / Replace Prefix…</b> to rewrite every stored "
             "control name to use the new prefix in one operation. "
             "Behaves like Studio Library's pose prefix search/replace.</p>"
             "<h4>⑥ Use From Other Tools</h4>"
