@@ -769,7 +769,14 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
         self.slider_type_combo = QtWidgets.QComboBox()
         for key in self.SLIDER_TYPES:
             self.slider_type_combo.addItem(key)
-        self.slider_type_combo.setToolTip("Choose Inbetweener slider mode")
+        self.slider_type_combo.setToolTip(
+            "Choose Inbetweener slider mode\n"
+            "LT: Local Tweener\n"
+            "WT: World Tweener (ONE controller at a time)\n"
+            "BN: Blend to Neighbor\n"
+            "BD: Blend to Default\n"
+            "BE: Blend to Ease"
+        )
         self.slider_type_combo.setFixedWidth(54)
         main.addWidget(self.slider_type_combo)
 
@@ -825,7 +832,10 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
                 key, chunk_name="ATK_Inbetweener_{}".format(key))
             count = self._session.begin()
             if not count:
-                self._show_message(self._vt._no_target_message(key))
+                # When the session blocked the selection (e.g. World Tweener
+                # with multiple controllers) it already showed its own popup.
+                if not getattr(self._session, "block_message", None):
+                    self._show_message(self._vt._no_target_message(key))
         except Exception as exc:
             if self._session is not None:
                 self._session.cancel()

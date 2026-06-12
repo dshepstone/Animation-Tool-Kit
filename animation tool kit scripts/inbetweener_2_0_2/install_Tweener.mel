@@ -131,7 +131,7 @@ Inbetweener Tool - Maya Animation Breakdown Tool
 A high-performance tweening utility for Maya animators to break down poses and manage arcs.
 
 Author: Pipeline Tools
-Version: 2.2.1
+Version: 2.2.2
 """
 
 import math
@@ -1637,6 +1637,36 @@ def _no_target_message(slider_type):
     }.get(slider_type, "Nothing to blend on this selection")
 
 
+def _world_tween_targets():
+    """Return the objects a World Tweener drag would operate on.
+
+    Mirrors the engine's own resolution order: objects owning selected
+    Graph Editor keys first, then the viewport transform selection.
+    """
+    objs = WorldTweenEngine.get_selected_keyframe_objects()
+    if not objs:
+        objs = cmds.ls(selection=True, type=('transform', 'joint')) or []
+    return objs
+
+
+def _show_world_tween_limit_popup(num_selected):
+    """Modal reminder that the World Tweener is single-controller only."""
+    try:
+        cmds.confirmDialog(
+            title='World Tweener',
+            message=(
+                'The World Tweener works on ONE controller at a time.\n\n'
+                '{} objects are currently selected.\n\n'
+                'Select a single controller or object, then use the '
+                'slider again.'
+            ).format(num_selected),
+            button=['OK'],
+            defaultButton='OK',
+        )
+    except RuntimeError:
+        cmds.warning('World Tweener works on one controller at a time.')
+
+
 class SliderSession(object):
     """One slider interaction: press -> drag -> release.
 
@@ -1675,6 +1705,7 @@ class SliderSession(object):
         self.moved = False      # True once update() has run
         self.keyed = 0          # keys set by end()
         self.active = False
+        self.block_message = None  # set when begin() refuses the selection
         self._undo_open = False
 
     def begin(self):
@@ -1686,6 +1717,7 @@ class SliderSession(object):
         self.count = 0
         self.moved = False
         self.keyed = 0
+        self.block_message = None
         cmds.undoInfo(openChunk=True, chunkName=self.chunk_name)
         self._undo_open = True
         self.active = True
@@ -1694,6 +1726,19 @@ class SliderSession(object):
             if st == 'LT':
                 self.count = TweenEngine.cache_selection()
             elif st == 'WT':
+                # The World Tweener is single-controller only: world-space
+                # matrix tweening of several objects at once (especially
+                # parent + child) produces unpredictable results.
+                targets = _world_tween_targets()
+                if len(targets) > 1:
+                    self.block_message = (
+                        "World Tweener: {} objects selected — select ONE "
+                        "controller at a time".format(len(targets)))
+                    # Close the undo chunk BEFORE the modal popup so the
+                    # chunk can never leak if Qt drops the release event.
+                    self._cleanup()
+                    _show_world_tween_limit_popup(len(targets))
+                    return 0
                 self.count = WorldTweenEngine.cache_selected_keys()
                 if not self.count:
                     self.count = len(WorldTweenEngine.get_current_time_targets())
@@ -1791,48 +1836,100 @@ class SliderSession(object):
 # ============================================================================
 
 class VertexTickedSlider(QtWidgets.QSlider):
-    """A slider that draws custom 10% tick marks with color-coded overshoots."""
+    """Fully custom-drawn slider: dark pill track, square accent ticks with
+    larger square end caps, and a dark rounded box at the handle showing the
+    mode label (LT/WT/BN/BD/BE) in the mode's accent color.
+    """
+
+    # Accent color per mode label (matches SliderPopOut.CONFIGS colors)
+    _ACCENTS = {
+        'LT': '#6BB5FF',
+        'WT': '#FFD700',
+        'BN': '#7EC8A0',
+        'BD': '#E8A87C',
+        'BE': '#C49BD6',
+    }
+
+    _TRACK_H = 12.0      # pill track height
+    _TICK_INSET = 9.0    # keep end caps inside the pill's rounded corners
+    _HANDLE_W = 36.0
+    _HANDLE_H = 22.0
+
     def __init__(self, orientation, is_tw=True, is_world=False, label_text="", parent=None):
         super(VertexTickedSlider, self).__init__(orientation, parent)
         self.is_tw = is_tw # Tweener vs BN logic
         self.is_world = is_world  # World Tweener uses gold/yellow styling
-        self.label_text = label_text  # Text to display in center box (e.g., "TW", "BN")
+        self.label_text = label_text  # Text to display in center box (e.g., "WT", "BN")
         self.overshoot_mode = True
         self.keyed_value = None  # Slider value where a key was set (special tick)
         self._groove_drag = False  # True while dragging after a groove click
         self.setTickPosition(QtWidgets.QSlider.NoTicks)
 
-    def _value_at(self, pos):
-        """Map a mouse position to a slider value along the groove."""
+    # ------------------------------------------------------------------
+    # Geometry helpers shared by painting and mouse handling
+    # ------------------------------------------------------------------
+    def _accent_color(self):
+        hex_color = self._ACCENTS.get(self.label_text)
+        if hex_color is None:
+            if self.is_world:
+                hex_color = '#FFD700'
+            elif self.is_tw:
+                hex_color = '#6BB5FF'
+            else:
+                hex_color = '#AAAAAA'
+        return QtGui.QColor(hex_color)
+
+    def _groove_metrics(self):
+        """Return (groove_rect, inset, usable_span) for value<->x mapping."""
         opt = QtWidgets.QStyleOptionSlider()
         self.initStyleOption(opt)
         groove = self.style().subControlRect(
             QtWidgets.QStyle.CC_Slider, opt, QtWidgets.QStyle.SC_SliderGroove, self)
-        handle = self.style().subControlRect(
-            QtWidgets.QStyle.CC_Slider, opt, QtWidgets.QStyle.SC_SliderHandle, self)
-        span = max(1, groove.width() - handle.width())
-        x = pos.x() - groove.left() - handle.width() / 2.0
-        return QtWidgets.QStyle.sliderValueFromPosition(
-            self.minimum(), self.maximum(), int(round(x)), span, opt.upsideDown)
+        span = max(1.0, groove.width() - 2 * self._TICK_INSET)
+        return groove, self._TICK_INSET, span
 
+    def _x_for_value(self, val):
+        groove, inset, span = self._groove_metrics()
+        s_min, s_max = self.minimum(), self.maximum()
+        s_range = float(s_max - s_min) or 1.0
+        return groove.left() + inset + ((val - s_min) / s_range) * span
+
+    def _value_at(self, pos):
+        """Map a mouse position to a slider value along the tick span."""
+        groove, inset, span = self._groove_metrics()
+        s_min, s_max = self.minimum(), self.maximum()
+        frac = (pos.x() - groove.left() - inset) / span
+        frac = min(max(frac, 0.0), 1.0)
+        return int(round(s_min + frac * (s_max - s_min)))
+
+    def _handle_box_rect(self):
+        """Rect of the visible label-box handle at the current value."""
+        groove, _, _ = self._groove_metrics()
+        cy = groove.center().y()
+        x = self._x_for_value(self.value())
+        box_x = min(max(x - self._HANDLE_W / 2.0, 2.0),
+                    self.width() - self._HANDLE_W - 2.0)
+        return QtCore.QRectF(box_x, cy - self._HANDLE_H / 2.0,
+                             self._HANDLE_W, self._HANDLE_H)
+
+    # ------------------------------------------------------------------
+    # Mouse handling — every press runs a full press/drag/release session
+    # ------------------------------------------------------------------
     def mousePressEvent(self, event):
-        # Clicking the groove starts a normal drag session at that position
-        # (sliderPressed -> cache, valueChanged -> tween, sliderReleased ->
-        # key) instead of Qt's default page-step jump, which changes values
-        # WITHOUT ever firing sliderPressed/sliderReleased — i.e. outside
-        # any undo chunk and without keying the result.
+        # Any left press starts a normal drag session (sliderPressed ->
+        # cache, valueChanged -> tween, sliderReleased -> key) instead of
+        # Qt's default page-step jump, which changes values WITHOUT ever
+        # firing sliderPressed/sliderReleased — i.e. outside any undo
+        # chunk and without keying the result.
         if event.button() == QtCore.Qt.LeftButton:
-            opt = QtWidgets.QStyleOptionSlider()
-            self.initStyleOption(opt)
-            handle = self.style().subControlRect(
-                QtWidgets.QStyle.CC_Slider, opt,
-                QtWidgets.QStyle.SC_SliderHandle, self)
-            if not handle.contains(event.pos()):
-                self._groove_drag = True
-                self.setSliderDown(True)          # emits sliderPressed first
+            self._groove_drag = True
+            self.setSliderDown(True)              # emits sliderPressed first
+            if not self._handle_box_rect().contains(QtCore.QPointF(event.pos())):
+                # Click on the track: jump the handle to the click position.
+                # Clicks on the visible handle box grab it without jumping.
                 self.setSliderPosition(self._value_at(event.pos()))
-                event.accept()
-                return
+            event.accept()
+            return
         super(VertexTickedSlider, self).mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -1850,97 +1947,73 @@ class VertexTickedSlider(QtWidgets.QSlider):
             return
         super(VertexTickedSlider, self).mouseReleaseEvent(event)
 
+    # ------------------------------------------------------------------
+    # Painting
+    # ------------------------------------------------------------------
     def paintEvent(self, event):
-        super(VertexTickedSlider, self).paintEvent(event)
+        # Deliberately does NOT call the base paintEvent: the native groove
+        # and handle are replaced entirely by the custom look below.
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
 
-        opt = QtWidgets.QStyleOptionSlider()
-        self.initStyleOption(opt)
-        groove = self.style().subControlRect(QtWidgets.QStyle.CC_Slider, opt, QtWidgets.QStyle.SC_SliderGroove, self)
-
+        groove, inset, span = self._groove_metrics()
         s_min, s_max = self.minimum(), self.maximum()
-        s_range = float(s_max - s_min)
+        s_range = float(s_max - s_min) or 1.0
+        cy = groove.center().y()
 
-        # Draw ticks every 10%
+        accent = self._accent_color()
+        dim = QtGui.QColor(accent)
+        dim.setAlpha(180)
+
+        # --- Track: dark rounded pill ---
+        track = QtCore.QRectF(groove.left(), cy - self._TRACK_H / 2.0,
+                              groove.width(), self._TRACK_H)
+        painter.setPen(QtGui.QPen(QtGui.QColor(34, 34, 34), 1))
+        painter.setBrush(QtGui.QColor(46, 46, 46))
+        painter.drawRoundedRect(track, self._TRACK_H / 2.0, self._TRACK_H / 2.0)
+
+        # --- Square ticks every 10%, larger square caps at both ends ---
+        painter.setPen(QtCore.Qt.NoPen)
         for val in range(s_min, s_max + 1, 10):
-            x = groove.left() + ((val - s_min) / s_range * groove.width())
-            y = groove.center().y()
+            x = groove.left() + inset + ((val - s_min) / s_range) * span
+            is_end = val in (s_min, s_max)
+            size = 8.0 if is_end else (5.0 if val % 50 == 0 else 4.0)
 
-            # Color Logic
-            if self.is_world:
-                # Gold/Yellow for World Tweener
-                if val == self.value():
-                    color = QtGui.QColor(255, 215, 0)  # Bright gold for current
-                else:
-                    color = QtGui.QColor(200, 160, 0)  # Darker gold for others
-            elif self.is_tw and (val < 0 or val > 100):
-                # Red/Orange for Local Tweener overshoots
-                color = QtGui.QColor(255, 80, 80) if val == self.value() else QtGui.QColor(255, 140, 60)
+            if self.is_tw and not self.is_world and (val < 0 or val > 100):
+                color = QtGui.QColor(255, 130, 80)   # LT overshoot zone
+            elif is_end:
+                color = QtGui.QColor(accent)
             else:
-                # Blue/Grey for normal range and BN
-                color = QtGui.QColor(100, 180, 255) if val == self.value() else QtGui.QColor(150, 150, 150)
-
+                color = QtGui.QColor(dim)
             painter.setBrush(color)
-            painter.setPen(QtCore.Qt.NoPen)
-            # Make 0, 50, 100 slightly larger
-            size = 5 if val % 50 == 0 else 3
-            painter.drawEllipse(QtCore.QPointF(x, y), size, size)
+            painter.drawRoundedRect(
+                QtCore.QRectF(x - size / 2.0, cy - size / 2.0, size, size),
+                1.5, 1.5)
 
-        # Draw keyed-position tick (bright green diamond)
+        # --- Keyed-position tick (bright green diamond) ---
         if self.keyed_value is not None:
-            kx = groove.left() + ((self.keyed_value - s_min) / s_range * groove.width())
-            ky = groove.center().y()
-            keyed_color = QtGui.QColor(0, 230, 120)  # Bright green
+            kx = groove.left() + inset + ((self.keyed_value - s_min) / s_range) * span
+            keyed_color = QtGui.QColor(0, 230, 120)
             painter.setBrush(keyed_color)
             painter.setPen(QtGui.QPen(QtGui.QColor(0, 180, 90), 1))
             diamond = QtGui.QPolygonF([
-                QtCore.QPointF(kx, ky - 7),
-                QtCore.QPointF(kx + 5, ky),
-                QtCore.QPointF(kx, ky + 7),
-                QtCore.QPointF(kx - 5, ky),
+                QtCore.QPointF(kx, cy - 7),
+                QtCore.QPointF(kx + 5, cy),
+                QtCore.QPointF(kx, cy + 7),
+                QtCore.QPointF(kx - 5, cy),
             ])
             painter.drawPolygon(diamond)
 
-        # Draw label box at handle position (this becomes the visual handle)
+        # --- Handle: dark rounded box with the mode label in accent color ---
+        box_rect = self._handle_box_rect()
+        painter.setPen(QtGui.QPen(QtGui.QColor(110, 110, 110), 1.2))
+        painter.setBrush(QtGui.QColor(58, 58, 58))
+        painter.drawRoundedRect(box_rect, 5, 5)
+
         if self.label_text:
-            # Calculate handle position based on current value
-            current_val = self.value()
-            handle_x = groove.left() + ((current_val - s_min) / s_range * groove.width())
-            handle_y = groove.center().y()
-
-            # Draw box at handle position
-            box_width = 35
-            box_height = 20
-            # Clamp box position to stay within widget bounds (with 5px margin)
-            margin = 5
-            box_x = handle_x - box_width/2
-            box_x = max(margin, min(box_x, self.width() - box_width - margin))
-            box_rect = QtCore.QRectF(box_x, handle_y - box_height/2, box_width, box_height)
-
-            # Box color based on slider type
-            if self.is_world:
-                box_color = QtGui.QColor(255, 215, 0, 230)  # Gold with transparency
-                text_color = QtGui.QColor(40, 40, 40)  # Dark text
-                border_color = QtGui.QColor(200, 160, 0)  # Darker gold border
-            elif self.is_tw:
-                box_color = QtGui.QColor(100, 180, 255, 230)  # Blue with transparency
-                text_color = QtGui.QColor(255, 255, 255)  # White text
-                border_color = QtGui.QColor(60, 120, 200)  # Darker blue border
-            else:
-                box_color = QtGui.QColor(150, 150, 150, 230)  # Grey with transparency
-                text_color = QtGui.QColor(255, 255, 255)  # White text
-                border_color = QtGui.QColor(100, 100, 100)  # Darker grey border
-
-            # Draw border
-            painter.setPen(QtGui.QPen(border_color, 2))
-            painter.setBrush(box_color)
-            painter.drawRoundedRect(box_rect, 4, 4)
-
-            # Draw text
-            painter.setPen(text_color)
+            painter.setPen(QtGui.QPen(accent))
             font = QtGui.QFont()
-            font.setPointSize(10)
+            font.setPointSize(9)
             font.setBold(True)
             painter.setFont(font)
             painter.drawText(box_rect, QtCore.Qt.AlignCenter, self.label_text)
@@ -2085,7 +2158,9 @@ class SliderPopOut(QtWidgets.QDialog):
             self.status_label.setText("Error: {}".format(exc))
             return
         if not count:
-            self.status_label.setText(_no_target_message(self.slider_type))
+            self.status_label.setText(
+                self.session.block_message
+                or _no_target_message(self.slider_type))
         elif self.slider_type == 'BD' and not DefaultPoseStore.has_stored_defaults():
             self.status_label.setText("Tip: scan default pose for best results")
 
@@ -2184,7 +2259,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
             parent = shiboken.wrapInstance(int(ptr), QtWidgets.QWidget)
         super(VertexTweenerUI, self).__init__(parent)
         
-        self.setWindowTitle("Inbetweener v2.2.1")
+        self.setWindowTitle("Inbetweener v2.2.2")
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
         self.setMinimumWidth(420)
 
@@ -2455,7 +2530,9 @@ class VertexTweenerUI(QtWidgets.QDialog):
         wt_group, wt_layout = self._make_group_box("WORLD TWEENER", "#FFD700", popout_type='WT')
         wt_layout.addWidget(self._make_descriptor(
             "Blends in world space using matrix interpolation with quaternion slerp. "
-            "Ideal for maintaining arcs on parented or space-switched controls."
+            "Ideal for maintaining arcs on parented or space-switched controls. "
+            "Works on ONE controller or object at a time — select a single "
+            "control before dragging."
         ))
         wt_layout.addWidget(self.world_slider)
         wt_layout.addLayout(self.world_tick_labels_layout)
@@ -2584,7 +2661,8 @@ class VertexTweenerUI(QtWidgets.QDialog):
             self.status_label.setText("Error: {}".format(exc))
             return None
         if not count:
-            self.status_label.setText(_no_target_message(slider_type))
+            self.status_label.setText(
+                session.block_message or _no_target_message(slider_type))
         return session
 
     def _update_session(self, slider_type, value):
@@ -3118,7 +3196,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
 
     def show_help_dialog(self):
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Inbetweener v2.2.1 - Help")
+        dialog.setWindowTitle("Inbetweener v2.2.2 - Help")
         dialog.setMinimumSize(520, 600)
         layout = QtWidgets.QVBoxLayout(dialog)
 
@@ -3140,7 +3218,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
             <p>The <b>Inbetweener Tool</b> provides five slider modes for creating breakdowns
             and refining animation curves in Autodesk Maya. It works with <b>transforms, joints,
             NURBS curve controls</b>, and any object with keyable attributes.</p>
-            <p>Version 2.2.1 &mdash; Pipeline Tools</p>
+            <p>Version 2.2.2 &mdash; Pipeline Tools</p>
         </div>
 
         <h2>Local Tweener (LT)</h2>
@@ -3171,6 +3249,8 @@ class VertexTweenerUI(QtWidgets.QDialog):
                 <li>Range: <span class="key">0%</span> to <span class="key">100%</span> (no overshoot)</li>
                 <li>Ideal for maintaining world-space arcs on parented / constrained controls</li>
                 <li>Works with transforms and joints</li>
+                <li><span class="key">One at a time</span>: works on a SINGLE controller or
+                object — selecting more than one shows a reminder popup</li>
             </ul>
             <p><b>Graph Editor mode:</b> Selected transform keys are rewritten between the
             same object's selection boundary matrices — no timeline scrubbing.</p>
