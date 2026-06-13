@@ -1,8 +1,8 @@
 # Curve Noise Generator
 
-A dockable Maya animation curve tool for adding noise, easing, scaling, and baking keyframes — all from interactive sliders that preview changes in real time.
+A Maya animation curve tool for adding noise, easing, scaling, and baking keyframes — all from interactive sliders that preview changes in real time.
 
-Built for animators who need fast, non-destructive curve adjustments without leaving the Graph Editor.
+Built for animators who need fast, non-destructive curve adjustments without leaving the Graph Editor. Version 1.1.0 rebuilds the UI in Qt with the same slider styling as the Inbetweener tool, so the Animation Tool Kit sliders look and behave consistently.
 
 ![Shelf Icon](noise_generator_icon.png)
 
@@ -24,9 +24,11 @@ Built for animators who need fast, non-destructive curve adjustments without lea
 
 All sliders snap back to centre on release and the key cache is cleared after each operation, so every drag starts fresh from the current curve state. Full undo support is built in — each slider drag is a single undo chunk.
 
+Each slider also has a value field: type an exact amount and press Enter to apply it as a single undoable operation. The Min/Max fields beside each section title adjust that slider's range.
+
 ## Requirements
 
-- Autodesk Maya 2020 or later
+- Autodesk Maya 2020 or later (PySide2 or PySide6, bundled with Maya)
 
 ## Install
 
@@ -43,13 +45,13 @@ noise_generator_icon.png
 2. Drag `install_noise_generator.mel` into the Maya viewport.
 
 The installer will:
-- Copy the script to your Maya user scripts directory as `curve_noise_generator.py`
+- Copy the script to your Maya user scripts directory as `noise_generator_1_0_0.py`
 - Copy the icon to your Maya user prefs icons directory
-- Add a shelf button labeled **CNG** to the currently active shelf
+- Add a shelf button labeled **Noise Generator** to the currently active shelf
 
 ### Manual Install
 
-1. Copy `noise_generator_1_0_0.py` to your Maya scripts directory and rename it to `curve_noise_generator.py`:
+1. Copy `noise_generator_1_0_0.py` to your Maya scripts directory:
 
 | OS | Path |
 |---|---|
@@ -68,23 +70,24 @@ The installer will:
 3. Create a shelf button manually, or run this in Maya's Script Editor:
 
 ```python
-import curve_noise_generator
-curve_noise_generator.launch()
+import noise_generator_1_0_0
+noise_generator_1_0_0.launch()
 ```
 
 ## Usage
 
 1. Select keys in the Graph Editor (or select objects and highlight a timeline range).
-2. Click the **CNG** shelf button to open the tool.
+2. Click the **Noise Generator** shelf button to open the tool.
 3. Drag any slider to preview changes in real time. Release to commit.
-4. Use **Ctrl+Z** to undo at any time.
+4. For precise amounts, type a value into the field beside a slider and press Enter.
+5. Use **Ctrl+Z** to undo at any time.
 
 ## Files
 
 | File | Description |
 |---|---|
 | `install_noise_generator.mel` | Drag-and-drop installer for Maya |
-| `noise_generator_1_0_0.py` | Main script (v1.0.0) |
+| `noise_generator_1_0_0.py` | Main script (v1.1.0) |
 | `noise_generator_icon.png` | Shelf icon |
 
 ## License

@@ -78,7 +78,7 @@ TOOL_REGISTRY = [
         "icon_file": "noise_generator_icon.png",
         "icon_key":  "noise",
         "group":     "timing",
-        "version":   "1.0.0",
+        "version":   "1.1.0",
     },
     {
         "id":        "xform_copy_paste",
