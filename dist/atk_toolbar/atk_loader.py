@@ -392,3 +392,34 @@ def is_tool_installed(tool_id):
         return spec is not None
     except (ImportError, ValueError, ModuleNotFoundError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Script reloading
+# ---------------------------------------------------------------------------
+
+def reload_tool_modules():
+    """Purge every registered tool module from ``sys.modules`` so the next
+    launch re-imports the latest installed scripts — no Maya restart needed
+    after updating or reinstalling tools.
+
+    Already-open tool windows keep running on the old code; relaunch a tool
+    from the toolbar to get the reloaded version.
+
+    Returns the sorted list of top-level module names that were purged.
+    """
+    # Pick up any directories created by a fresh install and make sure
+    # cached import metadata doesn't shadow newly copied files.
+    setup_paths()
+    importlib.invalidate_caches()
+
+    roots = set(tool["module"].split(".")[0] for tool in TOOL_REGISTRY)
+
+    purged = set()
+    for root in roots:
+        prefix = root + "."
+        for name in list(sys.modules):
+            if name == root or name.startswith(prefix):
+                del sys.modules[name]
+                purged.add(root)
+    return sorted(purged)
