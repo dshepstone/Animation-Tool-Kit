@@ -5,6 +5,8 @@ Opens a QDialog that lets the user:
   • Toggle individual tools on/off
   • Toggle group separator visibility
   • View tool version info (About tab)
+  • Reload the latest installed tool scripts without restarting Maya
+    (Reload Scripts button)
 
 All preferences are stored as Maya optionVars with an "atk_" prefix.
 Clicking Apply rebuilds the toolbar immediately.
@@ -257,6 +259,15 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         btn_reset = QtWidgets.QPushButton("Reset Defaults")
         btn_reset.clicked.connect(self._reset_defaults)
 
+        btn_reload = QtWidgets.QPushButton("Reload Scripts")
+        btn_reload.setToolTip(
+            "Re-import the latest installed tool scripts without restarting Maya.\n"
+            "Use this after installing or updating a tool.\n"
+            "Tool windows that are already open keep running on the old code\n"
+            "until they are relaunched from the toolbar."
+        )
+        btn_reload.clicked.connect(self._reload_scripts)
+
         self._btn_apply = QtWidgets.QPushButton("Apply")
         self._btn_apply.setObjectName("btn_apply")
         self._btn_apply.clicked.connect(self._apply)
@@ -265,6 +276,7 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         btn_close.clicked.connect(self.hide)
 
         btn_row.addWidget(btn_reset)
+        btn_row.addWidget(btn_reload)
         btn_row.addStretch()
         btn_row.addWidget(self._btn_apply)
         btn_row.addWidget(btn_close)
@@ -357,6 +369,7 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         scroll.setWidget(inner_widget)
 
         self._tool_checks = {}
+        self._tool_installed_labels = {}
         self._inline_widget_checks = {}
         current_group = None
 
@@ -403,10 +416,11 @@ class ATKSettingsDialog(QtWidgets.QDialog):
             row.addStretch()
 
             installed_lbl = QtWidgets.QLabel()
+            installed_lbl.setStyleSheet("color: #ff6666; font-size: 10px;")
             if not atk_loader.is_tool_installed(tool["id"]):
                 installed_lbl.setText("not installed")
-                installed_lbl.setStyleSheet("color: #ff6666; font-size: 10px;")
                 cb.setEnabled(False)
+            self._tool_installed_labels[tool["id"]] = installed_lbl
             row.addWidget(installed_lbl)
 
             inner_layout.addLayout(row)
@@ -523,6 +537,49 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         for tool in atk_loader.TOOL_REGISTRY:
             atk_loader.set_tool_visible(tool["id"], True)
         self._load_prefs()
+
+    # ── Script reloading ─────────────────────────────────────────────────────
+
+    def _reload_scripts(self):
+        """Re-import the latest installed tool scripts without restarting Maya.
+
+        Purges every registered tool module so the next launch picks up the
+        freshly installed files, refreshes the Tools tab installed states,
+        and rebuilds the toolbar so inline widgets use the new code too.
+        """
+        try:
+            purged = atk_loader.reload_tool_modules()
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: script reload failed: {}".format(exc))
+            return
+
+        self._refresh_installed_states()
+
+        # Rebuild the toolbar so inline widgets (e.g. the Inbetweener
+        # slider) are recreated from the reloaded modules.
+        if callable(self.rebuild_callback):
+            try:
+                self.rebuild_callback()
+            except Exception as exc:
+                cmds.warning("ATK Toolbar: rebuild after reload failed: {}".format(exc))
+
+        if purged:
+            summary = "Reloaded {} tool module{}. Relaunch open tools to use the new scripts.".format(
+                len(purged), "" if len(purged) == 1 else "s")
+        else:
+            summary = "Scripts refreshed. Tools will import the latest installed files on next launch."
+        cmds.inViewMessage(amg="<hl>ATK Toolbar</hl>: {}".format(summary),
+                           pos="midCenter", fade=True)
+        QtWidgets.QMessageBox.information(self, "Reload Scripts", summary)
+
+    def _refresh_installed_states(self):
+        """Update the Tools tab 'not installed' labels and checkbox states."""
+        for tool_id, lbl in self._tool_installed_labels.items():
+            installed = atk_loader.is_tool_installed(tool_id)
+            lbl.setText("" if installed else "not installed")
+            cb = self._tool_checks.get(tool_id)
+            if cb is not None:
+                cb.setEnabled(installed)
 
 
 # ---------------------------------------------------------------------------
