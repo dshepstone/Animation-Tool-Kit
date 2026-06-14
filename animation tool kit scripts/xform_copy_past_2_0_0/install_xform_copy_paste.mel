@@ -166,7 +166,9 @@ global proc xcp__replaceShelfButton(
 }
 
 // -----------------------------------------------------------------------------
-// Build the shelf button Python command (opens the tool window)
+// Build the shelf button Python command.
+// Routes through dispatch() so a plain click opens the window and modifier
+// clicks (Alt/Ctrl/Shift...) fire the matching copy/paste action.
 // -----------------------------------------------------------------------------
 global proc string xcp__buildShowCmd()
 {
@@ -178,7 +180,7 @@ global proc string xcp__buildShowCmd()
     $cmd += "    sys.path.insert(0, scripts_dir)\n";
     $cmd += "import xform_copy_paste\n";
     $cmd += "importlib.reload(xform_copy_paste)\n";
-    $cmd += "xform_copy_paste.show()\n";
+    $cmd += "xform_copy_paste.dispatch()\n";
     return $cmd;
 }
 
@@ -286,7 +288,7 @@ global proc xcp__install()
     xcp__replaceShelfButton(
         $currentShelf,
         "XformCP",
-        "Copy Xform World Space — open tool window",
+        "Copy Xform World Space — click to open.  Alt=Auto  Ctrl=Paste  Shift=Paste+Next  Ctrl+Shift=Copy Range  Ctrl+Alt=Bake  Ctrl+Alt+Shift=Paste All Keys",
         $iconToUse,
         $showCmd);
 

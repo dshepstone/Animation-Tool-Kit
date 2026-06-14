@@ -1,36 +1,52 @@
 # =============================================================================
 # xform_copy_paste.py
 #
-# Copy Xform World Space — Maya Animation Utility
+# Copy Xform World Space - Maya Animation Utility
 #
 # Copies and pastes world-space transforms (translate, rotate, scale) between
 # objects. Also known as "Sticky Tool" or "Animation Recorder".
 #
 # Usage: install via install_xform_copy_paste.mel, then click the shelf button.
 #
-# Functions:
+# Public API (unchanged across the 2.0 UI rebuild):
 #   show()                                - Open the tool window
+#   launch()                              - Alias for show()
+#   dispatch()                            - Shelf entry point with modifier routing
 #   auto_xform_world_space()              - Copy first selected, paste to rest
 #   copy_xform_world_space()              - Copy xform from first selected (single frame)
 #   copy_xform_playback_range()           - Copy all frames in playback range
+#   copy_xform_world_space_multi_range()  - Copy all selected across playback range
 #   paste_xform_world_space()             - Paste stored xform at current frame
 #   paste_xform_world_space_all_keys()    - Paste at all existing keyframe times
 #   paste_xform_world_space_bake_frames() - Bake stored range xform to targets
 #   paste_xform_world_space_next_frame()  - Paste then advance timeline by 1
+#   paste_xform_world_space_keys_range()  - Paste multi-object range at existing keys
 #
-# Requirements: Maya 2017+ (Python 2.7 or 3.x)
+# Requirements: Maya 2020+ (PySide2 or PySide6).  Core transform functions work
+#               under Maya 2017+ / Python 2.7 as well; only the Qt window needs
+#               a modern Maya.
+#
+# Version: 2.0.0
 # =============================================================================
+
+from __future__ import division, print_function
 
 import os
 import shutil
 
 import maya.cmds as cmds
 
+VERSION = "2.0.0"
+TITLE   = "Copy Xform World Space"
+
 # ---------------------------------------------------------------------------
-# Window ID — used to detect and delete an existing window before reopening
+# UI ids.  The legacy maya.cmds window ids are kept so a 1.x window left open
+# from a previous version is cleaned up automatically on launch.
 # ---------------------------------------------------------------------------
-_WIN_ID    = "xform_copy_paste_win"
-_STATUS_ID = "xform_copy_paste_status"
+_WIN_ID        = "xform_copy_paste_win"          # legacy cmds window
+_STATUS_ID     = "xform_copy_paste_status"       # legacy cmds status control
+_HELP_WIN_ID   = "xform_copy_paste_help_win"     # legacy cmds help window
+_ABOUT_WIN_ID  = "xform_copy_paste_about_win"    # legacy cmds about window
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +80,7 @@ def onMayaDroppedPythonFile(*args):
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
 
-    # Copy icon to Maya icons directory (optional — falls back to default icon)
+    # Copy icon to Maya icons directory (optional - falls back to default icon)
     icon_name = "commandButton.png"
     if src_dir:
         src_icon = os.path.join(src_dir, "xform_copy_paste.png")
@@ -77,9 +93,11 @@ def onMayaDroppedPythonFile(*args):
                 icon_name = "xform_copy_paste.png"
                 print("xform_copy_paste: Icon copied to " + icons_dir)
             except Exception as e:
-                cmds.warning("xform_copy_paste: Could not copy icon — " + str(e))
+                cmds.warning("xform_copy_paste: Could not copy icon - " + str(e))
 
-    # Shelf button Python command
+    # Shelf button Python command - routes through dispatch() so modifier
+    # clicks (Alt/Ctrl/Shift...) fire the matching action; a plain click
+    # opens the window.
     py_cmd = (
         "import sys, importlib\n"
         "import maya.cmds as cmds\n"
@@ -88,7 +106,7 @@ def onMayaDroppedPythonFile(*args):
         "    sys.path.insert(0, scripts_dir)\n"
         "import xform_copy_paste\n"
         "importlib.reload(xform_copy_paste)\n"
-        "xform_copy_paste.show()\n"
+        "xform_copy_paste.dispatch()\n"
     )
 
     # Get the currently active shelf
@@ -113,7 +131,9 @@ def onMayaDroppedPythonFile(*args):
     cmds.shelfButton(
         parent=current_shelf,
         label="XformCP",
-        annotation="Copy Xform World Space — open tool window",
+        annotation="Copy Xform World Space - click to open. "
+                   "Alt=Auto  Ctrl=Paste  Shift=Paste+Next  "
+                   "Ctrl+Shift=Copy Range  Ctrl+Alt=Bake  Ctrl+Alt+Shift=Paste All Keys",
         image=icon_name,
         sourceType="python",
         command=py_cmd,
@@ -136,11 +156,11 @@ def onMayaDroppedPythonFile(*args):
 # All Copy operations clear the other modes to prevent mixing stale data.
 # ---------------------------------------------------------------------------
 _XFORM_STORE = {
-    "translate":  None,   # list[float, float, float] — single-frame copy
+    "translate":  None,   # list[float, float, float] - single-frame copy
     "rotate":     None,   # list[float, float, float]
     "scale":      None,   # list[float, float, float]
-    "frame_data": None,   # dict[int, {t,r,s}] — single-object range copy
-    "multi_data": None,   # list[dict[int, {t,r,s}]] — multi-object range copy
+    "frame_data": None,   # dict[int, {t,r,s}] - single-object range copy
+    "multi_data": None,   # list[dict[int, {t,r,s}]] - multi-object range copy
                           #   index matches selection order at copy time
 }
 
@@ -167,7 +187,7 @@ def _set_xform(obj, t, r, s):
 def _set_keyframe(obj, frame):
     """Key all 9 transform channels on obj at the given frame.
 
-    Intentionally does NOT pass explicit values — Maya keys whatever the
+    Intentionally does NOT pass explicit values - Maya keys whatever the
     attribute currently holds.  This is correct after a _set_xform() call
     because _set_xform places the object in world space, and Maya stores the
     resulting *local* channel values.  Passing world-space values directly
@@ -188,6 +208,7 @@ def _store_single_frame(t, r, s):
     _XFORM_STORE["scale"]      = s
     _XFORM_STORE["frame_data"] = None
     _XFORM_STORE["multi_data"] = None
+    _notify_status()
 
 
 def _store_frame_data(frame_data):
@@ -197,6 +218,7 @@ def _store_frame_data(frame_data):
     _XFORM_STORE["scale"]      = None
     _XFORM_STORE["frame_data"] = frame_data
     _XFORM_STORE["multi_data"] = None
+    _notify_status()
 
 
 def _store_multi_data(multi_data):
@@ -206,77 +228,63 @@ def _store_multi_data(multi_data):
     _XFORM_STORE["scale"]      = None
     _XFORM_STORE["frame_data"] = None
     _XFORM_STORE["multi_data"] = multi_data
+    _notify_status()
 
 
-def _update_status():
-    """Refresh the status pill in the tool window (if open)."""
-    if not cmds.control(_STATUS_ID, exists=True):
-        return
+def _status_info():
+    """Return (state_key, headline, detail, accent_hex) for the current store.
+
+    state_key is one of: 'none', 'single', 'range', 'multi'.  Used by the Qt
+    status panel and by any external caller that wants to inspect what is held.
+    """
     if _XFORM_STORE["translate"] is not None:
-        label = "  \u25cf  Xform Stored"
-        bg    = (0.11, 0.40, 0.18)
-    elif _XFORM_STORE["frame_data"] is not None:
-        n     = len(_XFORM_STORE["frame_data"])
-        label = "  \u25cf  Range Stored  ({} frames)".format(n)
-        bg    = (0.12, 0.28, 0.52)
-    elif _XFORM_STORE["multi_data"] is not None:
+        return ("single",
+                "Single Xform Stored",
+                "Ready to paste at the current frame or existing keys.",
+                "#3fae62")
+    if _XFORM_STORE["frame_data"] is not None:
+        n = len(_XFORM_STORE["frame_data"])
+        return ("range",
+                "Playback Range Stored",
+                "{} frames captured - use Bake Frames to apply.".format(n),
+                "#4f86d6")
+    if _XFORM_STORE["multi_data"] is not None:
         n_obj = len(_XFORM_STORE["multi_data"])
         n_frm = len(_XFORM_STORE["multi_data"][0]) if _XFORM_STORE["multi_data"] else 0
-        label = "  \u25cf  Multi-Object Range  ({} objs, {} frames)".format(n_obj, n_frm)
-        bg    = (0.30, 0.16, 0.50)
-    else:
-        label = "  \u25cb  No Xform Stored"
-        bg    = (0.25, 0.25, 0.25)
-    cmds.text(_STATUS_ID, e=True, label=label, backgroundColor=bg)
+        return ("multi",
+                "Multi-Object Range Stored",
+                "{} objects x {} frames - use Keys Playback Range to apply.".format(n_obj, n_frm),
+                "#9a6bd8")
+    return ("none",
+            "No Xform Stored",
+            "Store a transform to enable paste operations.",
+            "#6f7177")
+
+
+# Weak reference to the live Qt window so storage helpers can refresh the
+# status panel without importing Qt at module scope.
+_ACTIVE_WINDOW = None
+
+
+def _notify_status():
+    """Refresh the status panel on the live Qt window, if one is open."""
+    win = _ACTIVE_WINDOW
+    if win is None:
+        return
+    try:
+        win.refresh_status()
+    except Exception:
+        # Window was destroyed out from under us - drop the reference.
+        pass
 
 
 # ---------------------------------------------------------------------------
-# UI helpers
+# Help / About text (shared by the Qt dialogs)
 # ---------------------------------------------------------------------------
-
-def _section_header(label):
-    """Dark full-width section label strip."""
-    cmds.columnLayout(adjustableColumn=True, bgc=(0.17, 0.17, 0.17))
-    cmds.text(
-        label=label,
-        align="left",
-        font="smallBoldLabelFont",
-        height=22,
-        backgroundColor=(0.17, 0.17, 0.17),
-    )
-    cmds.setParent("..")
-
-
-def _action_button(label, annotation, color, func):
-    """Colored action button."""
-    cmds.button(
-        label=label,
-        height=30,
-        annotation=annotation,
-        backgroundColor=color,
-        command=lambda *_: _run(func),
-    )
-
-
-# ---------------------------------------------------------------------------
-# UI — Help and About windows
-# ---------------------------------------------------------------------------
-
-_HELP_WIN_ID  = "xform_copy_paste_help_win"
-_ABOUT_WIN_ID = "xform_copy_paste_about_win"
 
 _HELP_TEXT = """\
-COPY XFORM WORLD SPACE — HELP
+COPY XFORM WORLD SPACE - HELP
 ==============================
-
-INSTALLATION
-------------
-Drag install_xform_copy_paste.mel onto the Maya viewport.
-The script copies xform_copy_paste.py to your scripts directory and
-adds a single "XformCP" shelf button to the active shelf.
-
-Place xform_copy_paste.png in the same folder as the .mel file to
-install the custom shelf icon automatically.
 
 OVERVIEW
 --------
@@ -289,88 +297,70 @@ in world space, then key the resulting local channel values.  This means
 the tool works correctly for objects inside a parent hierarchy (rig
 controllers, COG, IK handles, etc.).
 
-─────────────────────────────────────────────────────────────────────────
-
 COPY FUNCTIONS
 --------------
-
 Auto Xform World Space  [Alt+Click shelf button]
   Copies the world-space transform from the FIRST selected object and
   immediately pastes it to every other selected object at the current
-  frame.  Sets a keyframe on all 9 channels (tx ty tz rx ry rz sx sy sz)
-  for each target.  Requires at least 2 objects selected.
+  frame.  Keys all 9 channels for each target.  Needs 2+ objects.
 
-Copy Xform World Space  [shelf button]
+Copy Xform World Space  [window button]
   Captures the world-space transform of the first selected object at the
-  current frame and stores it in memory.  Use any Paste function to apply
-  the stored values.  Requires at least 1 object selected.
+  current frame and stores it.  Needs 1+ object.
 
 Copy Xform World Space Playback Range  [Ctrl+Shift+Click shelf button]
-  Samples the first selected object's world-space transform on every
-  frame of the current playback range and stores the result as a
-  frame-keyed dictionary.  Used with Paste Xform WS Bake Frames.
-  Requires at least 1 object selected.
+  Samples the first selected object's world-space transform on every frame
+  of the playback range.  Used with Paste Xform WS Bake Frames.
 
 Copy Xform WS Multi Objects Playback Range  [window button]
-  Samples ALL selected objects across the entire playback range and
-  stores per-object, per-frame world-space data.  Selection order is
-  preserved so each source maps to the corresponding target during paste.
-  Used with Paste Xform WS Keys Playback Range.
-  Requires at least 1 object selected.
-
-─────────────────────────────────────────────────────────────────────────
+  Samples ALL selected objects across the playback range, preserving
+  selection order.  Used with Paste Xform WS Keys Playback Range.
 
 PASTE FUNCTIONS
 ---------------
-
 Paste Xform World Space  [Ctrl+Click shelf button]
-  Pastes the stored single-frame world-space transform to all selected
-  objects at the current frame.  Sets a keyframe on all 9 channels.
-  Requires a prior Copy Xform World Space (or Auto Xform).
+  Pastes the stored single-frame xform to all selected objects at the
+  current frame.
 
 Paste Xform World Space All Keys  [Ctrl+Alt+Shift+Click shelf button]
-  Pastes the stored single-frame xform to all selected objects at EVERY
-  frame that already has a keyframe on the target.  Does not create new
-  keyframe times — only overwrites existing ones.
-  Requires a prior Copy Xform World Space.
+  Pastes the stored single-frame xform at every existing keyframe time on
+  each target.  Creates no new keys.
 
 Paste Xform World Space Bake Frames  [Ctrl+Alt+Click shelf button]
-  Bakes the stored playback-range data onto all selected objects, setting
-  a keyframe on every frame of the range.  Targets that are missing
-  frames from the stored range receive a warning and those frames are
-  skipped.
-  Requires a prior Copy Xform WS Playback Range.
+  Bakes the stored playback-range data onto all selected objects, keying
+  every frame of the range.
 
 Paste Xform World Space Next Frame  [Shift+Click shelf button]
-  Pastes the stored single-frame xform at the current frame then advances
-  the timeline by 1.  Useful for step-by-step pose-to-pose work.
-  Requires a prior Copy Xform World Space.
+  Pastes the stored single-frame xform then advances the timeline by 1.
 
 Paste Xform WS Keys Playback Range  [window button]
-  Pairs with Copy Xform WS Multi Objects Playback Range.
-  For each selected target, looks up the corresponding stored source data
-  (matched by selection index) and overwrites keyframe values only at
-  frames that already have keyframes on the target within the playback
-  range.  No new keyframe times are created — existing animation curves
-  are retimed to the captured world position.
-  Requires a prior Copy Xform WS Multi Objects Playback Range.
+  Pairs with Copy Xform WS Multi Objects Playback Range.  For each target,
+  overwrites only the keyframes it already has within the playback range,
+  matched to its source by selection index.
 
-─────────────────────────────────────────────────────────────────────────
+STATUS PANEL
+------------
+The coloured status panel shows what is stored:
+  Grey   - nothing stored
+  Green  - single-frame xform
+  Blue   - single-object playback-range data
+  Purple - multi-object playback-range data
 
-STATUS INDICATOR
-----------------
-The coloured pill at the top of the window shows what is stored:
-
-  Grey   — nothing stored
-  Green  — single-frame xform stored
-  Blue   — single-object playback-range data stored
-  Purple — multi-object playback-range data stored
+SHELF MODIFIER CLICKS
+---------------------
+  (no modifier)        Open this window
+  Alt+Click            Auto Xform World Space
+  Ctrl+Click           Paste Xform World Space
+  Shift+Click          Paste Xform World Space Next Frame
+  Ctrl+Shift+Click     Copy Xform World Space Playback Range
+  Ctrl+Alt+Click       Paste Xform World Space Bake Frames
+  Ctrl+Alt+Shift+Click Paste Xform World Space All Keys
 """
 
 _ABOUT_TEXT = """\
 Copy Xform World Space
-Version 1.0
-─────────────────────────────────────────────────────────────────────────
+Version {ver}
+----------------------------------------------------------------
 
 Also known as: Sticky Tool, Animation Recorder
 
@@ -380,273 +370,21 @@ always written as local channel values so the tool works correctly with
 rigged characters and parented controllers.
 
 REQUIREMENTS
-  Maya 2017 or later (Python 2.7 or Python 3.x)
+  Maya 2020 or later (PySide2 or PySide6)
 
 INSTALLATION
   Drag install_xform_copy_paste.mel onto the Maya viewport.
-  The installer copies xform_copy_paste.py to your Maya scripts
-  directory and adds a single "XformCP" shelf button.
-
-FILES
-  xform_copy_paste.py           — main script (copy to scripts dir)
-  install_xform_copy_paste.mel  — drag-and-drop installer
-  xform_copy_paste.png          — shelf icon (place beside .mel)
 
 SOURCE
   github.com/dshepstone/xform_copy_paste
-─────────────────────────────────────────────────────────────────────────
-"""
+----------------------------------------------------------------
+""".format(ver=VERSION)
 
 
-def show_help():
-    """Open the Help reference window."""
-    if cmds.window(_HELP_WIN_ID, exists=True):
-        cmds.deleteUI(_HELP_WIN_ID)
-
-    win = cmds.window(
-        _HELP_WIN_ID,
-        title="Copy Xform World Space — Help",
-        widthHeight=(560, 680),
-        sizeable=True,
-        menuBar=False,
-    )
-    cmds.scrollLayout(childResizable=True)
-    cmds.columnLayout(adjustableColumn=True, bgc=(0.18, 0.18, 0.18))
-    cmds.separator(height=10, style="none")
-    cmds.text(
-        label=_HELP_TEXT,
-        align="left",
-        font="fixedWidthFont",
-        backgroundColor=(0.18, 0.18, 0.18),
-    )
-    cmds.separator(height=10, style="none")
-    cmds.setParent("..")
-    cmds.setParent("..")
-    cmds.showWindow(win)
-
-
-def show_about():
-    """Open the About window."""
-    if cmds.window(_ABOUT_WIN_ID, exists=True):
-        cmds.deleteUI(_ABOUT_WIN_ID)
-
-    win = cmds.window(
-        _ABOUT_WIN_ID,
-        title="About — Copy Xform World Space",
-        widthHeight=(480, 340),
-        sizeable=True,
-        menuBar=False,
-    )
-    cmds.scrollLayout(childResizable=True)
-    cmds.columnLayout(adjustableColumn=True, bgc=(0.18, 0.18, 0.18))
-    cmds.separator(height=10, style="none")
-    cmds.text(
-        label=_ABOUT_TEXT,
-        align="left",
-        font="fixedWidthFont",
-        backgroundColor=(0.18, 0.18, 0.18),
-    )
-    cmds.separator(height=10, style="none")
-    cmds.setParent("..")
-    cmds.setParent("..")
-    cmds.showWindow(win)
-
-
-# ---------------------------------------------------------------------------
-# UI — main window
-# ---------------------------------------------------------------------------
-
-def show():
-    """Open (or reopen) the Copy Xform World Space tool window."""
-    if cmds.window(_WIN_ID, exists=True):
-        cmds.deleteUI(_WIN_ID)
-
-    win = cmds.window(
-        _WIN_ID,
-        title="Copy Xform World Space",
-        widthHeight=(380, 760),
-        sizeable=True,
-        menuBar=True,
-    )
-
-    # ── Menu bar ─────────────────────────────────────────────────────────
-    cmds.menu(label="Help")
-    cmds.menuItem(label="Help",  command=lambda *_: show_help())
-    cmds.menuItem(label="About", command=lambda *_: show_about())
-    cmds.setParent("..")
-
-    # Scroll layout so all content is reachable even at small window sizes
-    cmds.scrollLayout(childResizable=True)
-    cmds.columnLayout(adjustableColumn=True, bgc=(0.20, 0.20, 0.20))
-
-    # ── Title ──────────────────────────────────────────────────────────────
-    cmds.separator(height=14, style="none")
-    cmds.text(
-        label="Copy Xform World Space",
-        font="boldLabelFont",
-        height=22,
-        align="center",
-        backgroundColor=(0.20, 0.20, 0.20),
-    )
-    cmds.separator(height=8, style="none")
-    cmds.text(
-        label=(
-            "Copies and pastes world-space transforms between objects.\n"
-            'Also known as "Sticky Tool" or "Animation Recorder".'
-        ),
-        align="center",
-        height=32,
-        backgroundColor=(0.20, 0.20, 0.20),
-    )
-    cmds.separator(height=12, style="none")
-
-    # ── Status pill (full width — no side margin) ───────────────────────────
-    cmds.text(
-        _STATUS_ID,
-        label="  \u25cb  No Xform Stored",
-        height=30,
-        align="left",
-        font="boldLabelFont",
-        backgroundColor=(0.25, 0.25, 0.25),
-    )
-
-    cmds.separator(height=12, style="none")
-
-    # ── COPY section ───────────────────────────────────────────────────────
-    _section_header("  COPY")
-    # frameLayout provides the marginWidth/marginHeight that columnLayout lacks
-    cmds.frameLayout(labelVisible=False, marginWidth=8, marginHeight=4,
-                     bgc=(0.20, 0.20, 0.20))
-    cmds.columnLayout(adjustableColumn=True, bgc=(0.20, 0.20, 0.20))
-
-    _action_button(
-        "Auto Xform World Space",
-        "Copy first selected, paste to all remaining at current frame  (Alt+Click)",
-        (0.52, 0.30, 0.08),
-        auto_xform_world_space,
-    )
-    cmds.separator(height=4, style="none")
-    _action_button(
-        "Copy Xform World Space",
-        "Copy world-space xform from first selected object at current frame",
-        (0.12, 0.40, 0.46),
-        copy_xform_world_space,
-    )
-    cmds.separator(height=4, style="none")
-    _action_button(
-        "Copy Xform World Space Playback Range",
-        "Copy xform for every frame in the playback range  (Ctrl+Shift+Click)",
-        (0.12, 0.40, 0.46),
-        copy_xform_playback_range,
-    )
-    cmds.separator(height=4, style="none")
-    _action_button(
-        "Copy Xform WS Multi Objects Playback Range",
-        "Copy world-space xform from ALL selected objects across the playback range",
-        (0.10, 0.33, 0.38),
-        copy_xform_world_space_multi_range,
-    )
-    cmds.setParent("..")  # end columnLayout
-    cmds.setParent("..")  # end frameLayout (copy)
-
-    cmds.separator(height=12, style="none")
-
-    # ── PASTE section ──────────────────────────────────────────────────────
-    _section_header("  PASTE")
-    cmds.frameLayout(labelVisible=False, marginWidth=8, marginHeight=4,
-                     bgc=(0.20, 0.20, 0.20))
-    cmds.columnLayout(adjustableColumn=True, bgc=(0.20, 0.20, 0.20))
-
-    _action_button(
-        "Paste Xform World Space",
-        "Paste stored xform to selected objects at current frame  (Ctrl+Click)",
-        (0.17, 0.28, 0.52),
-        paste_xform_world_space,
-    )
-    cmds.separator(height=4, style="none")
-    _action_button(
-        "Paste Xform World Space All Keys",
-        "Paste stored xform at all existing keyframe times  (Ctrl+Alt+Shift+Click)",
-        (0.17, 0.28, 0.52),
-        paste_xform_world_space_all_keys,
-    )
-    cmds.separator(height=4, style="none")
-    _action_button(
-        "Paste Xform World Space Bake Frames",
-        "Bake stored single-object range xform to every frame  (Ctrl+Alt+Click)",
-        (0.17, 0.28, 0.52),
-        paste_xform_world_space_bake_frames,
-    )
-    cmds.separator(height=4, style="none")
-    _action_button(
-        "Paste Xform World Space Next Frame",
-        "Paste stored xform at current frame, then advance by 1  (Shift+Click)",
-        (0.17, 0.28, 0.52),
-        paste_xform_world_space_next_frame,
-    )
-    cmds.separator(height=4, style="none")
-    _action_button(
-        "Paste Xform WS Keys Playback Range",
-        "Use after 'Copy Xform WS Multi Objects Playback Range' — "
-        "pastes each target's stored world-space xform only at its existing "
-        "keyframe times within the playback range (no baking)",
-        (0.28, 0.14, 0.46),
-        paste_xform_world_space_keys_range,
-    )
-    cmds.setParent("..")  # end columnLayout
-    cmds.setParent("..")  # end frameLayout (paste)
-
-    cmds.separator(height=12, style="none")
-
-    # ── SHORTCUTS section ──────────────────────────────────────────────────
-    _section_header("  SHORTCUTS")
-    cmds.frameLayout(labelVisible=False, marginWidth=8, marginHeight=4,
-                     bgc=(0.20, 0.20, 0.20))
-    cmds.columnLayout(adjustableColumn=True, bgc=(0.20, 0.20, 0.20))
-
-    _shortcuts = [
-        ("Auto Xform World Space",        "Alt+Click"),
-        ("Copy Xform WS Playback Range",  "Ctrl+Shift+Click"),
-        ("Copy Xform WS Multi Range",     "window button"),
-        ("Paste Xform World Space",       "Ctrl+Click"),
-        ("Paste Xform WS All Keys",       "Ctrl+Alt+Shift+Click"),
-        ("Paste Xform WS Bake Frames",    "Ctrl+Alt+Click"),
-        ("Paste Xform WS Next Frame",     "Shift+Click"),
-        ("Paste Xform WS Keys Range",     "window button"),
-    ]
-
-    cmds.rowColumnLayout(
-        numberOfColumns=2,
-        columnWidth=[(1, 210), (2, 148)],
-        columnAlign=[(1, "left"), (2, "right")],
-    )
-    for i, (name, hotkey) in enumerate(_shortcuts):
-        row_bg = (0.22, 0.22, 0.22) if i % 2 == 0 else (0.19, 0.19, 0.19)
-        cmds.text(label="  " + name,    align="left",  font="smallFixedWidthFont",
-                  height=20, backgroundColor=row_bg)
-        cmds.text(label=hotkey + "  ",  align="right", font="smallFixedWidthFont",
-                  height=20, backgroundColor=row_bg)
-    cmds.setParent("..")  # end rowColumnLayout
-
-    cmds.setParent("..")  # end columnLayout
-    cmds.setParent("..")  # end frameLayout (shortcuts)
-    cmds.separator(height=12, style="none")
-    cmds.setParent("..")  # end outer columnLayout
-    cmds.setParent("..")  # end scrollLayout
-
-    cmds.showWindow(win)
-    _update_status()
-
-
-def _run(func):
-    """Execute a core function then refresh the status indicator."""
-    func()
-    _update_status()
-
-
-# ---------------------------------------------------------------------------
-# Public API — 7 core functions
-# ---------------------------------------------------------------------------
+# ===========================================================================
+#  Public API - core transform functions
+#  These contain no UI code and run under any Maya (Python 2.7 or 3.x).
+# ===========================================================================
 
 def auto_xform_world_space():
     """
@@ -733,7 +471,7 @@ def copy_xform_playback_range():
         cmds.currentTime(original_frame)
 
     _store_frame_data(frame_data)
-    print("xform_copy_paste: Copied xform for {} frames ({}–{}) from '{}'.".format(
+    print("xform_copy_paste: Copied xform for {} frames ({}-{}) from '{}'.".format(
         len(frame_data), min_f, max_f, source))
 
 
@@ -798,7 +536,7 @@ def paste_xform_world_space_all_keys():
         for obj in sel:
             key_times = cmds.keyframe(obj, q=True, tc=True) or []
             if not key_times:
-                cmds.warning("xform_copy_paste: '{}' has no keyframes — skipping.".format(obj))
+                cmds.warning("xform_copy_paste: '{}' has no keyframes - skipping.".format(obj))
                 continue
             key_times = sorted(set(key_times))
             for kf in key_times:
@@ -841,7 +579,7 @@ def paste_xform_world_space_bake_frames():
     try:
         for f in range(min_f, max_f + 1):
             if f not in frame_data:
-                cmds.warning("xform_copy_paste: Frame {} not in copied range — skipping.".format(f))
+                cmds.warning("xform_copy_paste: Frame {} not in copied range - skipping.".format(f))
                 skipped += 1
                 continue
             entry = frame_data[f]
@@ -856,7 +594,7 @@ def paste_xform_world_space_bake_frames():
 
     print("xform_copy_paste: Baked {} frame(s) to {} object(s){}.".format(
         baked, len(sel),
-        " ({} frame(s) skipped — not in copied range)".format(skipped) if skipped else ""))
+        " ({} frame(s) skipped - not in copied range)".format(skipped) if skipped else ""))
 
 
 def paste_xform_world_space_next_frame():
@@ -900,9 +638,9 @@ def copy_xform_world_space_multi_range():
     be matched back to a corresponding target during paste.
 
     Workflow:
-      1. Select all source controllers → Copy Xform WS Multi Objects Range
+      1. Select all source controllers -> Copy Xform WS Multi Objects Range
       2. Select corresponding target controllers (same order / count)
-         → Paste Xform WS Keys Playback Range
+         -> Paste Xform WS Keys Playback Range
 
     Requires at least 1 object selected.
     """
@@ -930,7 +668,7 @@ def copy_xform_world_space_multi_range():
         cmds.currentTime(original_frame)
 
     _store_multi_data(multi_data)
-    print("xform_copy_paste: Copied {} object(s) across {} frames ({}–{}).".format(
+    print("xform_copy_paste: Copied {} object(s) across {} frames ({}-{}).".format(
         len(sel), max_f - min_f + 1, min_f, max_f))
 
 
@@ -938,7 +676,7 @@ def paste_xform_world_space_keys_range():
     """
     Paste the stored multi-object world-space xform onto each selected object,
     but ONLY at frames that already have keyframes on that object within the
-    current playback range.  No new frames are created — only existing keys
+    current playback range.  No new frames are created - only existing keys
     are overwritten with the world-space position from the copied data.
 
     Targets are matched to copied sources by selection order (1st target gets
@@ -969,7 +707,7 @@ def paste_xform_world_space_keys_range():
         for i, obj in enumerate(sel):
             if i >= len(multi_data):
                 cmds.warning(
-                    "xform_copy_paste: No stored data for target {} ('{}') — skipping.".format(
+                    "xform_copy_paste: No stored data for target {} ('{}') - skipping.".format(
                         i + 1, obj)
                 )
                 continue
@@ -984,7 +722,7 @@ def paste_xform_world_space_keys_range():
 
             if not key_times:
                 cmds.warning(
-                    "xform_copy_paste: '{}' has no keyframes in range {}–{} — skipping.".format(
+                    "xform_copy_paste: '{}' has no keyframes in range {}-{} - skipping.".format(
                         obj, min_f, max_f)
                 )
                 continue
@@ -1005,3 +743,630 @@ def paste_xform_world_space_keys_range():
 
     print("xform_copy_paste: Pasted at {} keyframe(s) across {} object(s).".format(
         total_keys, min(len(sel), len(multi_data))))
+
+
+# ===========================================================================
+#  Shelf entry point - modifier-click routing
+# ===========================================================================
+
+def dispatch():
+    """Shelf-button entry point.
+
+    Reads the keyboard modifiers held during the click and runs the matching
+    action.  A plain click (no modifiers) opens the tool window.  This is what
+    makes the SHORTCUTS table on the window actually work from the shelf.
+
+    Modifier bit values from cmds.getModifiers(): Shift=1, Ctrl=4, Alt=8.
+    """
+    try:
+        mods = cmds.getModifiers()
+    except Exception:
+        mods = 0
+
+    shift = bool(mods & 1)
+    ctrl  = bool(mods & 4)
+    alt   = bool(mods & 8)
+
+    # Order matters: test the most specific combos first.
+    if ctrl and alt and shift:
+        paste_xform_world_space_all_keys()
+    elif ctrl and shift:
+        copy_xform_playback_range()
+    elif ctrl and alt:
+        paste_xform_world_space_bake_frames()
+    elif alt:
+        auto_xform_world_space()
+    elif ctrl:
+        paste_xform_world_space()
+    elif shift:
+        paste_xform_world_space_next_frame()
+    else:
+        show()
+
+
+# ===========================================================================
+#  Qt compatibility layer (matches the Inbetweener / Noise Generator tools)
+# ===========================================================================
+
+def _import_qt_modules():
+    """Resolve the Qt bindings bundled with the current Maya session."""
+    binding_attempts = (
+        ("PySide6", "shiboken6"),
+        ("PySide6", "shiboken2"),
+        ("PySide2", "shiboken2"),
+        ("PySide2", "shiboken6"),
+    )
+
+    last_error = None
+    for qt_mod_name, shiboken_name in binding_attempts:
+        try:
+            qt_mod = __import__(qt_mod_name, fromlist=["QtCore", "QtGui", "QtWidgets"])
+            shiboken_mod = __import__(shiboken_name)
+        except ImportError as exc:
+            last_error = exc
+            continue
+
+        try:
+            qt_core = getattr(qt_mod, "QtCore")
+            qt_gui = getattr(qt_mod, "QtGui")
+            qt_widgets = getattr(qt_mod, "QtWidgets")
+        except AttributeError as exc:
+            last_error = exc
+            continue
+
+        return qt_core, qt_gui, qt_widgets, shiboken_mod
+
+    raise ImportError(
+        "Copy Xform World Space requires PySide2/PySide6 with shiboken"
+        " (last error: {})".format(last_error))
+
+
+# ---------------------------------------------------------------------------
+# Palette - single source of truth for the dark theme
+# ---------------------------------------------------------------------------
+_C = {
+    "bg":          "#1e1f22",
+    "panel":       "#26272b",
+    "panel_hi":    "#2c2d32",
+    "border":      "#3a3b40",
+    "border_soft": "#45464c",
+    "text":        "#e6e7ea",
+    "text_dim":    "#9a9ca2",
+    "text_faint":  "#6f7177",
+    # category accents
+    "amber":       "#d08a2e",
+    "amber_text":  "#f0cf9a",
+    "blue":        "#4f86d6",
+    "blue_text":   "#bcd3f2",
+    "purple":      "#9a6bd8",
+    "purple_text": "#dcc6f4",
+}
+
+
+def _stylesheet():
+    """Return the application-wide stylesheet for the tool window."""
+    return """
+    QDialog#xformRoot {{ background: {bg}; }}
+    QWidget#contentPane {{ background: {bg}; }}
+
+    QLabel {{ color: {text}; background: transparent; border: none; }}
+
+    /* Card panels */
+    QFrame#card {{
+        background: {panel};
+        border: 1px solid {border};
+        border-radius: 8px;
+    }}
+
+    /* Section heading text */
+    QLabel#sectionTitle {{
+        color: {text_dim};
+        font-size: 11px;
+        font-weight: bold;
+        letter-spacing: 1px;
+    }}
+
+    QLabel#headerTitle {{
+        color: {text};
+        font-size: 17px;
+        font-weight: bold;
+    }}
+    QLabel#headerSub {{ color: {text_dim}; font-size: 11px; }}
+    QLabel#statusHead {{ color: {text}; font-size: 13px; font-weight: bold; }}
+    QLabel#statusDetail {{ color: {text_dim}; font-size: 10px; }}
+    QLabel#footer {{ color: {text_faint}; font-size: 10px; }}
+
+    /* --- Buttons: base --- */
+    QPushButton {{
+        text-align: left;
+        padding: 7px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        color: {text};
+        background: {panel_hi};
+        border: 1px solid {border};
+    }}
+    QPushButton:hover {{ border-color: {border_soft}; }}
+    QPushButton:pressed {{ background: {bg}; }}
+
+    /* Auto - primary orange, filled */
+    QPushButton#autoBtn {{
+        background: #9c6322;
+        border: 1px solid #c5832f;
+        color: #fdf3e2;
+        font-weight: bold;
+    }}
+    QPushButton#autoBtn:hover {{ background: #b37428; }}
+    QPushButton#autoBtn:pressed {{ background: #7e4f1a; }}
+
+    /* Copy - warm/amber */
+    QPushButton#copyBtn {{
+        background: #2f2818;
+        border: 1px solid #6a5325;
+        color: {amber_text};
+    }}
+    QPushButton#copyBtn:hover {{ background: #3a311d; border-color: #8a6a30; }}
+    QPushButton#copyBtn:pressed {{ background: #241d11; }}
+
+    /* Paste - blue */
+    QPushButton#pasteBtn {{
+        background: #1d2733;
+        border: 1px solid #3a567c;
+        color: {blue_text};
+    }}
+    QPushButton#pasteBtn:hover {{ background: #243140; border-color: #4f6f9c; }}
+    QPushButton#pasteBtn:pressed {{ background: #161e28; }}
+
+    /* Paste keys playback range - purple */
+    QPushButton#purpleBtn {{
+        background: #281d36;
+        border: 1px solid #5a3d80;
+        color: {purple_text};
+    }}
+    QPushButton#purpleBtn:hover {{ background: #312542; border-color: #74519f; }}
+    QPushButton#purpleBtn:pressed {{ background: #1e1629; }}
+
+    /* Icon/ghost button (header gear, db icon) */
+    QPushButton#ghostBtn {{
+        background: transparent;
+        border: 1px solid {border};
+        border-radius: 14px;
+        padding: 0;
+        color: {text_dim};
+        font-size: 14px;
+    }}
+    QPushButton#ghostBtn:hover {{ border-color: {border_soft}; color: {text}; }}
+
+    /* Shortcut key caps */
+    QLabel#keycap {{
+        color: {text_dim};
+        background: {panel_hi};
+        border: 1px solid {border};
+        border-radius: 4px;
+        padding: 2px 8px;
+        font-family: "Consolas", "Courier New", monospace;
+        font-size: 10px;
+    }}
+    QLabel#shortcutName {{ color: {text_dim}; font-size: 11px; }}
+
+    QScrollArea {{ background: transparent; border: none; }}
+    QScrollBar:vertical {{
+        background: {bg}; width: 10px; margin: 0;
+    }}
+    QScrollBar::handle:vertical {{
+        background: {border_soft}; border-radius: 5px; min-height: 28px;
+    }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    """.format(**_C)
+
+
+# Resolve Qt once at import.  Kept here (after the core API) so the transform
+# functions remain importable even if a non-Maya context lacks PySide; the
+# import only fires when the module is actually loaded inside Maya.
+QtCore, QtGui, QtWidgets, shiboken = _import_qt_modules()
+
+
+# ---------------------------------------------------------------------------
+# Action descriptors - single source for buttons, tooltips and the shortcut
+# table.  (name, object_id, tooltip, function, shortcut_label)
+# ---------------------------------------------------------------------------
+_COPY_ACTIONS = [
+    ("Auto Xform World Space", "autoBtn",
+     "Copy from the first selected object and paste to all the rest at the "
+     "current frame  (shelf: Alt+Click). Needs 2+ objects.",
+     auto_xform_world_space),
+    ("Copy Xform World Space", "copyBtn",
+     "Copy the world-space xform of the first selected object at the current frame.",
+     copy_xform_world_space),
+    ("Copy Xform World Space Playback Range", "copyBtn",
+     "Sample the first selected object every frame of the playback range  "
+     "(shelf: Ctrl+Shift+Click).",
+     copy_xform_playback_range),
+    ("Copy Xform WS Multi Objects Playback Range", "copyBtn",
+     "Sample ALL selected objects across the playback range, preserving "
+     "selection order.",
+     copy_xform_world_space_multi_range),
+]
+
+_PASTE_ACTIONS = [
+    ("Paste Xform World Space", "pasteBtn",
+     "Paste the stored xform to selected objects at the current frame  "
+     "(shelf: Ctrl+Click).",
+     paste_xform_world_space),
+    ("Paste Xform World Space All Keys", "pasteBtn",
+     "Paste the stored xform at every existing keyframe time  "
+     "(shelf: Ctrl+Alt+Shift+Click).",
+     paste_xform_world_space_all_keys),
+    ("Paste Xform World Space Bake Frames", "pasteBtn",
+     "Bake the stored single-object range onto every frame  "
+     "(shelf: Ctrl+Alt+Click).",
+     paste_xform_world_space_bake_frames),
+    ("Paste Xform World Space Next Frame", "pasteBtn",
+     "Paste at the current frame then advance by 1  (shelf: Shift+Click).",
+     paste_xform_world_space_next_frame),
+    ("Paste Xform WS Keys Playback Range", "purpleBtn",
+     "After 'Copy Xform WS Multi Objects Playback Range', overwrite each "
+     "target's existing keys within the playback range (no baking).",
+     paste_xform_world_space_keys_range),
+]
+
+_SHORTCUTS = [
+    ("Auto Xform World Space",       "Alt+Click"),
+    ("Copy Xform WS Playback Range", "Ctrl+Shift+Click"),
+    ("Copy Xform WS Multi Range",    "window button"),
+    ("Paste Xform World Space",      "Ctrl+Click"),
+    ("Paste Xform WS All Keys",      "Ctrl+Alt+Shift+Click"),
+    ("Paste Xform WS Bake Frames",   "Ctrl+Alt+Click"),
+    ("Paste Xform WS Next Frame",    "Shift+Click"),
+    ("Paste Xform WS Keys Range",    "window button"),
+]
+
+
+def _maya_main_window():
+    """Return Maya's main window wrapped as a QWidget (or None)."""
+    try:
+        import maya.OpenMayaUI as omui
+        ptr = omui.MQtUtil.mainWindow()
+        if ptr is not None:
+            return shiboken.wrapInstance(int(ptr), QtWidgets.QWidget)
+    except Exception:
+        pass
+    return None
+
+
+class XformCopyPasteUI(QtWidgets.QDialog):
+    """Copy Xform World Space - modern PySide tool window."""
+
+    instance = None
+
+    # -- singleton display ------------------------------------------------
+    @classmethod
+    def display(cls):
+        if cls.instance is not None:
+            try:
+                if not shiboken.isValid(cls.instance):
+                    cls.instance = None
+            except RuntimeError:
+                cls.instance = None
+
+        if cls.instance is None:
+            cls.instance = cls()
+
+        cls.instance.show()
+        cls.instance.raise_()
+        cls.instance.activateWindow()
+        return cls.instance
+
+    def __init__(self, parent=None):
+        _delete_legacy_ui()
+        if parent is None:
+            parent = _maya_main_window()
+        super(XformCopyPasteUI, self).__init__(parent)
+
+        self.setObjectName("xformRoot")
+        self.setWindowTitle("{}  v{}".format(TITLE, VERSION))
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
+        self.setStyleSheet(_stylesheet())
+        self.setMinimumWidth(420)
+
+        self._status_dot  = None
+        self._status_head = None
+        self._status_det  = None
+
+        self._build_ui()
+        self.refresh_status()
+
+        # Size to content, capped to the available screen height.
+        hint = self._content.sizeHint()
+        avail_h = 1000
+        try:
+            screen = self.screen() or QtGui.QGuiApplication.primaryScreen()
+            if screen:
+                avail_h = screen.availableGeometry().height()
+        except Exception:
+            pass
+        self.resize(460, min(hint.height() + 16, avail_h - 80))
+
+    # =====================================================================
+    #  Construction helpers
+    # =====================================================================
+    def _build_ui(self):
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        outer.addWidget(scroll)
+
+        self._content = QtWidgets.QWidget()
+        self._content.setObjectName("contentPane")
+        scroll.setWidget(self._content)
+
+        main = QtWidgets.QVBoxLayout(self._content)
+        main.setContentsMargins(14, 14, 14, 12)
+        main.setSpacing(12)
+
+        main.addWidget(self._build_header())
+        main.addWidget(self._build_status_card())
+        main.addWidget(self._build_action_card("COPY", "⦿", _COPY_ACTIONS))
+        main.addWidget(self._build_action_card("PASTE", "⤓", _PASTE_ACTIONS))
+        main.addWidget(self._build_shortcuts_card())
+        main.addWidget(self._build_footer())
+        main.addStretch()
+
+    def _card(self):
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("card")
+        lay = QtWidgets.QVBoxLayout(frame)
+        lay.setContentsMargins(12, 10, 12, 12)
+        lay.setSpacing(8)
+        return frame, lay
+
+    def _build_header(self):
+        frame, lay = self._card()
+
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(12)
+
+        icon = QtWidgets.QLabel("◎")  # bullseye glyph
+        icon.setStyleSheet("color: {}; font-size: 30px;".format(_C["amber"]))
+        icon.setFixedWidth(40)
+        icon.setAlignment(QtCore.Qt.AlignCenter)
+        row.addWidget(icon)
+
+        text_col = QtWidgets.QVBoxLayout()
+        text_col.setSpacing(2)
+        title = QtWidgets.QLabel(TITLE)
+        title.setObjectName("headerTitle")
+        sub = QtWidgets.QLabel("Copy and paste world-space transforms between objects.")
+        sub.setObjectName("headerSub")
+        sub.setWordWrap(True)
+        text_col.addWidget(title)
+        text_col.addWidget(sub)
+        row.addLayout(text_col, 1)
+
+        gear = QtWidgets.QPushButton("⚙")
+        gear.setObjectName("ghostBtn")
+        gear.setFixedSize(28, 28)
+        gear.setToolTip("Help and About")
+        gear.setCursor(QtCore.Qt.PointingHandCursor)
+        gear.clicked.connect(self._show_help_menu)
+        self._gear_btn = gear
+        row.addWidget(gear, 0, QtCore.Qt.AlignTop)
+
+        lay.addLayout(row)
+        return frame
+
+    def _build_status_card(self):
+        frame, lay = self._card()
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(12)
+
+        dot = QtWidgets.QLabel()
+        dot.setFixedSize(12, 12)
+        self._status_dot = dot
+        row.addWidget(dot, 0, QtCore.Qt.AlignVCenter)
+
+        col = QtWidgets.QVBoxLayout()
+        col.setSpacing(2)
+        head = QtWidgets.QLabel("No Xform Stored")
+        head.setObjectName("statusHead")
+        det = QtWidgets.QLabel("Store a transform to enable paste operations.")
+        det.setObjectName("statusDetail")
+        det.setWordWrap(True)
+        self._status_head = head
+        self._status_det = det
+        col.addWidget(head)
+        col.addWidget(det)
+        row.addLayout(col, 1)
+
+        clear = QtWidgets.QPushButton("✕")
+        clear.setObjectName("ghostBtn")
+        clear.setFixedSize(28, 28)
+        clear.setToolTip("Clear the stored transform")
+        clear.setCursor(QtCore.Qt.PointingHandCursor)
+        clear.clicked.connect(self._clear_store)
+        row.addWidget(clear, 0, QtCore.Qt.AlignVCenter)
+
+        lay.addLayout(row)
+        return frame
+
+    def _build_action_card(self, title, glyph, actions):
+        frame, lay = self._card()
+        lay.addLayout(self._section_header(glyph, title))
+        for name, obj_id, tip, func in actions:
+            lay.addWidget(self._action_button(name, obj_id, tip, func))
+        return frame
+
+    def _section_header(self, glyph, title):
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(6)
+        g = QtWidgets.QLabel(glyph)
+        g.setStyleSheet("color: {}; font-size: 12px;".format(_C["text_dim"]))
+        lbl = QtWidgets.QLabel(title)
+        lbl.setObjectName("sectionTitle")
+        row.addWidget(g)
+        row.addWidget(lbl)
+        row.addStretch()
+        return row
+
+    def _action_button(self, name, obj_id, tip, func):
+        btn = QtWidgets.QPushButton(name)
+        btn.setObjectName(obj_id)
+        btn.setToolTip(tip)
+        btn.setMinimumHeight(34)
+        btn.setCursor(QtCore.Qt.PointingHandCursor)
+        btn.clicked.connect(lambda _=False, f=func: self._run(f))
+        return btn
+
+    def _build_shortcuts_card(self):
+        frame, lay = self._card()
+        lay.addLayout(self._section_header("⌨", "SHORTCUTS"))
+
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(0, 1)
+        for r, (name, hotkey) in enumerate(_SHORTCUTS):
+            nm = QtWidgets.QLabel(name)
+            nm.setObjectName("shortcutName")
+            cap = QtWidgets.QLabel(hotkey)
+            cap.setObjectName("keycap")
+            cap.setAlignment(QtCore.Qt.AlignCenter)
+            grid.addWidget(nm, r, 0, QtCore.Qt.AlignVCenter)
+            grid.addWidget(cap, r, 1, QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        lay.addLayout(grid)
+        return frame
+
+    def _build_footer(self):
+        lbl = QtWidgets.QLabel(
+            "ⓘ  World-space position, rotation and scale are copied and pasted.")
+        lbl.setObjectName("footer")
+        lbl.setAlignment(QtCore.Qt.AlignCenter)
+        lbl.setWordWrap(True)
+        return lbl
+
+    # =====================================================================
+    #  Behaviour
+    # =====================================================================
+    def _run(self, func):
+        """Execute a core function then refresh the status panel."""
+        try:
+            func()
+        except Exception as e:
+            cmds.warning("xform_copy_paste: {}".format(e))
+        self.refresh_status()
+
+    def _clear_store(self):
+        for k in _XFORM_STORE:
+            _XFORM_STORE[k] = None
+        self.refresh_status()
+        print("xform_copy_paste: Stored transform cleared.")
+
+    def refresh_status(self):
+        """Update the status dot / text from the current store."""
+        if self._status_dot is None:
+            return
+        try:
+            _state, head, detail, accent = _status_info()
+            self._status_dot.setStyleSheet(
+                "background: {}; border-radius: 6px;".format(accent))
+            self._status_head.setText(head)
+            self._status_det.setText(detail)
+        except RuntimeError:
+            # Widgets were deleted (window closed) - ignore.
+            pass
+
+    def _show_help_menu(self):
+        menu = QtWidgets.QMenu(self)
+        menu.addAction("Help", show_help)
+        menu.addAction("About", show_about)
+        menu.exec_(self._gear_btn.mapToGlobal(
+            QtCore.QPoint(0, self._gear_btn.height())))
+
+    # =====================================================================
+    #  Lifecycle
+    # =====================================================================
+    def showEvent(self, event):
+        global _ACTIVE_WINDOW
+        _ACTIVE_WINDOW = self
+        super(XformCopyPasteUI, self).showEvent(event)
+
+    def closeEvent(self, event):
+        global _ACTIVE_WINDOW
+        if _ACTIVE_WINDOW is self:
+            _ACTIVE_WINDOW = None
+        super(XformCopyPasteUI, self).closeEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# Help / About windows (Qt)
+# ---------------------------------------------------------------------------
+
+def _text_window(title, body, size):
+    win = QtWidgets.QDialog(_maya_main_window())
+    win.setWindowTitle(title)
+    win.setWindowFlags(win.windowFlags() | QtCore.Qt.Tool)
+    win.setStyleSheet("QDialog {{ background: {bg}; }}".format(bg=_C["bg"]))
+    win.resize(*size)
+
+    lay = QtWidgets.QVBoxLayout(win)
+    lay.setContentsMargins(0, 0, 0, 0)
+    view = QtWidgets.QPlainTextEdit()
+    view.setReadOnly(True)
+    view.setPlainText(body)
+    view.setStyleSheet(
+        "QPlainTextEdit {{ background: {panel}; color: {text}; border: none;"
+        " font-family: 'Consolas','Courier New',monospace; font-size: 11px;"
+        " padding: 10px; }}".format(panel=_C["panel"], text=_C["text"]))
+    lay.addWidget(view)
+    win.show()
+    return win
+
+
+_HELP_WINDOW = None
+_ABOUT_WINDOW = None
+
+
+def show_help():
+    """Open the Help reference window."""
+    global _HELP_WINDOW
+    _HELP_WINDOW = _text_window(
+        "Copy Xform World Space - Help", _HELP_TEXT, (620, 700))
+
+
+def show_about():
+    """Open the About window."""
+    global _ABOUT_WINDOW
+    _ABOUT_WINDOW = _text_window(
+        "About - Copy Xform World Space", _ABOUT_TEXT, (520, 380))
+
+
+# ---------------------------------------------------------------------------
+# Legacy cleanup + entry points
+# ---------------------------------------------------------------------------
+
+def _delete_legacy_ui():
+    """Remove any leftover maya.cmds windows from the 1.x UI."""
+    for win_id in (_WIN_ID, _HELP_WIN_ID, _ABOUT_WIN_ID):
+        try:
+            if cmds.window(win_id, exists=True):
+                cmds.deleteUI(win_id, window=True)
+        except Exception:
+            pass
+
+
+def show():
+    """Open (or reopen) the Copy Xform World Space tool window."""
+    return XformCopyPasteUI.display()
+
+
+def launch():
+    """Alias for show()."""
+    return show()
+
+
+if __name__ == "__main__":
+    show()

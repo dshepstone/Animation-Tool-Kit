@@ -12,22 +12,27 @@ Drag `install_xform_copy_paste.mel` from your file browser onto the Maya viewpor
 
 1. Copy `xform_copy_paste.py` to your Maya user scripts folder
 2. Copy the shelf icon to your Maya icons folder
-3. Add 6 shelf buttons to your currently active shelf
+3. Add a single **XformCP** shelf button to your currently active shelf
 
-All files (`install_xform_copy_paste.mel`, `xform_copy_paste.py`, `XformCP_Icon.png`) must be in the **same folder** when you drag-and-drop.
+All files (`install_xform_copy_paste.mel`, `xform_copy_paste.py`, `xform_copy_paste.png`) must be in the **same folder** when you drag-and-drop.
 
 ---
 
-## Shelf Buttons
+## The XformCP Shelf Button
 
-| Button | Hotkey | Description |
+A **plain click** opens the tool window. **Modifier clicks** fire actions directly without opening the window:
+
+| Modifier click | Action | Description |
 |---|---|---|
-| Auto Xform | Alt+Click | Copy from first selected object, paste to all remaining selected at current frame |
-| Copy Range | Ctrl+Shift+Click | Copy world-space xform for every frame in the playback range |
-| Paste Xform | Ctrl+Click | Paste stored xform to selected objects at current frame |
-| Paste All Keys | Ctrl+Alt+Shift+Click | Paste stored xform at every existing keyframe time on selected objects |
-| Bake Frames | Ctrl+Alt+Click | Bake stored range xform to selected objects across the playback range |
-| Next Frame | Shift+Click | Paste stored xform at current frame, then advance timeline by 1 |
+| (plain click) | Open Window | Open the Copy Xform World Space tool window |
+| Alt+Click | Auto Xform | Copy from first selected object, paste to all remaining selected at current frame |
+| Ctrl+Click | Paste Xform | Paste stored xform to selected objects at current frame |
+| Shift+Click | Next Frame | Paste stored xform at current frame, then advance timeline by 1 |
+| Ctrl+Shift+Click | Copy Range | Copy world-space xform for every frame in the playback range |
+| Ctrl+Alt+Click | Bake Frames | Bake stored range xform to selected objects across the playback range |
+| Ctrl+Alt+Shift+Click | Paste All Keys | Paste stored xform at every existing keyframe time on selected objects |
+
+> The two multi-object range actions (**Copy Xform WS Multi Objects Playback Range** and **Paste Xform WS Keys Playback Range**) are available as buttons inside the tool window.
 
 ---
 
@@ -49,8 +54,9 @@ All files (`install_xform_copy_paste.mel`, `xform_copy_paste.py`, `XformCP_Icon.
 
 ## Requirements
 
-- Maya 2022+ (Python 3) recommended
-- Maya 2017–2020 (Python 2.7) supported with minor compatibility notes
+- Maya 2020+ with PySide2 or PySide6 (the tool window auto-detects the binding)
+- The core transform functions also run under Maya 2017+ / Python 2.7; only the
+  redesigned Qt window needs a PySide-capable Maya.
 
 ---
 
