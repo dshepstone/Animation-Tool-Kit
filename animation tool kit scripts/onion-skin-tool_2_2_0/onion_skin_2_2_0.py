@@ -36,6 +36,14 @@ v2.2.0 changes:
       in isolated ghost captures for spatial context, with a viewport
       hide/show toggle.
     - Preset buttons renamed from "1k".."5k" to "±1 Key".."±5 Keys".
+    - Fixed: ghost size mismatched the live character.  The plane's stock
+      fit modes map the image to the camera's film gate (e.g. aspect 1.5)
+      while the playblast renders through the resolution gate (16:9); the
+      plane is now pinned "To Size" to the exact resolution-gate rectangle
+      computed from the camera's film fit, aperture, and overscan.
+      "Fix Offset" is now "Re-Align Planes" and re-applies this fit.
+    - UI: all options live in a vertical scroll area (menu bar and status
+      bar stay pinned), so the window no longer needs to be full-height.
 
 Original MEL script (v0.8.3):
     Author:  Syed Ali Ahsan  <yoda@cyber.net.pk>  (7 Feb 2007)
@@ -65,6 +73,10 @@ _WIN = "onionSkinWorkspaceCtrl"
 TEMP_PREFIX = "OnionSkinTemp"
 TEMP_FOLDER = "onion_skin_temp"
 MAX_LAYERS = 10
+
+# Playblast capture resolution (also drives the plane-fit math below)
+CAPTURE_W = 960
+CAPTURE_H = 540
 
 # Every image plane this tool creates carries this string attribute so a
 # scene sweep can always find and remove them, even across sessions.
@@ -523,15 +535,11 @@ class OnionSkinCore:
                 adopted += 1
         if adopted:
             self.layers.sort(key=lambda ly: ly.frame)
-            # Ghosts made by older builds sit at depth 1000+ and are
-            # occluded by set geometry — pull them into the overlay range.
+            # Ghosts made by older builds sit at depth 1000+ (occluded by
+            # set geometry) and use gate-based fit modes (wrong scale) —
+            # pull them into the overlay range and re-pin their fit.
             if self.model_panel:
-                for idx, ly in enumerate(self.layers):
-                    try:
-                        cmds.setAttr(f"{ly.shape}.depth",
-                                     self._plane_depth(idx))
-                    except Exception:
-                        pass
+                self.realign_all()
         return adopted
 
     # -- Background geometry ------------------------------------------------
@@ -593,11 +601,72 @@ class OnionSkinCore:
         self.layers = [ly for ly in self.layers if ly.exists()]
         return len(self.layers) > 0
 
-    def toggle_fit_all(self):
-        for ly in self.layers:
+    def _apply_plane_fit(self, shape):
+        """Pin the plane to the exact film-plane rectangle the playblast
+        rendered, so the ghost lines up 1:1 with the live view.
+
+        The camera's film gate (e.g. 1.417 x 0.945, aspect 1.5) rarely
+        matches the capture aspect (16:9).  The stock image-plane fit
+        modes map the image to the film gate, which is a different
+        rectangle than the resolution gate the playblast rendered from,
+        scaling the ghost character up or down.  Instead we compute the
+        resolution-gate rectangle in aperture units from the camera's
+        film fit and lock the plane to it with fit mode "To Size".
+        """
+        cam_shape = self.camera_shape_for_panel()
+        if not cam_shape:
+            return
+        try:
+            h_ap = cmds.getAttr(f"{cam_shape}.horizontalFilmAperture")
+            v_ap = cmds.getAttr(f"{cam_shape}.verticalFilmAperture")
+            film_fit = cmds.getAttr(f"{cam_shape}.filmFit")
+        except Exception:
+            return
+        try:
+            overscan = cmds.getAttr(f"{cam_shape}.overscan") or 1.0
+        except Exception:
+            overscan = 1.0
+
+        img_aspect = float(CAPTURE_W) / float(CAPTURE_H)
+        film_aspect = h_ap / v_ap
+        width_matched = (h_ap, h_ap / img_aspect)
+        height_matched = (v_ap * img_aspect, v_ap)
+
+        if film_fit == 1:    # Horizontal
+            w, h = width_matched
+        elif film_fit == 2:  # Vertical
+            w, h = height_matched
+        elif film_fit == 3:  # Overscan
+            w, h = height_matched if img_aspect > film_aspect \
+                else width_matched
+        else:                # Fill (default)
+            w, h = width_matched if img_aspect > film_aspect \
+                else height_matched
+
+        w *= overscan
+        h *= overscan
+        try:
+            cmds.setAttr(f"{shape}.fit", 4)  # To Size
+            cmds.setAttr(f"{shape}.sizeX", w)
+            cmds.setAttr(f"{shape}.sizeY", h)
+            cmds.setAttr(f"{shape}.offsetX", 0)
+            cmds.setAttr(f"{shape}.offsetY", 0)
+        except Exception:
+            pass
+
+    def realign_all(self):
+        """Re-apply the gate-aligned fit and overlay depth to every
+        layer.  Returns the number of planes touched."""
+        n = 0
+        for idx, ly in enumerate(self.layers):
             if ly.exists():
-                cur = cmds.getAttr(f"{ly.shape}.fit")
-                cmds.setAttr(f"{ly.shape}.fit", 0 if cur == 1 else 1)
+                self._apply_plane_fit(ly.shape)
+                try:
+                    cmds.setAttr(f"{ly.shape}.depth", self._plane_depth(idx))
+                except Exception:
+                    pass
+                n += 1
+        return n
 
     # -- Frame nav ---------------------------------------------------------
 
@@ -749,7 +818,7 @@ class OnionSkinCore:
                 forceOverwrite=True, clearCache=True,
                 filename=out_base, viewer=False,
                 showOrnaments=False, percent=100,
-                widthHeight=[960, 540])
+                widthHeight=[CAPTURE_W, CAPTURE_H])
         finally:
             # Restore viewport display state
             self._restore_viewport_display(vp_state)
@@ -782,6 +851,7 @@ class OnionSkinCore:
         # Configure and tag so a scene sweep can always find this plane
         cmds.setAttr(f"{shape}.imageName", img_file, type="string")
         cmds.setAttr(f"{shape}.useFrameExtension", 0)
+        self._apply_plane_fit(shape)
         _tag_plane(shape, frame, role)
 
         alpha = self._default_alpha(role, stack_index)
@@ -1207,13 +1277,13 @@ class OnionSkinUI(QtWidgets.QWidget):
             }
         """)
 
-        root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(6, 6, 6, 6)
-        root.setSpacing(6)
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # ---- Menu bar ----
+        # ---- Menu bar (pinned above the scroll area) ----
         mb = QtWidgets.QMenuBar(self)
-        root.setMenuBar(mb)
+        outer.setMenuBar(mb)
         fm = mb.addMenu("File")
         fm.addAction("Delete All Ghosts", self._on_delete_all)
         fm.addAction("Clean Temp Files", self._on_clean_temp)
@@ -1223,10 +1293,23 @@ class OnionSkinUI(QtWidgets.QWidget):
         self._outline_action = om.addAction("Outline Mode")
         self._outline_action.setCheckable(True)
         self._outline_action.toggled.connect(self._on_outline_toggled)
-        om.addAction("Toggle Fit / Fix Offset", self._on_fix_offset)
+        om.addAction("Re-Align Image Planes", self._on_fix_offset)
         hm = mb.addMenu("Help")
         hm.addAction("About...", self._on_about)
         hm.addAction("How to Use...", self._on_help)
+
+        # ---- Scrollable content ----
+        # All option groups live inside a scroll area so the window can
+        # be kept short without hiding controls.
+        self._scroll = QtWidgets.QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarAlwaysOff)
+        content = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(content)
+        root.setContentsMargins(6, 6, 6, 6)
+        root.setSpacing(6)
 
         # ---- Viewport ----
         vg = QtWidgets.QGroupBox("Step 1 — Viewport")
@@ -1495,9 +1578,11 @@ class OnionSkinUI(QtWidgets.QWidget):
             "Re-capture every layer at its stored frame.")
         self._btn_refresh.clicked.connect(self._on_refresh)
         fix_row.addWidget(self._btn_refresh)
-        self._btn_fix = QtWidgets.QPushButton("Fix Offset")
+        self._btn_fix = QtWidgets.QPushButton("Re-Align Planes")
         self._btn_fix.setEnabled(False)
-        self._btn_fix.setToolTip("Toggle fit mode on all planes.")
+        self._btn_fix.setToolTip(
+            "Re-pin every ghost plane to the camera's rendered gate\n"
+            "(fixes size/position drift after camera setting changes).")
         self._btn_fix.clicked.connect(self._on_fix_offset)
         fix_row.addWidget(self._btn_fix)
         dl.addLayout(fix_row)
@@ -1520,12 +1605,16 @@ class OnionSkinUI(QtWidgets.QWidget):
             nl.addWidget(b)
         root.addWidget(ng)
 
-        # Status
-        self._status = QtWidgets.QLabel("")
-        self._status.setStyleSheet("color:#888; font-size:11px;")
-        self._status.setWordWrap(True)
-        root.addWidget(self._status)
         root.addStretch()
+        self._scroll.setWidget(content)
+        outer.addWidget(self._scroll, stretch=1)
+
+        # ---- Status bar (pinned below the scroll area) ----
+        self._status = QtWidgets.QLabel("")
+        self._status.setStyleSheet(
+            "color:#888; font-size:11px; padding:4px 8px;")
+        self._status.setWordWrap(True)
+        outer.addWidget(self._status)
 
         self._update_dot_diagram()
 
@@ -1533,7 +1622,8 @@ class OnionSkinUI(QtWidgets.QWidget):
 
     def _set_status(self, msg, kind="info"):
         color = self._STATUS_COLORS.get(kind, "#888")
-        self._status.setStyleSheet(f"color:{color}; font-size:11px;")
+        self._status.setStyleSheet(
+            f"color:{color}; font-size:11px; padding:4px 8px;")
         self._status.setText(msg)
 
     def _on_capture_progress(self, idx, total, frame):
@@ -1782,8 +1872,10 @@ class OnionSkinUI(QtWidgets.QWidget):
         self._set_status("Refreshed all layers.", "ok")
 
     def _on_fix_offset(self):
-        self.core.toggle_fit_all()
-        self._set_status("Fit toggled on all layers.", "ok")
+        n = self.core.realign_all()
+        self._set_status(
+            f"Re-aligned {n} plane{'s' if n != 1 else ''} to the "
+            "camera's rendered gate.", "ok")
 
     def _on_outline_toggled(self, checked):
         self.core.outline_mode = checked
@@ -1951,7 +2043,9 @@ class OnionSkinUI(QtWidgets.QWidget):
             "Each layer: visibility toggle, opacity slider, delete.</p>"
             "<h3>Display Options</h3>"
             "<p><b>Near/Far Opacity</b> auto-fades layers by distance.<br>"
-            "<b>Fix Offset</b> toggles fit mode on all planes.</p>"
+            "<b>Re-Align Planes</b> re-pins every ghost to the camera's "
+            "rendered gate if the size or position drifts (e.g. after "
+            "changing camera settings).</p>"
             "<h3>Cleanup</h3>"
             "<p><b>Delete All</b> removes every ghost image plane from "
             "the scene — including any left over from a previous "
@@ -1965,7 +2059,7 @@ def launch():
         cmds.deleteUI(_WIN)
     cmds.workspaceControl(
         _WIN, label=f"Onion Skin v{__version__}",
-        floating=True, initialWidth=440, initialHeight=700,
+        floating=True, initialWidth=440, initialHeight=560,
         minimumWidth=380, retain=False)
     ptr = omui.MQtUtil.findControl(_WIN)
     if ptr:
