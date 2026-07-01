@@ -28,6 +28,14 @@ v2.2.0 changes:
     - UI: viewport is auto-detected on launch, per-frame progress feedback,
       color-coded status messages, smoother opacity-gradient updates, and
       a busy guard so capture can't be re-triggered mid-run.
+    - Fixed: ghost planes were parked at depth 1000, so any set/environment
+      geometry around the camera (walls, cycloramas) occluded them and they
+      never appeared in shot cameras.  Planes now sit just past the camera's
+      near clip plane and draw as a screen overlay at any scene scale.
+    - New: optional Background Geo set — include chosen set/prop geometry
+      in isolated ghost captures for spatial context, with a viewport
+      hide/show toggle.
+    - Preset buttons renamed from "1k".."5k" to "±1 Key".."±5 Keys".
 
 Original MEL script (v0.8.3):
     Author:  Syed Ali Ahsan  <yoda@cyber.net.pk>  (7 Feb 2007)
@@ -328,6 +336,8 @@ class OnionSkinCore:
         self._cached_keys = []         # sorted keyframe times
         self._rig_top_node = None      # cached top node of the rig
         self._toon_nodes = []          # toon helper nodes created by us
+        self.background_nodes = []     # user-chosen set/background geo
+        self.include_background = True  # add bg geo to the isolate capture
 
     # -- Viewport ----------------------------------------------------------
 
@@ -346,6 +356,37 @@ class OnionSkinCore:
         if not self.model_panel:
             return ""
         return cmds.modelPanel(self.model_panel, query=True, camera=True)
+
+    def camera_shape_for_panel(self):
+        """Return the camera SHAPE node for the locked panel, or None."""
+        if not self.model_panel:
+            return None
+        cam = cmds.modelPanel(self.model_panel, query=True, camera=True)
+        if not cam:
+            return None
+        if cmds.nodeType(cam) == "camera":
+            return cam
+        shapes = cmds.listRelatives(cam, shapes=True, type="camera") or []
+        return shapes[0] if shapes else None
+
+    def _plane_depth(self, stack_index):
+        """Depth for a ghost plane, just past the camera's near clip plane.
+
+        Image planes are depth-tested 3D quads: a large fixed depth (the
+        old 1000) parks them behind any set/environment geometry that
+        surrounds the camera, making them invisible.  Sitting right after
+        the near clip plane makes them draw as a screen overlay in front
+        of everything, blended by their alpha, at any scene scale.
+        """
+        near = 0.1
+        cam_shape = self.camera_shape_for_panel()
+        if cam_shape:
+            try:
+                near = cmds.getAttr(f"{cam_shape}.nearClipPlane")
+            except Exception:
+                pass
+        base = max(near * 1.1, 0.001)
+        return base + stack_index * base * 0.02
 
     # -- Object and keyframe scanning --------------------------------------
 
@@ -482,7 +523,53 @@ class OnionSkinCore:
                 adopted += 1
         if adopted:
             self.layers.sort(key=lambda ly: ly.frame)
+            # Ghosts made by older builds sit at depth 1000+ and are
+            # occluded by set geometry — pull them into the overlay range.
+            if self.model_panel:
+                for idx, ly in enumerate(self.layers):
+                    try:
+                        cmds.setAttr(f"{ly.shape}.depth",
+                                     self._plane_depth(idx))
+                    except Exception:
+                        pass
         return adopted
+
+    # -- Background geometry ------------------------------------------------
+
+    def set_background_from_selection(self):
+        """Store the current selection as background/set geometry to be
+        included in isolated captures.  Returns the node count."""
+        sel = cmds.ls(selection=True, long=True) or []
+        self.background_nodes = sel
+        return len(sel)
+
+    def clear_background(self):
+        self.background_nodes = []
+
+    def existing_background_nodes(self):
+        return [n for n in self.background_nodes if cmds.objExists(n)]
+
+    def toggle_background_visibility(self):
+        """Flip visibility on the stored background nodes.
+        Returns the new state (True = shown), or None if nothing is set."""
+        nodes = self.existing_background_nodes()
+        if not nodes:
+            return None
+        any_visible = False
+        for n in nodes:
+            try:
+                if cmds.getAttr(f"{n}.visibility"):
+                    any_visible = True
+                    break
+            except Exception:
+                pass
+        new_state = not any_visible
+        for n in nodes:
+            try:
+                cmds.setAttr(f"{n}.visibility", int(new_state))
+            except Exception:
+                pass
+        return new_state
 
     def delete_layer(self, index):
         if 0 <= index < len(self.layers):
@@ -700,7 +787,7 @@ class OnionSkinCore:
         alpha = self._default_alpha(role, stack_index)
         cmds.setAttr(f"{shape}.alphaGain", alpha)
 
-        depth = 1000 + stack_index
+        depth = self._plane_depth(stack_index)
         cmds.setAttr(f"{shape}.depth", depth)
         cmds.setAttr(f"{xform}.visibility", 1)
 
@@ -732,15 +819,9 @@ class OnionSkinCore:
     def _create_plane(self):
         """Create an image plane attached to the panel's camera.
         NEVER renames nodes -- stores Maya's auto-generated names."""
-        cam = cmds.modelPanel(self.model_panel, query=True, camera=True)
-        if cmds.nodeType(cam) == "camera":
-            cam_shape = cam
-        else:
-            cam_shapes = cmds.listRelatives(
-                cam, shapes=True, type="camera") or []
-            if not cam_shapes:
-                return None, None
-            cam_shape = cam_shapes[0]
+        cam_shape = self.camera_shape_for_panel()
+        if not cam_shape:
+            return None, None
 
         try:
             xform, shape = cmds.imagePlane(camera=cam_shape)
@@ -748,7 +829,7 @@ class OnionSkinCore:
             cmds.warning("[OnionSkin] imagePlane not created.")
             return None, None
 
-        cmds.setAttr(f"{shape}.depth", 1000)
+        cmds.setAttr(f"{shape}.depth", self._plane_depth(0))
         cmds.setAttr(f"{shape}.alphaGain", 0.5)
         cmds.setAttr(f"{shape}.useFrameExtension", 0)
         cmds.modelEditor(self.model_panel, edit=True, imagePlane=True)
@@ -896,21 +977,30 @@ class OnionSkinCore:
         return [self._rig_top_node] + descendants
 
     def _enable_isolate(self):
-        """Isolate the rig hierarchy in the viewport."""
+        """Isolate the rig hierarchy (plus optional background geo)
+        in the viewport."""
         if not self.model_panel or not self._rig_top_node:
             return False
 
-        rig_nodes = self.get_rig_hierarchy()
-        if not rig_nodes:
+        iso_nodes = self.get_rig_hierarchy()
+        if not iso_nodes:
             return False
+
+        # Optionally include the user-chosen background/set geometry so
+        # the ghost images keep spatial context (floor, props, walls).
+        if self.include_background:
+            for bg in self.existing_background_nodes():
+                iso_nodes.append(bg)
+                iso_nodes.extend(cmds.listRelatives(
+                    bg, allDescendents=True, fullPath=True) or [])
 
         # Turn on isolate-select mode on this panel
         panel = self.model_panel
         cmds.isolateSelect(panel, state=True)
 
-        # Clear any existing isolate set, then add our rig
+        # Clear any existing isolate set, then add our nodes
         cmds.isolateSelect(panel, removeSelected=True)
-        cmds.select(rig_nodes, replace=True)
+        cmds.select(iso_nodes, replace=True)
         cmds.isolateSelect(panel, addSelected=True)
         cmds.select(clear=True)
 
@@ -1035,9 +1125,13 @@ class PresetButton(QtWidgets.QPushButton):
         super().__init__(parent)
         self.before = before
         self.after = after
-        self.setToolTip(f"{before} key(s) before + {after} key(s) after "
-                        "the current time")
-        self.setFixedSize(48, 40)
+        self.setToolTip(
+            f"Ghost the {before} nearest key(s) before and the {after} "
+            "nearest key(s) after the current time")
+        self.setFixedHeight(40)
+        self.setMinimumWidth(56)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                           QtWidgets.QSizePolicy.Fixed)
         self.setText(label)
         self.setStyleSheet("""
             QPushButton {
@@ -1188,6 +1282,46 @@ class OnionSkinUI(QtWidgets.QWidget):
 
         root.addWidget(og)
 
+        # ---- Background Geometry ----
+        bg = QtWidgets.QGroupBox("Background Geo  (optional)")
+        bl = QtWidgets.QVBoxLayout(bg)
+
+        bg_row = QtWidgets.QHBoxLayout()
+        self._bg_label = QtWidgets.QLabel("None set")
+        self._bg_label.setStyleSheet("color:#aaa;")
+        bg_row.addWidget(self._bg_label, stretch=1)
+        btn_bg_add = QtWidgets.QPushButton("Add Selected")
+        btn_bg_add.setToolTip(
+            "Select set/prop geometry (floor, bed, walls...) and click "
+            "this.\nIt will be included in isolated ghost captures for "
+            "spatial context.")
+        btn_bg_add.clicked.connect(self._on_bg_add)
+        bg_row.addWidget(btn_bg_add)
+        btn_bg_clear = QtWidgets.QPushButton("Clear")
+        btn_bg_clear.setFixedWidth(50)
+        btn_bg_clear.clicked.connect(self._on_bg_clear)
+        bg_row.addWidget(btn_bg_clear)
+        bl.addLayout(bg_row)
+
+        bg_row2 = QtWidgets.QHBoxLayout()
+        self._bg_include_cb = QtWidgets.QCheckBox("Include in Ghost Capture")
+        self._bg_include_cb.setChecked(True)
+        self._bg_include_cb.setToolTip(
+            "When 'Isolate Rig During Capture' is on, also keep this\n"
+            "background geometry visible in the captured ghost images.")
+        self._bg_include_cb.toggled.connect(self._on_bg_include_changed)
+        bg_row2.addWidget(self._bg_include_cb, stretch=1)
+        self._btn_bg_vis = QtWidgets.QPushButton("Hide / Show in Viewport")
+        self._btn_bg_vis.setEnabled(False)
+        self._btn_bg_vis.setToolTip(
+            "Toggle the visibility of the background geometry in the\n"
+            "viewport so the ghosts read more clearly.")
+        self._btn_bg_vis.clicked.connect(self._on_bg_toggle_vis)
+        bg_row2.addWidget(self._btn_bg_vis)
+        bl.addLayout(bg_row2)
+
+        root.addWidget(bg)
+
         # ---- Ghost Settings ----
         gg = QtWidgets.QGroupBox("Step 3 — Ghost")
         gl = QtWidgets.QVBoxLayout(gg)
@@ -1207,14 +1341,16 @@ class OnionSkinUI(QtWidgets.QWidget):
         gl.addWidget(sep)
 
         # Keyframe-based presets
-        kp_label = QtWidgets.QLabel("Ghost by Keyframes:")
+        kp_label = QtWidgets.QLabel(
+            "Ghost by Keyframes  (keys before + after current time):")
         kp_label.setStyleSheet("color:#ccc; font-weight:bold;")
         gl.addWidget(kp_label)
 
         preset_row = QtWidgets.QHBoxLayout()
         self._preset_buttons = []
         for n in range(1, 6):
-            btn = PresetButton(n, n, f"{n}k")
+            btn = PresetButton(n, n,
+                               f"±{n} Key" if n == 1 else f"±{n} Keys")
             btn.setEnabled(False)
             btn.clicked.connect(
                 lambda checked=False, b=n, a=n: self._on_preset(b, a))
@@ -1496,6 +1632,53 @@ class OnionSkinUI(QtWidgets.QWidget):
                     f"Target: {obj} has no keyframes — only 'Ghost Current "
                     "Frame Only' will work.", "warn")
 
+    def _on_bg_add(self):
+        count = self.core.set_background_from_selection()
+        if count:
+            names = [n.split("|")[-1]
+                     for n in self.core.existing_background_nodes()]
+            shown = ", ".join(names[:3])
+            if count > 3:
+                shown += f" (+{count - 3} more)"
+            self._bg_label.setText(shown)
+            self._bg_label.setStyleSheet("color:#ddd;")
+            self._btn_bg_vis.setEnabled(True)
+            self._set_status(
+                f"Background geo set ({count} node"
+                f"{'s' if count != 1 else ''}). It will appear in "
+                "isolated ghost captures.", "ok")
+        else:
+            self._set_status(
+                "Nothing selected — select set/prop geometry first.", "warn")
+
+    def _on_bg_clear(self):
+        # Re-show the geo before forgetting it so nothing stays hidden
+        if self.core.existing_background_nodes():
+            for n in self.core.existing_background_nodes():
+                try:
+                    cmds.setAttr(f"{n}.visibility", 1)
+                except Exception:
+                    pass
+        self.core.clear_background()
+        self._bg_label.setText("None set")
+        self._bg_label.setStyleSheet("color:#aaa;")
+        self._btn_bg_vis.setEnabled(False)
+        self._set_status("Background geo cleared.", "ok")
+
+    def _on_bg_include_changed(self, checked):
+        self.core.include_background = bool(checked)
+        self._set_status(
+            "Background geo will {}be included in isolated captures."
+            .format("" if checked else "NOT "), "info")
+
+    def _on_bg_toggle_vis(self):
+        state = self.core.toggle_background_visibility()
+        if state is None:
+            self._set_status("No background geo set.", "warn")
+        else:
+            self._set_status(
+                "Background geo " + ("shown." if state else "hidden."), "ok")
+
     def _on_isolate_changed(self):
         self.core.isolate_rig = self._isolate_cb.isChecked()
         if self.core.isolate_rig and self.core._rig_top_node:
@@ -1736,7 +1919,7 @@ class OnionSkinUI(QtWidgets.QWidget):
             "(auto-detected at launch when possible).</li>"
             "<li>Select an animated object → "
             "<b>Set from Selection</b>.</li>"
-            "<li>Click a <b>preset</b> (1k–5k) to ghost that many "
+            "<li>Click a <b>preset</b> (±1 to ±5 Keys) to ghost that many "
             "keyframes before and after the current time.</li></ol>"
             "<h3>How Keyframe Ghosting Works</h3>"
             "<p>The tool reads all keyframes on your selected object "
@@ -1747,11 +1930,20 @@ class OnionSkinUI(QtWidgets.QWidget):
             "<p>The result is an image plane for each key pose, stacked "
             "in the viewport with adjustable opacity.</p>"
             "<h3>Presets</h3>"
-            "<p><b>1k</b> = 1 key before + current + 1 key after<br>"
-            "<b>2k</b> = 2 keys before + current + 2 keys after<br>"
-            "...up to <b>5k</b> (5+1+5 = 11, capped at 10 layers — "
-            "the keys furthest from the current time are dropped).</p>"
-            "<p>Use <b>Custom</b> for asymmetric counts.</p>"
+            "<p><b>±1 Key</b> = 1 key before + 1 key after the current "
+            "time<br>"
+            "<b>±2 Keys</b> = 2 keys before + 2 keys after<br>"
+            "...up to <b>±5 Keys</b> (capped at 10 layers — the keys "
+            "furthest from the current time are dropped).</p>"
+            "<p>Use <b>Custom</b> for asymmetric counts and "
+            "<b>Include Current Frame</b> to also ghost the pose at the "
+            "playhead.</p>"
+            "<h3>Background Geo</h3>"
+            "<p>Select set/prop geometry and press <b>Add Selected</b>. "
+            "When 'Isolate Rig During Capture' is on, that geometry is "
+            "kept in the captured images for spatial context. "
+            "<b>Hide / Show in Viewport</b> toggles it in the live view "
+            "so ghosts read clearly.</p>"
             "<h3>Layer List</h3>"
             "<p><span style='color:#5588cc'>● Blue</span> = before, "
             "<span style='color:#66cc66'>● Green</span> = current, "
