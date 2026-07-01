@@ -1,21 +1,42 @@
 """
-Onion Skin v2.1.0 for Maya 2020+
+Onion Skin v2.2.0 for Maya 2020+
 
 A modern Python rewrite of the classic OnionSkin MEL tool by Syed Ali Ahsan (2007).
-v2.1.0 adds keyframe-aware multi-plane ghosting: select an object, and the tool
-finds its keyframes to capture 1-5 key-images before and after the current position.
+Keyframe-aware multi-plane ghosting: select an object, and the tool finds its
+keyframes to capture 1-5 key-images before and after the current position.
 Up to 10 stacked image planes, each with individual alpha control.
+
+v2.2.0 changes:
+    - Ghost planes are tagged in the scene, so Delete All performs a full
+      scene sweep and never leaves orphaned image planes behind — even after
+      the UI was closed, the scene was reopened, or Maya crashed mid-capture.
+    - Leftover ghosts from a previous session are adopted into the layer
+      list when the tool launches, so they stay visible AND deletable.
+    - Capture is crash-safe: viewport background, image format, isolate
+      mode, current time, selection, and layer visibility are always
+      restored even if the playblast fails.
+    - Fixed: timeline no longer jumps to the last captured key after a
+      capture without a "current" layer.
+    - Fixed: "Include Hierarchy" checkbox was ignored under PySide6
+      (Maya 2025+) due to an enum comparison bug.
+    - Fixed: outline mode created no toon lines (wrong node wiring) and
+      hid strokes during the playblast.
+    - Fixed: cleanup no longer deletes user-created pfxToon nodes — only
+      the ones this tool created.
+    - When the layer cap is hit, the keys furthest from the current time
+      are dropped instead of blindly truncating the "after" keys.
+    - UI: viewport is auto-detected on launch, per-frame progress feedback,
+      color-coded status messages, smoother opacity-gradient updates, and
+      a busy guard so capture can't be re-triggered mid-run.
 
 Original MEL script (v0.8.3):
     Author:  Syed Ali Ahsan  <yoda@cyber.net.pk>  (7 Feb 2007)
     Thanks to Mark Behm, Melt van der Spuy, Vincent Florio, Keith Lango,
     Herman Gonzalas, and Lord Ryan Santos.
 
-Python adaptation (v2.1.0, 2026):  Rewritten for modern Maya.
-
 Usage:
-    import onion_skin_2_1_0
-    onion_skin_2_1_0.launch()
+    import onion_skin_2_2_0
+    onion_skin_2_2_0.launch()
 """
 
 from __future__ import annotations
@@ -31,11 +52,15 @@ except ImportError:
     from PySide2 import QtCore, QtWidgets, QtGui
     from shiboken2 import wrapInstance
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 _WIN = "onionSkinWorkspaceCtrl"
 TEMP_PREFIX = "OnionSkinTemp"
 TEMP_FOLDER = "onion_skin_temp"
 MAX_LAYERS = 10
+
+# Every image plane this tool creates carries this string attribute so a
+# scene sweep can always find and remove them, even across sessions.
+TAG_ATTR = "onionSkinGhost"
 
 # Chroma-key: playblast against this color, then key it to transparent.
 # Bright green chosen to contrast with most scene content.
@@ -62,12 +87,6 @@ def get_active_model_panel():
     return None
 
 
-def get_time_slider_range():
-    s = mel.eval("$__tmp = $gPlayBackSlider")
-    r = cmds.timeControl(s, query=True, rangeArray=True)
-    return float(r[0]), float(r[1])
-
-
 def _get_temp_dir():
     ws = cmds.workspace(query=True, fullName=True)
     rule = cmds.workspace(fileRuleEntry="images") or "images"
@@ -87,6 +106,25 @@ def _clean_temp_files():
                 pass
     except Exception:
         pass
+
+
+def _find_tagged_planes():
+    """Return every imagePlane shape in the scene created by this tool."""
+    found = []
+    for shape in cmds.ls(type="imagePlane") or []:
+        try:
+            if cmds.attributeQuery(TAG_ATTR, node=shape, exists=True):
+                found.append(shape)
+        except Exception:
+            pass
+    return found
+
+
+def _tag_plane(shape, frame, role):
+    """Mark an imagePlane shape as an onion-skin ghost."""
+    if not cmds.attributeQuery(TAG_ATTR, node=shape, exists=True):
+        cmds.addAttr(shape, longName=TAG_ATTR, dataType="string")
+    cmds.setAttr(f"{shape}.{TAG_ATTR}", f"{frame}|{role}", type="string")
 
 
 def _chroma_key_image(img_path, bg_rgb=CHROMA_COLOR, tol=CHROMA_TOLERANCE):
@@ -126,6 +164,7 @@ def _chroma_key_image(img_path, bg_rgb=CHROMA_COLOR, tol=CHROMA_TOLERANCE):
                 (np.abs(g_ch - bg) < tol) &
                 (np.abs(b_ch - bb) < tol))
         arr[:, :, 3][mask] = 0  # set alpha to 0 for background pixels
+        arr = np.ascontiguousarray(arr)
         out_img = QImage(arr.data, w, h, w * 4, QImage.Format_ARGB32).copy()
         out_img.save(out_path, "PNG")
     else:
@@ -205,6 +244,31 @@ class OnionLayer:
         self.img_path = img_path
         self.key_index = key_index
 
+    @classmethod
+    def from_tagged_shape(cls, shape):
+        """Rebuild a layer from a tagged imagePlane left in the scene."""
+        parents = cmds.listRelatives(shape, parent=True) or []
+        xform = parents[0] if parents else None
+        tag = ""
+        try:
+            tag = cmds.getAttr(f"{shape}.{TAG_ATTR}") or ""
+        except Exception:
+            pass
+        parts = tag.split("|")
+        try:
+            frame = float(parts[0])
+        except (ValueError, IndexError):
+            frame = 0.0
+        role = parts[1] if len(parts) > 1 else cls.BEFORE
+        if role not in (cls.BEFORE, cls.CURRENT, cls.AFTER):
+            role = cls.BEFORE
+        img = ""
+        try:
+            img = cmds.getAttr(f"{shape}.imageName") or ""
+        except Exception:
+            pass
+        return cls(frame, role, xform, shape, img)
+
     def exists(self):
         if self.xform and self.shape:
             return cmds.objExists(self.xform) and cmds.objExists(self.shape)
@@ -231,8 +295,14 @@ class OnionLayer:
             cmds.dgdirty(self.xform)
 
     def delete(self):
-        if self.exists():
-            cmds.delete(self.xform)
+        # Delete the transform first (removes the shape with it), but fall
+        # back to the shape so a half-broken layer never leaves nodes behind.
+        for node in (self.xform, self.shape):
+            if node and cmds.objExists(node):
+                try:
+                    cmds.delete(node)
+                except Exception:
+                    pass
         self.xform = None
         self.shape = None
 
@@ -257,15 +327,17 @@ class OnionSkinCore:
         self._viewport_state = {}
         self._cached_keys = []         # sorted keyframe times
         self._rig_top_node = None      # cached top node of the rig
+        self._toon_nodes = []          # toon helper nodes created by us
 
     # -- Viewport ----------------------------------------------------------
 
-    def select_viewport(self):
+    def select_viewport(self, silent=False):
         p = get_active_model_panel()
         if p is None:
-            cmds.confirmDialog(title="Onion Skin",
-                               message="Click inside a 3-D viewport first.",
-                               button=["OK"])
+            if not silent:
+                cmds.confirmDialog(title="Onion Skin",
+                                   message="Click inside a 3-D viewport first.",
+                                   button=["OK"])
             return None
         self.model_panel = p
         return p
@@ -345,8 +417,9 @@ class OnionSkinCore:
     # -- Ghost creation ----------------------------------------------------
 
     def create_ghost_from_keys(self, before_count, after_count,
-                               include_current=False):
-        """Main entry: ghost N keys before + current + N keys after."""
+                               include_current=False, progress_cb=None):
+        """Main entry: ghost N keys before + current + N keys after.
+        Returns an error string, or None on success."""
         if not self.model_panel:
             cmds.warning("No viewport selected.")
             return "No viewport selected."
@@ -363,38 +436,67 @@ class OnionSkinCore:
         if not frames_and_roles:
             return "No frames to capture."
 
-        self._capture_layers(frames_and_roles)
+        self._capture_layers(frames_and_roles, progress_cb)
         return None
 
-    def create_single_frame(self):
-        """Capture just the current frame (no keyframe lookup needed)."""
+    def create_single_frame(self, progress_cb=None):
+        """Capture just the current frame (no keyframe lookup needed).
+        Returns an error string, or None on success."""
         if not self.model_panel:
             cmds.warning("No viewport selected.")
-            return
+            return "No viewport selected."
         cur = cmds.currentTime(query=True)
-        self._capture_layers([(cur, OnionLayer.CURRENT)])
+        self._capture_layers([(cur, OnionLayer.CURRENT)], progress_cb)
+        return None
 
     # -- Layer management --------------------------------------------------
 
     def delete_all(self):
+        """Delete every ghost plane: tracked layers AND a scene-wide sweep
+        of tagged planes, so nothing is ever left behind (e.g. ghosts from
+        a previous session or an interrupted capture)."""
         for layer in self.layers:
             layer.delete()
-        self.layers.clear()
+        self.layers = []
+        for shape in _find_tagged_planes():
+            parents = cmds.listRelatives(shape, parent=True,
+                                         fullPath=True) or []
+            try:
+                cmds.delete(parents[0] if parents else shape)
+            except Exception:
+                pass
         _clean_temp_files()
+
+    def adopt_existing(self):
+        """Pick up tagged ghost planes left in the scene by a previous
+        session so they show in the layer list and remain deletable.
+        Returns the number of adopted layers."""
+        known = {ly.shape for ly in self.layers if ly.shape}
+        adopted = 0
+        for shape in _find_tagged_planes():
+            if shape in known:
+                continue
+            layer = OnionLayer.from_tagged_shape(shape)
+            if layer.exists():
+                self.layers.append(layer)
+                adopted += 1
+        if adopted:
+            self.layers.sort(key=lambda ly: ly.frame)
+        return adopted
 
     def delete_layer(self, index):
         if 0 <= index < len(self.layers):
             self.layers[index].delete()
             self.layers.pop(index)
 
-    def refresh_all(self):
+    def refresh_all(self, progress_cb=None):
         """Re-capture all layers at their stored frames."""
         if not self.model_panel:
             return
         old_info = [(ly.frame, ly.role) for ly in self.layers]
         self.delete_all()
         if old_info:
-            self._capture_layers(old_info)
+            self._capture_layers(old_info, progress_cb)
 
     def set_all_visible(self, vis):
         for ly in self.layers:
@@ -432,55 +534,71 @@ class OnionSkinCore:
 
     # -- Internal capture --------------------------------------------------
 
-    def _capture_layers(self, frames_and_roles):
-        """Delete existing layers, then capture new ones."""
+    def _capture_layers(self, frames_and_roles, progress_cb=None):
+        """Delete existing layers, then capture new ones.
+
+        Everything that mutates global state (background color, image
+        format, isolate mode, current time, selection) is restored in a
+        finally block so a failed playblast can't corrupt the session.
+        """
         self.delete_all()
 
         if len(frames_and_roles) > MAX_LAYERS:
-            frames_and_roles = frames_and_roles[:MAX_LAYERS]
+            # Keep the keys closest to the current time, then restore
+            # chronological order.
+            cur = cmds.currentTime(query=True)
+            frames_and_roles = sorted(
+                frames_and_roles,
+                key=lambda fr: abs(fr[0] - cur))[:MAX_LAYERS]
+            frames_and_roles.sort(key=lambda fr: fr[0])
 
         sel = cmds.ls(selection=True, flatten=True) or []
+        orig_time = cmds.currentTime(query=True)
         orig_fmt = cmds.getAttr("defaultRenderGlobals.imageFormat")
         cmds.setAttr("defaultRenderGlobals.imageFormat", 32)  # PNG
 
         # Set green-screen background for chroma keying
         orig_bg = _set_viewport_bg()
 
-        # Isolate rig if enabled
         did_isolate = False
-        if self.isolate_rig and self._rig_top_node:
-            did_isolate = self._enable_isolate()
+        try:
+            # Isolate rig if enabled
+            if self.isolate_rig and self._rig_top_node:
+                did_isolate = self._enable_isolate()
 
-        for idx, (frame, role) in enumerate(frames_and_roles):
-            layer = self._snapshot_one(frame, role, idx)
-            if layer:
-                self.layers.append(layer)
+            total = len(frames_and_roles)
+            for idx, (frame, role) in enumerate(frames_and_roles):
+                if progress_cb:
+                    progress_cb(idx, total, frame)
+                layer = self._snapshot_one(frame, role, idx)
+                if layer:
+                    self.layers.append(layer)
+        finally:
+            # Un-isolate before restoring anything else
+            if did_isolate:
+                self._disable_isolate()
 
-        # Un-isolate before restoring anything else
-        if did_isolate:
-            self._disable_isolate()
+            # Restore original background and image format
+            _restore_viewport_bg(orig_bg)
+            cmds.setAttr("defaultRenderGlobals.imageFormat", orig_fmt)
 
-        # Restore original background and image format
-        _restore_viewport_bg(orig_bg)
-        cmds.setAttr("defaultRenderGlobals.imageFormat", orig_fmt)
+            # Re-show all layers — they were hidden during capture
+            for ly in self.layers:
+                if ly.exists():
+                    ly.set_visible(True)
 
-        # CRITICAL: Re-show all layers — they were hidden during capture
-        for ly in self.layers:
-            if ly.exists():
-                ly.set_visible(True)
+            # Always return the playhead to where the user left it
+            cmds.currentTime(orig_time, edit=True)
 
-        # Restore time to the current-frame layer
-        for ly in self.layers:
-            if ly.role == OnionLayer.CURRENT:
-                cmds.currentTime(ly.frame, edit=True)
-                break
+            if sel:
+                try:
+                    cmds.select(sel, replace=True)
+                except Exception:
+                    pass
 
-        if sel:
-            cmds.select(sel, replace=True)
-
-        if self.model_panel:
-            cmds.modelEditor(self.model_panel, edit=True, imagePlane=True)
-            mel.eval("refresh -f")
+            if self.model_panel:
+                cmds.modelEditor(self.model_panel, edit=True, imagePlane=True)
+                mel.eval("refresh -f")
 
     def _snapshot_one(self, frame, role, stack_index):
         """Capture a single frame into a new image plane."""
@@ -511,48 +629,51 @@ class OnionSkinCore:
         sel_hilite = cmds.modelEditor(
             self.model_panel, query=True, selectionHiliteDisplay=True)
 
-        cmds.modelEditor(self.model_panel, edit=True,
-                         selectionHiliteDisplay=False,
-                         nurbsCurves=False,
-                         nurbsSurfaces=False,
-                         controlVertices=False,
-                         hulls=False,
-                         grid=False,
-                         hud=False,
-                         manipulators=False,
-                         locators=False,
-                         joints=False,
-                         ikHandles=False,
-                         deformers=False,
-                         dynamics=False,
-                         fluids=False,
-                         hairSystems=False,
-                         follicles=False,
-                         pivots=False,
-                         handles=False,
-                         dimensions=False,
-                         strokes=False,
-                         imagePlane=False)
+        try:
+            cmds.modelEditor(self.model_panel, edit=True,
+                             selectionHiliteDisplay=False,
+                             nurbsCurves=False,
+                             nurbsSurfaces=False,
+                             controlVertices=False,
+                             hulls=False,
+                             grid=False,
+                             hud=False,
+                             manipulators=False,
+                             locators=False,
+                             joints=False,
+                             ikHandles=False,
+                             deformers=False,
+                             dynamics=False,
+                             fluids=False,
+                             hairSystems=False,
+                             follicles=False,
+                             pivots=False,
+                             handles=False,
+                             dimensions=False,
+                             strokes=self.outline_mode,
+                             imagePlane=False)
 
-        # Playblast as PNG against the green-screen background
-        temp_dir = _get_temp_dir()
-        out_base = f"{temp_dir}/{TEMP_PREFIX}_f{int(frame)}"
-        cmds.playblast(
-            format="image", compression="png",
-            startTime=frame, endTime=frame,
-            forceOverwrite=True, clearCache=True,
-            filename=out_base, viewer=False,
-            showOrnaments=False, percent=100,
-            widthHeight=[960, 540])
-
-        # Restore viewport display state
-        self._restore_viewport_display(vp_state)
-        cmds.modelEditor(self.model_panel, edit=True,
-                         selectionHiliteDisplay=sel_hilite)
-
-        # Restore selection
-        if sel:
-            cmds.select(sel, replace=True)
+            # Playblast as PNG against the green-screen background
+            temp_dir = _get_temp_dir()
+            out_base = f"{temp_dir}/{TEMP_PREFIX}_f{int(frame)}"
+            cmds.playblast(
+                format="image", compression="png",
+                startTime=frame, endTime=frame,
+                forceOverwrite=True, clearCache=True,
+                filename=out_base, viewer=False,
+                showOrnaments=False, percent=100,
+                widthHeight=[960, 540])
+        finally:
+            # Restore viewport display state
+            self._restore_viewport_display(vp_state)
+            cmds.modelEditor(self.model_panel, edit=True,
+                             selectionHiliteDisplay=sel_hilite)
+            # Restore selection
+            if sel:
+                try:
+                    cmds.select(sel, replace=True)
+                except Exception:
+                    pass
 
         # Find the raw playblast image
         img_file = self._find_image(temp_dir, frame, out_base)
@@ -563,7 +684,6 @@ class OnionSkinCore:
 
         # Chroma-key: replace green background with transparency
         img_file = _chroma_key_image(img_file)
-        print(f"[OnionSkin] Keyed image: {img_file}")
 
         # Create image plane
         xform, shape = self._create_plane()
@@ -572,9 +692,10 @@ class OnionSkinCore:
             self._cleanup_toon()
             return None
 
-        # Configure
+        # Configure and tag so a scene sweep can always find this plane
         cmds.setAttr(f"{shape}.imageName", img_file, type="string")
         cmds.setAttr(f"{shape}.useFrameExtension", 0)
+        _tag_plane(shape, frame, role)
 
         alpha = self._default_alpha(role, stack_index)
         cmds.setAttr(f"{shape}.alphaGain", alpha)
@@ -585,12 +706,8 @@ class OnionSkinCore:
 
         self._cleanup_toon()
 
-        layer = OnionLayer(frame, role, xform, shape, img_file,
-                           key_index=stack_index)
-        print(f"[OnionSkin] Layer {stack_index}: frame={int(frame)}, "
-              f"role={role}, alpha={alpha:.2f}, depth={depth}, "
-              f"xform='{xform}', shape='{shape}'")
-        return layer
+        return OnionLayer(frame, role, xform, shape, img_file,
+                          key_index=stack_index)
 
     def _default_alpha(self, role, index):
         if role == OnionLayer.CURRENT:
@@ -613,27 +730,23 @@ class OnionSkinCore:
         return None
 
     def _create_plane(self):
-        """Create an image plane via MEL.
+        """Create an image plane attached to the panel's camera.
         NEVER renames nodes -- stores Maya's auto-generated names."""
         cam = cmds.modelPanel(self.model_panel, query=True, camera=True)
-        cam_shapes = cmds.listRelatives(
-            cam, shapes=True, type="camera") or []
-        if not cam_shapes:
-            return None, None
-        cam_shape = cam_shapes[0]
+        if cmds.nodeType(cam) == "camera":
+            cam_shape = cam
+        else:
+            cam_shapes = cmds.listRelatives(
+                cam, shapes=True, type="camera") or []
+            if not cam_shapes:
+                return None, None
+            cam_shape = cam_shapes[0]
 
-        before = set(cmds.ls(type="imagePlane") or [])
-        mel.eval(f'imagePlane -camera {cam_shape}')
-        after = set(cmds.ls(type="imagePlane") or [])
-        new_shapes = after - before
-
-        if not new_shapes:
+        try:
+            xform, shape = cmds.imagePlane(camera=cam_shape)
+        except Exception:
             cmds.warning("[OnionSkin] imagePlane not created.")
             return None, None
-
-        shape = list(new_shapes)[0]
-        parents = cmds.listRelatives(shape, parent=True) or []
-        xform = parents[0] if parents else None
 
         cmds.setAttr(f"{shape}.depth", 1000)
         cmds.setAttr(f"{shape}.alphaGain", 0.5)
@@ -660,31 +773,41 @@ class OnionSkinCore:
                     continue
                 shape = ss[0]
                 nt = cmds.nodeType(shape)
-            if nt == "nurbsCurve":
-                continue
             if nt not in ("mesh", "nurbsSurface"):
                 continue
-            toon = cmds.createNode("pfxToon")
-            ts = (cmds.listRelatives(toon, shapes=True) or [None])[0]
-            if not ts:
+            # createNode on a shape type returns the shape and auto-creates
+            # a parent transform; track the transform for cleanup.
+            node = cmds.createNode("pfxToon")
+            if cmds.nodeType(node) == "pfxToon":
+                toon_shape = node
+                parents = cmds.listRelatives(node, parent=True) or [node]
+                toon_xform = parents[0]
+            else:
+                toon_xform = node
+                ss = cmds.listRelatives(node, shapes=True) or [None]
+                toon_shape = ss[0]
+            if not toon_shape:
                 continue
+            self._toon_nodes.append(toon_xform)
             cmds.connectAttr(
                 f"{shape}.worldMatrix[0]",
-                f"{ts}.inputSurface[0].inputWorldMatrix")
+                f"{toon_shape}.inputSurface[0].inputWorldMatrix")
             if nt == "mesh":
                 cmds.connectAttr(
-                    f"{obj}.outMesh", f"{ts}.inputSurface[0].surface")
+                    f"{shape}.outMesh",
+                    f"{toon_shape}.inputSurface[0].surface")
             elif nt == "nurbsSurface":
                 tess = cmds.createNode("nurbsTessellate")
                 cmds.setAttr(f"{tess}.caching", True)
-                cmds.connectAttr(f"{obj}.local", f"{tess}.inputSurface")
+                cmds.connectAttr(f"{shape}.local", f"{tess}.inputSurface")
                 cmds.connectAttr(
                     f"{tess}.outputPolygon",
-                    f"{toon}.inputSurface[0].surface")
-            cmds.setAttr(f"{toon}.borderLines", 1)
-            cmds.setAttr(f"{toon}.displayPercent", 0.05)
-            cmds.setAttr(f"{toon}.drawAsMesh", 0)
-            cmds.setAttr(f"{toon}.creaseLines", 0)
+                    f"{toon_shape}.inputSurface[0].surface")
+                self._toon_nodes.append(tess)
+            cmds.setAttr(f"{toon_shape}.borderLines", 1)
+            cmds.setAttr(f"{toon_shape}.displayPercent", 0.05)
+            cmds.setAttr(f"{toon_shape}.drawAsMesh", 0)
+            cmds.setAttr(f"{toon_shape}.creaseLines", 0)
         self._hide_all_viewport_types()
         return True
 
@@ -802,11 +925,16 @@ class OnionSkinCore:
         mel.eval("refresh -f")
 
     def _cleanup_toon(self):
-        t = cmds.ls("pfxToon*") or []
-        if t:
-            cmds.delete(t)
+        """Delete only the toon nodes this tool created."""
+        stale = [n for n in self._toon_nodes if cmds.objExists(n)]
+        if stale:
+            try:
+                cmds.delete(stale)
+            except Exception:
+                pass
             if self._viewport_state:
                 self._restore_viewport_state()
+        self._toon_nodes = []
 
 
 # ---------------------------------------------------------------------------
@@ -839,7 +967,7 @@ class LayerItemWidget(QtWidgets.QWidget):
             OnionLayer.AFTER: self.COLOR_AFTER,
         }.get(self._layer.role, "#888")
 
-        dot = QtWidgets.QLabel("\u25CF")
+        dot = QtWidgets.QLabel("●")
         dot.setStyleSheet(f"color:{color}; font-size:14px;")
         dot.setFixedWidth(18)
         dot.setAlignment(QtCore.Qt.AlignCenter)
@@ -871,12 +999,24 @@ class LayerItemWidget(QtWidgets.QWidget):
             QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         lay.addWidget(self._alpha_lbl)
 
-        btn_del = QtWidgets.QPushButton("\u2715")
+        btn_del = QtWidgets.QPushButton("✕")
         btn_del.setFixedSize(22, 22)
         btn_del.setToolTip("Delete this layer")
         btn_del.clicked.connect(
             lambda: self.delete_clicked.emit(self._index))
         lay.addWidget(btn_del)
+
+    def sync_from_layer(self):
+        """Refresh slider/label/checkbox from the Maya node without
+        re-emitting signals (used by the opacity-gradient sliders)."""
+        a = int(self._layer.get_alpha() * 100)
+        self._slider.blockSignals(True)
+        self._slider.setValue(a)
+        self._slider.blockSignals(False)
+        self._alpha_lbl.setText(f"{a}%")
+        self._vis_cb.blockSignals(True)
+        self._vis_cb.setChecked(bool(self._layer.get_visible()))
+        self._vis_cb.blockSignals(False)
 
     def _on_alpha(self, val):
         self._alpha_lbl.setText(f"{val}%")
@@ -895,7 +1035,8 @@ class PresetButton(QtWidgets.QPushButton):
         super().__init__(parent)
         self.before = before
         self.after = after
-        self.setToolTip(f"{before} key(s) before + current + {after} key(s) after")
+        self.setToolTip(f"{before} key(s) before + {after} key(s) after "
+                        "the current time")
         self.setFixedSize(48, 40)
         self.setText(label)
         self.setStyleSheet("""
@@ -905,6 +1046,7 @@ class PresetButton(QtWidgets.QPushButton):
             }
             QPushButton:hover { background: #4a4a4a; border-color: #77a; }
             QPushButton:pressed { background: #555; }
+            QPushButton:disabled { color: #666; border-color: #3a3a3a; }
         """)
 
 
@@ -913,19 +1055,67 @@ class PresetButton(QtWidgets.QPushButton):
 # ---------------------------------------------------------------------------
 class OnionSkinUI(QtWidgets.QWidget):
 
+    _STATUS_COLORS = {
+        "info": "#999",
+        "ok":   "#8c8",
+        "warn": "#cc8",
+        "err":  "#c88",
+        "busy": "#8ac",
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("onionSkinWidget")
         self.setWindowTitle(f"Onion Skin v{__version__}")
         self.setMinimumWidth(380)
         self.core = OnionSkinCore()
+        self._capturing = False
+        self._layer_items = []
         self._build_ui()
+        self._startup()
+
+    def _startup(self):
+        """Auto-detect a viewport and adopt any ghosts left in the scene
+        by a previous session, so the tool is usable with zero clicks."""
+        panel = self.core.select_viewport(silent=True)
+        if panel:
+            self._vp_label.setText(
+                f"{self.core.camera_for_panel()}  ({panel})")
+            self._vp_label.setStyleSheet("color:#ddd;")
+            self._btn_single.setEnabled(True)
+
+        adopted = self.core.adopt_existing()
+        self._rebuild_layer_list()
         self._refresh_state()
 
+        if adopted:
+            self._set_status(
+                f"Recovered {adopted} ghost layer"
+                f"{'s' if adopted != 1 else ''} from the scene.", "warn")
+        elif panel:
+            self._set_status(
+                "Viewport detected. Select an animated object, then press "
+                "'Set from Selection'.", "info")
+        else:
+            self._set_status(
+                "Click inside a 3-D viewport, then press "
+                "'Select Viewport'.", "info")
+
     def _build_ui(self):
+        self.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold; color: #ccc;
+                border: 1px solid #4a4a4a; border-radius: 6px;
+                margin-top: 8px; padding-top: 6px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin; left: 8px; padding: 0 4px;
+            }
+        """)
+
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
-        root.setSpacing(4)
+        root.setSpacing(6)
 
         # ---- Menu bar ----
         mb = QtWidgets.QMenuBar(self)
@@ -945,19 +1135,20 @@ class OnionSkinUI(QtWidgets.QWidget):
         hm.addAction("How to Use...", self._on_help)
 
         # ---- Viewport ----
-        vg = QtWidgets.QGroupBox("Viewport")
+        vg = QtWidgets.QGroupBox("Step 1 — Viewport")
         vl = QtWidgets.QHBoxLayout(vg)
         self._vp_label = QtWidgets.QLabel("No viewport selected")
         self._vp_label.setStyleSheet("color:#aaa;")
         vl.addWidget(self._vp_label, stretch=1)
         btn_vp = QtWidgets.QPushButton("Select Viewport")
-        btn_vp.setToolTip("Click a 3-D viewport, then press this.")
+        btn_vp.setToolTip("Click a 3-D viewport, then press this.\n"
+                          "(Auto-detected at launch when possible.)")
         btn_vp.clicked.connect(self._on_select_viewport)
         vl.addWidget(btn_vp)
         root.addWidget(vg)
 
         # ---- Target Object ----
-        og = QtWidgets.QGroupBox("Target Object")
+        og = QtWidgets.QGroupBox("Step 2 — Target Object")
         ol = QtWidgets.QVBoxLayout(og)
 
         obj_row = QtWidgets.QHBoxLayout()
@@ -979,7 +1170,7 @@ class OnionSkinUI(QtWidgets.QWidget):
         self._hier_cb.setChecked(True)
         self._hier_cb.setToolTip(
             "Also scan keyframes on child objects (joints, controls, etc.)")
-        self._hier_cb.stateChanged.connect(self._on_hier_changed)
+        self._hier_cb.toggled.connect(self._on_hier_changed)
         ol.addWidget(self._hier_cb)
 
         self._isolate_cb = QtWidgets.QCheckBox("Isolate Rig During Capture")
@@ -998,7 +1189,7 @@ class OnionSkinUI(QtWidgets.QWidget):
         root.addWidget(og)
 
         # ---- Ghost Settings ----
-        gg = QtWidgets.QGroupBox("Ghost Settings")
+        gg = QtWidgets.QGroupBox("Step 3 — Ghost")
         gl = QtWidgets.QVBoxLayout(gg)
 
         # Single-frame capture (no key lookup)
@@ -1087,7 +1278,7 @@ class OnionSkinUI(QtWidgets.QWidget):
             (LayerItemWidget.COLOR_CURRENT, "Current"),
             (LayerItemWidget.COLOR_AFTER, "After"),
         ]:
-            d = QtWidgets.QLabel(f"\u25CF {text}")
+            d = QtWidgets.QLabel(f"● {text}")
             d.setStyleSheet(f"color:{color}; font-size:11px;")
             legend.addWidget(d)
         legend.addStretch()
@@ -1105,6 +1296,12 @@ class OnionSkinUI(QtWidgets.QWidget):
         self._layer_scroll.setWidget(self._layer_container)
         ll.addWidget(self._layer_scroll)
 
+        self._empty_hint = QtWidgets.QLabel(
+            "No ghosts yet — capture some with Step 3 above.")
+        self._empty_hint.setStyleSheet("color:#777; font-size:11px;")
+        self._empty_hint.setAlignment(QtCore.Qt.AlignCenter)
+        ll.addWidget(self._empty_hint)
+
         bulk_row = QtWidgets.QHBoxLayout()
         self._btn_show_all = QtWidgets.QPushButton("Show All")
         self._btn_show_all.setEnabled(False)
@@ -1118,6 +1315,9 @@ class OnionSkinUI(QtWidgets.QWidget):
         bulk_row.addWidget(self._btn_hide_all)
         self._btn_delete_all = QtWidgets.QPushButton("Delete All")
         self._btn_delete_all.setEnabled(False)
+        self._btn_delete_all.setToolTip(
+            "Remove every ghost image plane from the scene,\n"
+            "including any left over from previous sessions.")
         self._btn_delete_all.clicked.connect(self._on_delete_all)
         bulk_row.addWidget(self._btn_delete_all)
         ll.addLayout(bulk_row)
@@ -1155,10 +1355,13 @@ class OnionSkinUI(QtWidgets.QWidget):
         fix_row = QtWidgets.QHBoxLayout()
         self._btn_refresh = QtWidgets.QPushButton("Refresh All")
         self._btn_refresh.setEnabled(False)
+        self._btn_refresh.setToolTip(
+            "Re-capture every layer at its stored frame.")
         self._btn_refresh.clicked.connect(self._on_refresh)
         fix_row.addWidget(self._btn_refresh)
         self._btn_fix = QtWidgets.QPushButton("Fix Offset")
         self._btn_fix.setEnabled(False)
+        self._btn_fix.setToolTip("Toggle fit mode on all planes.")
         self._btn_fix.clicked.connect(self._on_fix_offset)
         fix_row.addWidget(self._btn_fix)
         dl.addLayout(fix_row)
@@ -1169,10 +1372,10 @@ class OnionSkinUI(QtWidgets.QWidget):
         ng = QtWidgets.QGroupBox("Frame Navigation")
         nl = QtWidgets.QHBoxLayout(ng)
         for lb, tip, sl in [
-            ("\u25C0", "Step back", self.core.step_back),
-            ("\u23EE", "Prev key", self.core.prev_key),
-            ("\u23ED", "Next key", self.core.next_key),
-            ("\u25B6", "Step fwd", self.core.step_forward),
+            ("◀", "Step back", self.core.step_back),
+            ("⏮", "Prev key", self.core.prev_key),
+            ("⏭", "Next key", self.core.next_key),
+            ("▶", "Step fwd", self.core.step_forward),
         ]:
             b = QtWidgets.QPushButton(lb)
             b.setToolTip(tip)
@@ -1184,10 +1387,45 @@ class OnionSkinUI(QtWidgets.QWidget):
         # Status
         self._status = QtWidgets.QLabel("")
         self._status.setStyleSheet("color:#888; font-size:11px;")
+        self._status.setWordWrap(True)
         root.addWidget(self._status)
         root.addStretch()
 
         self._update_dot_diagram()
+
+    # -- Status / busy helpers ----------------------------------------------
+
+    def _set_status(self, msg, kind="info"):
+        color = self._STATUS_COLORS.get(kind, "#888")
+        self._status.setStyleSheet(f"color:{color}; font-size:11px;")
+        self._status.setText(msg)
+
+    def _on_capture_progress(self, idx, total, frame):
+        self._set_status(
+            f"Capturing frame {int(frame)}  ({idx + 1}/{total})...", "busy")
+        QtWidgets.QApplication.processEvents()
+
+    def _begin_capture(self):
+        """Guard against re-entrant capture; returns False if already busy."""
+        if self._capturing:
+            return False
+        self._capturing = True
+        self._set_capture_buttons_enabled(False)
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        return True
+
+    def _end_capture(self):
+        self._capturing = False
+        QtWidgets.QApplication.restoreOverrideCursor()
+        self._set_capture_buttons_enabled(True)
+        self._update_preset_enabled()
+
+    def _set_capture_buttons_enabled(self, on):
+        self._btn_single.setEnabled(on and self.core.model_panel is not None)
+        self._btn_refresh.setEnabled(on and bool(self.core.layers))
+        for btn in self._preset_buttons:
+            btn.setEnabled(on)
+        self._btn_custom.setEnabled(on)
 
     # -- Dot diagram -------------------------------------------------------
 
@@ -1196,10 +1434,10 @@ class OnionSkinUI(QtWidgets.QWidget):
         a = self._spin_after.value()
         inc_cur = self._include_cur_cb.isChecked()
         before_dots = " ".join(
-            [f'<span style="color:#5588cc;">\u25CB</span>'] * b)
-        current_dot = '<span style="color:#66cc66;">\u25CF</span>'
+            ['<span style="color:#5588cc;">○</span>'] * b)
+        current_dot = '<span style="color:#66cc66;">●</span>'
         after_dots = " ".join(
-            [f'<span style="color:#cc6655;">\u25CB</span>'] * a)
+            ['<span style="color:#cc6655;">○</span>'] * a)
         parts = []
         if before_dots:
             parts.append(before_dots)
@@ -1219,9 +1457,18 @@ class OnionSkinUI(QtWidgets.QWidget):
             self._vp_label.setStyleSheet("color:#ddd;")
             self._btn_single.setEnabled(True)
             self._update_preset_enabled()
-            self._status.setText("Viewport locked.")
+            self._set_status("Viewport locked.", "ok")
 
     def _on_set_object(self):
+        # Auto-grab a viewport too, so this works as a one-click step.
+        if not self.core.model_panel:
+            p = self.core.select_viewport(silent=True)
+            if p:
+                self._vp_label.setText(
+                    f"{self.core.camera_for_panel()}  ({p})")
+                self._vp_label.setStyleSheet("color:#ddd;")
+                self._btn_single.setEnabled(True)
+
         obj, count, top_node = self.core.set_target_from_selection()
         if obj:
             self._obj_label.setText(obj)
@@ -1240,18 +1487,25 @@ class OnionSkinUI(QtWidgets.QWidget):
             else:
                 self._rig_info.setText("")
             self._update_preset_enabled()
-            self._status.setText(f"Target: {obj}  ({count} keys)")
+            if count > 0:
+                self._set_status(
+                    f"Target: {obj}  ({count} keys). Pick a preset to "
+                    "ghost.", "ok")
+            else:
+                self._set_status(
+                    f"Target: {obj} has no keyframes — only 'Ghost Current "
+                    "Frame Only' will work.", "warn")
 
     def _on_isolate_changed(self):
         self.core.isolate_rig = self._isolate_cb.isChecked()
         if self.core.isolate_rig and self.core._rig_top_node:
-            self._status.setText(
-                f"Isolate ON — rig root: {self.core._rig_top_node}")
+            self._set_status(
+                f"Isolate ON — rig root: {self.core._rig_top_node}", "info")
         else:
-            self._status.setText("Isolate OFF")
+            self._set_status("Isolate OFF", "info")
 
-    def _on_hier_changed(self, state):
-        self.core.include_hierarchy = (state == QtCore.Qt.Checked)
+    def _on_hier_changed(self, checked):
+        self.core.include_hierarchy = bool(checked)
         if self.core.target_object:
             count = self.core.rescan_keys()
             hier_txt = "+ hierarchy" if self.core.include_hierarchy else "object only"
@@ -1264,7 +1518,8 @@ class OnionSkinUI(QtWidgets.QWidget):
             self._update_preset_enabled()
 
     def _update_preset_enabled(self):
-        ready = (self.core.model_panel is not None
+        ready = (not self._capturing
+                 and self.core.model_panel is not None
                  and self.core.target_object is not None
                  and len(self.core._cached_keys) > 0)
         for btn in self._preset_buttons:
@@ -1272,65 +1527,84 @@ class OnionSkinUI(QtWidgets.QWidget):
         self._btn_custom.setEnabled(ready)
 
     def _on_single_frame(self):
-        self._status.setText("Capturing current frame...")
-        QtWidgets.QApplication.processEvents()
-        self.core.create_single_frame()
+        if not self._begin_capture():
+            return
+        try:
+            err = self.core.create_single_frame(self._on_capture_progress)
+        finally:
+            self._end_capture()
         self._rebuild_layer_list()
         self._refresh_state()
-        self._status.setText("Captured 1 frame.")
+        if err:
+            self._set_status(err, "err")
+        else:
+            self._set_status("Captured 1 frame.", "ok")
 
     def _on_preset(self, before, after):
+        if not self._begin_capture():
+            return
         inc_cur = self._include_cur_cb.isChecked()
-        self._status.setText(
-            f"Finding {before} keys before + {after} keys after...")
-        QtWidgets.QApplication.processEvents()
+        try:
+            err = self.core.create_ghost_from_keys(
+                before, after, inc_cur, self._on_capture_progress)
+        finally:
+            self._end_capture()
 
-        err = self.core.create_ghost_from_keys(before, after, inc_cur)
         if err:
-            self._status.setText(err)
+            self._set_status(err, "err")
+            self._rebuild_layer_list()
+            self._refresh_state()
             return
 
-        self._apply_opacity_gradient()
+        self._apply_opacity_gradient(rebuild=False)
         self._rebuild_layer_list()
         self._refresh_state()
 
         n = len(self.core.layers)
         frames_str = ", ".join(
             str(int(ly.frame)) for ly in self.core.layers)
-        self._status.setText(
-            f"{n} layer{'s' if n != 1 else ''} at keys: {frames_str}")
+        self._set_status(
+            f"{n} layer{'s' if n != 1 else ''} at keys: {frames_str}", "ok")
 
     def _on_custom_preset(self):
         b = self._spin_before.value()
         a = self._spin_after.value()
+        if b == 0 and a == 0 and not self._include_cur_cb.isChecked():
+            self._set_status(
+                "Nothing to capture — set Before/After above 0 or enable "
+                "'Include Current Frame'.", "warn")
+            return
         self._on_preset(b, a)
 
     def _on_delete_all(self):
         self.core.delete_all()
         self._rebuild_layer_list()
         self._refresh_state()
-        self._status.setText("All ghosts deleted.")
+        self._set_status("All ghosts deleted (scene swept clean).", "ok")
 
     def _on_clean_temp(self):
         _clean_temp_files()
-        self._status.setText("Temp files cleaned.")
+        self._set_status("Temp files cleaned.", "ok")
 
     def _on_refresh(self):
-        self._status.setText("Refreshing...")
-        QtWidgets.QApplication.processEvents()
-        self.core.refresh_all()
-        self._apply_opacity_gradient()
+        if not self._begin_capture():
+            return
+        try:
+            self.core.refresh_all(self._on_capture_progress)
+        finally:
+            self._end_capture()
+        self._apply_opacity_gradient(rebuild=False)
         self._rebuild_layer_list()
         self._refresh_state()
-        self._status.setText("Refreshed all layers.")
+        self._set_status("Refreshed all layers.", "ok")
 
     def _on_fix_offset(self):
         self.core.toggle_fit_all()
-        self._status.setText("Fit toggled on all layers.")
+        self._set_status("Fit toggled on all layers.", "ok")
 
     def _on_outline_toggled(self, checked):
         self.core.outline_mode = checked
-        self._status.setText(f"Outline {'ON' if checked else 'OFF'}")
+        self._set_status(f"Outline {'ON' if checked else 'OFF'}", "info")
 
     def _set_all_visible(self, vis):
         self.core.set_all_visible(vis)
@@ -1340,8 +1614,9 @@ class OnionSkinUI(QtWidgets.QWidget):
             cmds.modelEditor(
                 self.core.model_panel, edit=True, imagePlane=True)
             cmds.refresh(force=True)
-        self._rebuild_layer_list()
-        self._status.setText("All " + ("shown." if vis else "hidden."))
+        for item in self._layer_items:
+            item.sync_from_layer()
+        self._set_status("All " + ("shown." if vis else "hidden."), "ok")
 
     def _on_layer_alpha(self, index, alpha):
         if 0 <= index < len(self.core.layers):
@@ -1351,7 +1626,7 @@ class OnionSkinUI(QtWidgets.QWidget):
         self.core.delete_layer(index)
         self._rebuild_layer_list()
         self._refresh_state()
-        self._status.setText("Layer deleted.")
+        self._set_status("Layer deleted.", "ok")
 
     def _on_layer_vis(self, index, vis):
         if 0 <= index < len(self.core.layers):
@@ -1374,7 +1649,9 @@ class OnionSkinUI(QtWidgets.QWidget):
 
     # -- Opacity gradient --------------------------------------------------
 
-    def _apply_opacity_gradient(self):
+    def _apply_opacity_gradient(self, rebuild=False):
+        """Fade layers by their distance from the current-frame layer.
+        Updates existing list rows in place so slider drags stay smooth."""
         layers = self.core.layers
         if not layers:
             return
@@ -1390,21 +1667,22 @@ class OnionSkinUI(QtWidgets.QWidget):
         if cur_idx is None:
             for ly in layers:
                 ly.set_alpha(near)
+        else:
+            max_dist = max(cur_idx, len(layers) - 1 - cur_idx, 1)
+            for i, ly in enumerate(layers):
+                dist = abs(i - cur_idx)
+                if dist == 0:
+                    ly.set_alpha(near)
+                else:
+                    t = dist / max_dist
+                    alpha = near + (far - near) * t
+                    ly.set_alpha(max(0.0, min(1.0, alpha)))
+
+        if rebuild:
             self._rebuild_layer_list()
-            return
-
-        max_dist = max(cur_idx, len(layers) - 1 - cur_idx, 1)
-
-        for i, ly in enumerate(layers):
-            dist = abs(i - cur_idx)
-            if dist == 0:
-                ly.set_alpha(near)
-            else:
-                t = dist / max_dist
-                alpha = near + (far - near) * t
-                ly.set_alpha(max(0.0, min(1.0, alpha)))
-
-        self._rebuild_layer_list()
+        else:
+            for item in self._layer_items:
+                item.sync_from_layer()
 
     # -- Layer list --------------------------------------------------------
 
@@ -1414,6 +1692,7 @@ class OnionSkinUI(QtWidgets.QWidget):
             w = item.widget()
             if w:
                 w.deleteLater()
+        self._layer_items = []
 
         for i, layer in enumerate(self.core.layers):
             if not layer.exists():
@@ -1423,12 +1702,14 @@ class OnionSkinUI(QtWidgets.QWidget):
             row.delete_clicked.connect(self._on_layer_delete)
             row.vis_toggled.connect(self._on_layer_vis)
             self._layer_layout.addWidget(row)
+            self._layer_items.append(row)
 
         self._layer_layout.addStretch()
+        self._empty_hint.setVisible(not self._layer_items)
 
     def _refresh_state(self):
         has = self.core.has_layers()
-        self._btn_refresh.setEnabled(has)
+        self._btn_refresh.setEnabled(has and not self._capturing)
         self._btn_delete_all.setEnabled(has)
         self._btn_show_all.setEnabled(has)
         self._btn_hide_all.setEnabled(has)
@@ -1443,17 +1724,19 @@ class OnionSkinUI(QtWidgets.QWidget):
             "<p>Keyframe-aware multi-plane ghosting for Maya.</p><hr>"
             "<p><b>Original MEL (v0.8.3, 2007):</b><br>"
             "Syed Ali Ahsan &lt;yoda@cyber.net.pk&gt;</p>"
-            "<p><b>Python v2.1.0 (2026):</b> Keyframe-based ghosting, "
-            "per-layer alpha, up to 10 stacked planes.</p>")
+            f"<p><b>Python v{__version__} (2026):</b> Keyframe-based "
+            "ghosting, per-layer alpha, up to 10 stacked planes, "
+            "scene-safe cleanup that never leaves orphaned planes.</p>")
 
     def _on_help(self):
         QtWidgets.QMessageBox.information(
             self, "How to Use",
             "<h3>Quick Start</h3><ol>"
-            "<li>Click a 3-D viewport \u2192 <b>Select Viewport</b>.</li>"
-            "<li>Select an animated object \u2192 "
+            "<li>Click a 3-D viewport → <b>Select Viewport</b> "
+            "(auto-detected at launch when possible).</li>"
+            "<li>Select an animated object → "
             "<b>Set from Selection</b>.</li>"
-            "<li>Click a <b>preset</b> (1k\u20135k) to ghost that many "
+            "<li>Click a <b>preset</b> (1k–5k) to ghost that many "
             "keyframes before and after the current time.</li></ol>"
             "<h3>How Keyframe Ghosting Works</h3>"
             "<p>The tool reads all keyframes on your selected object "
@@ -1466,16 +1749,22 @@ class OnionSkinUI(QtWidgets.QWidget):
             "<h3>Presets</h3>"
             "<p><b>1k</b> = 1 key before + current + 1 key after<br>"
             "<b>2k</b> = 2 keys before + current + 2 keys after<br>"
-            "...up to <b>5k</b> (5+1+5 = 11, capped at 10 layers).</p>"
+            "...up to <b>5k</b> (5+1+5 = 11, capped at 10 layers — "
+            "the keys furthest from the current time are dropped).</p>"
             "<p>Use <b>Custom</b> for asymmetric counts.</p>"
             "<h3>Layer List</h3>"
-            "<p><span style='color:#5588cc'>\u25CF Blue</span> = before, "
-            "<span style='color:#66cc66'>\u25CF Green</span> = current, "
-            "<span style='color:#cc6655'>\u25CF Red</span> = after.<br>"
+            "<p><span style='color:#5588cc'>● Blue</span> = before, "
+            "<span style='color:#66cc66'>● Green</span> = current, "
+            "<span style='color:#cc6655'>● Red</span> = after.<br>"
             "Each layer: visibility toggle, opacity slider, delete.</p>"
             "<h3>Display Options</h3>"
             "<p><b>Near/Far Opacity</b> auto-fades layers by distance.<br>"
-            "<b>Fix Offset</b> toggles fit mode on all planes.</p>")
+            "<b>Fix Offset</b> toggles fit mode on all planes.</p>"
+            "<h3>Cleanup</h3>"
+            "<p><b>Delete All</b> removes every ghost image plane from "
+            "the scene — including any left over from a previous "
+            "session or an interrupted capture. Leftover ghosts are also "
+            "adopted back into the layer list when the tool launches.</p>")
 
 
 # ---------------------------------------------------------------------------
