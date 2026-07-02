@@ -56,6 +56,11 @@ v2.2.0 changes:
       "1 Key", and key jumps now follow the target rig's keyframes
       instead of requiring a selection (the old buttons silently did
       nothing without one).
+    - New: ghosted frames are marked on the time slider with color-coded
+      bookmark strips (blue=before, green=current, red=after) named
+      "Onion Skin fN" to stay distinct from user bookmarks.  A "Show
+      Timeline Markers" checkbox in Display Options hides or shows them,
+      and markers are cleaned up together with their ghosts.
 
 Original MEL script (v0.8.3):
     Author:  Syed Ali Ahsan  <yoda@cyber.net.pk>  (7 Feb 2007)
@@ -93,6 +98,16 @@ CAPTURE_H = 540
 # Every image plane this tool creates carries this string attribute so a
 # scene sweep can always find and remove them, even across sessions.
 TAG_ATTR = "onionSkinGhost"
+
+# Timeline markers: bookmark nodes named with this prefix mark the ghosted
+# frames on the time slider, color-coded to match the ghost roles so they
+# read differently from the user's own bookmarks.
+MARKER_PREFIX = "onionSkinMarker"
+MARKER_COLORS = {
+    "before":  (0.33, 0.53, 0.80),   # blue
+    "current": (0.40, 0.80, 0.40),   # green
+    "after":   (0.80, 0.40, 0.33),   # red
+}
 
 # Chroma-key: playblast against this color, then key it to transparent.
 # Bright green chosen to contrast with most scene content.
@@ -157,6 +172,29 @@ def _tag_plane(shape, frame, role):
     if not cmds.attributeQuery(TAG_ATTR, node=shape, exists=True):
         cmds.addAttr(shape, longName=TAG_ATTR, dataType="string")
     cmds.setAttr(f"{shape}.{TAG_ATTR}", f"{frame}|{role}", type="string")
+
+
+def _ensure_bookmark_plugin():
+    """Load Maya's timeSliderBookmark plugin (ships with Maya 2020+).
+    Returns True when the bookmark node type is available."""
+    try:
+        if not cmds.pluginInfo("timeSliderBookmark", query=True,
+                               loaded=True):
+            cmds.loadPlugin("timeSliderBookmark", quiet=True)
+        return cmds.pluginInfo("timeSliderBookmark", query=True,
+                               loaded=True)
+    except Exception:
+        return False
+
+
+def _find_marker_nodes():
+    """Return every timeline marker node created by this tool."""
+    try:
+        return cmds.ls(f"{MARKER_PREFIX}*",
+                       type="timeSliderBookmark") or []
+    except Exception:
+        # Plugin never loaded in this session -> node type unknown
+        return []
 
 
 def _chroma_key_image(img_path, bg_rgb=CHROMA_COLOR, tol=CHROMA_TOLERANCE):
@@ -362,6 +400,7 @@ class OnionSkinCore:
         self._toon_nodes = []          # toon helper nodes created by us
         self.background_nodes = []     # user-chosen set/background geo
         self.include_background = True  # add bg geo to the isolate capture
+        self.show_markers = True        # timeline markers at ghost frames
 
     # -- Viewport ----------------------------------------------------------
 
@@ -531,6 +570,7 @@ class OnionSkinCore:
                 cmds.delete(parents[0] if parents else shape)
             except Exception:
                 pass
+        self.delete_markers()
         _clean_temp_files()
 
     def adopt_existing(self):
@@ -553,6 +593,7 @@ class OnionSkinCore:
             # pull them into the overlay range and re-pin their fit.
             if self.model_panel:
                 self.realign_all()
+            self.sync_markers()
         return adopted
 
     # -- Background geometry ------------------------------------------------
@@ -609,6 +650,8 @@ class OnionSkinCore:
                           "1" if self.isolate_rig else "0")
             cmds.fileInfo("onionSkinIncludeHier",
                           "1" if self.include_hierarchy else "0")
+            cmds.fileInfo("onionSkinShowMarkers",
+                          "1" if self.show_markers else "0")
         except Exception:
             pass
 
@@ -631,6 +674,9 @@ class OnionSkinCore:
         val = _get("onionSkinIncludeBg")
         if val:
             self.include_background = (val == "1")
+        val = _get("onionSkinShowMarkers")
+        if val:
+            self.show_markers = (val == "1")
 
         bg = _get("onionSkinBackground")
         if bg:
@@ -650,6 +696,7 @@ class OnionSkinCore:
         if 0 <= index < len(self.layers):
             self.layers[index].delete()
             self.layers.pop(index)
+            self.sync_markers()
 
     def refresh_all(self, progress_cb=None):
         """Re-capture all layers at their stored frames."""
@@ -668,6 +715,43 @@ class OnionSkinCore:
         """Show only the layer at *index*, hiding all the others."""
         for i, ly in enumerate(self.layers):
             ly.set_visible(i == index)
+
+    # -- Timeline markers ----------------------------------------------------
+
+    def delete_markers(self):
+        """Remove every timeline marker created by this tool."""
+        nodes = _find_marker_nodes()
+        if nodes:
+            try:
+                cmds.delete(nodes)
+            except Exception:
+                pass
+
+    def sync_markers(self):
+        """Rebuild the timeline markers to mirror the current ghost
+        layers: one color-coded, single-frame bookmark strip per ghost
+        (blue=before, green=current, red=after), named 'Onion Skin fN'
+        so they stay distinct from the user's own bookmarks."""
+        self.delete_markers()
+        if not self.show_markers or not self.layers:
+            return
+        if not _ensure_bookmark_plugin():
+            return
+        for ly in self.layers:
+            if not ly.exists():
+                continue
+            try:
+                node = cmds.createNode("timeSliderBookmark",
+                                       name=f"{MARKER_PREFIX}#",
+                                       skipSelect=True)
+                cmds.setAttr(f"{node}.name",
+                             f"Onion Skin f{int(ly.frame)}", type="string")
+                cmds.setAttr(f"{node}.timeRangeStart", ly.frame)
+                cmds.setAttr(f"{node}.timeRangeStop", ly.frame + 1)
+                r, g, b = MARKER_COLORS.get(ly.role, (0.6, 0.6, 0.6))
+                cmds.setAttr(f"{node}.color", r, g, b, type="double3")
+            except Exception:
+                pass
 
     def has_layers(self):
         self.layers = [ly for ly in self.layers if ly.exists()]
@@ -851,6 +935,9 @@ class OnionSkinCore:
             if self.model_panel:
                 cmds.modelEditor(self.model_panel, edit=True, imagePlane=True)
                 mel.eval("refresh -f")
+
+        # Mark the ghosted frames on the time slider
+        self.sync_markers()
 
     def _snapshot_one(self, frame, role, stack_index):
         """Capture a single frame into a new image plane."""
@@ -1383,7 +1470,8 @@ class OnionSkinUI(QtWidgets.QWidget):
         for cb, state in (
                 (self._hier_cb, self.core.include_hierarchy),
                 (self._isolate_cb, self.core.isolate_rig),
-                (self._bg_include_cb, self.core.include_background)):
+                (self._bg_include_cb, self.core.include_background),
+                (self._markers_cb, self.core.show_markers)):
             cb.blockSignals(True)
             cb.setChecked(bool(state))
             cb.blockSignals(False)
@@ -1733,6 +1821,16 @@ class OnionSkinUI(QtWidgets.QWidget):
         # ---- Display Options ----
         dg = QtWidgets.QGroupBox("Display Options")
         dl = QtWidgets.QVBoxLayout(dg)
+
+        self._markers_cb = QtWidgets.QCheckBox("Show Timeline Markers")
+        self._markers_cb.setChecked(True)
+        self._markers_cb.setToolTip(
+            "Mark every ghosted frame on the time slider with a "
+            "color-coded strip\n(blue=before, green=current, red=after) "
+            "named 'Onion Skin fN', so they\nstay distinct from your own "
+            "bookmarks.  Markers are removed with their ghosts.")
+        self._markers_cb.toggled.connect(self._on_markers_toggled)
+        dl.addWidget(self._markers_cb)
 
         near_row = QtWidgets.QHBoxLayout()
         near_row.addWidget(QtWidgets.QLabel("Near Opacity:"))
@@ -2110,6 +2208,14 @@ class OnionSkinUI(QtWidgets.QWidget):
             self.core.layers[index].set_visible(vis)
             self._force_viewport_refresh()
 
+    def _on_markers_toggled(self, checked):
+        self.core.show_markers = bool(checked)
+        self.core.save_prefs()
+        self.core.sync_markers()
+        self._set_status(
+            "Timeline markers " + ("shown." if checked else "hidden."),
+            "ok")
+
     # -- Frame navigation ----------------------------------------------------
 
     def _on_step_back(self):
@@ -2274,7 +2380,10 @@ class OnionSkinUI(QtWidgets.QWidget):
             "Replace them any time with <b>Set from Selection</b> / "
             "<b>Add Selected</b>.</p>"
             "<h3>Display Options</h3>"
-            "<p><b>Near/Far Opacity</b> auto-fades layers by distance.<br>"
+            "<p><b>Show Timeline Markers</b> marks every ghosted frame "
+            "on the time slider with a color-coded strip (blue=before, "
+            "green=current, red=after) named 'Onion Skin fN'.<br>"
+            "<b>Near/Far Opacity</b> auto-fades layers by distance.<br>"
             "<b>Re-Align Planes</b> re-pins every ghost to the camera's "
             "rendered gate if the size or position drifts (e.g. after "
             "changing camera settings).</p>"
