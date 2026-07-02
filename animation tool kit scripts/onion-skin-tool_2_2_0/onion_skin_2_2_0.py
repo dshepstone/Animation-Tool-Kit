@@ -60,7 +60,9 @@ v2.2.0 changes:
       bookmark strips (blue=before, green=current, red=after) named
       "Onion Skin fN" to stay distinct from user bookmarks.  A "Show
       Timeline Markers" checkbox in Display Options hides or shows them,
-      and markers are cleaned up together with their ghosts.
+      and markers are cleaned up together with their ghosts.  A "Delete
+      Markers" button removes them and keeps them off across window
+      reopens (re-check the box to bring them back).
 
 Original MEL script (v0.8.3):
     Author:  Syed Ali Ahsan  <yoda@cyber.net.pk>  (7 Feb 2007)
@@ -1830,7 +1832,16 @@ class OnionSkinUI(QtWidgets.QWidget):
             "named 'Onion Skin fN', so they\nstay distinct from your own "
             "bookmarks.  Markers are removed with their ghosts.")
         self._markers_cb.toggled.connect(self._on_markers_toggled)
-        dl.addWidget(self._markers_cb)
+        markers_row = QtWidgets.QHBoxLayout()
+        markers_row.addWidget(self._markers_cb, stretch=1)
+        self._btn_del_markers = QtWidgets.QPushButton("Delete Markers")
+        self._btn_del_markers.setToolTip(
+            "Remove all Onion Skin markers from the time slider and turn\n"
+            "'Show Timeline Markers' off, so they stay gone when the\n"
+            "window is reopened.  Re-check the box to bring them back.")
+        self._btn_del_markers.clicked.connect(self._on_delete_markers)
+        markers_row.addWidget(self._btn_del_markers)
+        dl.addLayout(markers_row)
 
         near_row = QtWidgets.QHBoxLayout()
         near_row.addWidget(QtWidgets.QLabel("Near Opacity:"))
@@ -2216,6 +2227,19 @@ class OnionSkinUI(QtWidgets.QWidget):
             "Timeline markers " + ("shown." if checked else "hidden."),
             "ok")
 
+    def _on_delete_markers(self):
+        # Deleting also turns the checkbox off (persisted with the scene)
+        # so the markers stay gone when the window is reopened.
+        self.core.show_markers = False
+        self._markers_cb.blockSignals(True)
+        self._markers_cb.setChecked(False)
+        self._markers_cb.blockSignals(False)
+        self.core.delete_markers()
+        self.core.save_prefs()
+        self._set_status(
+            "Timeline markers deleted — re-check 'Show Timeline Markers' "
+            "to bring them back.", "ok")
+
     # -- Frame navigation ----------------------------------------------------
 
     def _on_step_back(self):
@@ -2382,7 +2406,9 @@ class OnionSkinUI(QtWidgets.QWidget):
             "<h3>Display Options</h3>"
             "<p><b>Show Timeline Markers</b> marks every ghosted frame "
             "on the time slider with a color-coded strip (blue=before, "
-            "green=current, red=after) named 'Onion Skin fN'.<br>"
+            "green=current, red=after) named 'Onion Skin fN'; "
+            "<b>Delete Markers</b> removes them and keeps them off until "
+            "the box is re-checked, even across window reopens.<br>"
             "<b>Near/Far Opacity</b> auto-fades layers by distance.<br>"
             "<b>Re-Align Planes</b> re-pins every ghost to the camera's "
             "rendered gate if the size or position drifts (e.g. after "
