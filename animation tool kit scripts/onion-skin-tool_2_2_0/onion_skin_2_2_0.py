@@ -44,6 +44,14 @@ v2.2.0 changes:
       "Fix Offset" is now "Re-Align Planes" and re-applies this fit.
     - UI: all options live in a vertical scroll area (menu bar and status
       bar stay pinned), so the window no longer needs to be full-height.
+      The window opens compact with an always-visible scroll bar.
+    - Fixed: "Include Current Frame" is respected — parking the playhead
+      on a keyframe no longer forces a current-frame capture.
+    - New: "Flip Ghosts" Prev/Next buttons cycle through the ghost
+      planes one at a time (Show All restores them).
+    - The target rig, background geo, and capture toggles are saved into
+      the scene (fileInfo) and restored when the window reopens — and can
+      be replaced any time with 'Set from Selection' / 'Add Selected'.
 
 Original MEL script (v0.8.3):
     Author:  Syed Ali Ahsan  <yoda@cyber.net.pk>  (7 Feb 2007)
@@ -416,6 +424,7 @@ class OnionSkinCore:
         self._cached_keys = get_all_keyframe_times(
             self.target_object, self.include_hierarchy)
         top = self.find_rig_top_node()
+        self.save_prefs()
         return self.target_object, len(self._cached_keys), top
 
     def rescan_keys(self):
@@ -449,7 +458,6 @@ class OnionSkinCore:
 
         keys_before = [k for k in keys if k < cur]
         keys_after  = [k for k in keys if k > cur]
-        on_key = any(abs(k - cur) < 0.001 for k in keys)
 
         # Take the N closest keys before (nearest to cur last, so slice end)
         chosen_before = keys_before[-before_count:] if before_count else []
@@ -459,8 +467,9 @@ class OnionSkinCore:
         result = []
         for k in chosen_before:
             result.append((k, OnionLayer.BEFORE))
-        # Include current frame if checkbox is on, or if it's on a key
-        if include_current or on_key:
+        # Include the current frame ONLY when the checkbox asks for it —
+        # sitting on a keyframe must not override the user's choice.
+        if include_current:
             result.append((cur, OnionLayer.CURRENT))
         for k in chosen_after:
             result.append((k, OnionLayer.AFTER))
@@ -549,10 +558,12 @@ class OnionSkinCore:
         included in isolated captures.  Returns the node count."""
         sel = cmds.ls(selection=True, long=True) or []
         self.background_nodes = sel
+        self.save_prefs()
         return len(sel)
 
     def clear_background(self):
         self.background_nodes = []
+        self.save_prefs()
 
     def existing_background_nodes(self):
         return [n for n in self.background_nodes if cmds.objExists(n)]
@@ -579,6 +590,58 @@ class OnionSkinCore:
                 pass
         return new_state
 
+    # -- Session persistence (stored in the scene file) ----------------------
+
+    def save_prefs(self):
+        """Persist target/background choices into the scene via fileInfo
+        so reopening the window (or the scene) restores the setup."""
+        try:
+            cmds.fileInfo("onionSkinTarget", self.target_object or "")
+            cmds.fileInfo("onionSkinBackground",
+                          ";".join(self.background_nodes))
+            cmds.fileInfo("onionSkinIncludeBg",
+                          "1" if self.include_background else "0")
+            cmds.fileInfo("onionSkinIsolate",
+                          "1" if self.isolate_rig else "0")
+            cmds.fileInfo("onionSkinIncludeHier",
+                          "1" if self.include_hierarchy else "0")
+        except Exception:
+            pass
+
+    def load_prefs(self):
+        """Restore the setup saved by save_prefs.  Returns True if a
+        still-existing target object was restored."""
+        def _get(key):
+            try:
+                v = cmds.fileInfo(key, query=True)
+                return v[0] if v else ""
+            except Exception:
+                return ""
+
+        val = _get("onionSkinIncludeHier")
+        if val:
+            self.include_hierarchy = (val == "1")
+        val = _get("onionSkinIsolate")
+        if val:
+            self.isolate_rig = (val == "1")
+        val = _get("onionSkinIncludeBg")
+        if val:
+            self.include_background = (val == "1")
+
+        bg = _get("onionSkinBackground")
+        if bg:
+            self.background_nodes = [
+                n for n in bg.split(";") if n and cmds.objExists(n)]
+
+        tgt = _get("onionSkinTarget")
+        if tgt and cmds.objExists(tgt):
+            self.target_object = tgt
+            self._cached_keys = get_all_keyframe_times(
+                tgt, self.include_hierarchy)
+            self.find_rig_top_node()
+            return True
+        return False
+
     def delete_layer(self, index):
         if 0 <= index < len(self.layers):
             self.layers[index].delete()
@@ -596,6 +659,11 @@ class OnionSkinCore:
     def set_all_visible(self, vis):
         for ly in self.layers:
             ly.set_visible(vis)
+
+    def solo_layer(self, index):
+        """Show only the layer at *index*, hiding all the others."""
+        for i, ly in enumerate(self.layers):
+            ly.set_visible(i == index)
 
     def has_layers(self):
         self.layers = [ly for ly in self.layers if ly.exists()]
@@ -1235,8 +1303,16 @@ class OnionSkinUI(QtWidgets.QWidget):
         self.core = OnionSkinCore()
         self._capturing = False
         self._layer_items = []
+        self._solo_index = None
         self._build_ui()
         self._startup()
+
+    def sizeHint(self):
+        # Keep the default window compact — the scroll area supplies
+        # access to everything below the fold.  Without this the floating
+        # workspace control sizes itself to the full content height and
+        # the scroll bar never engages.
+        return QtCore.QSize(440, 560)
 
     def _startup(self):
         """Auto-detect a viewport and adopt any ghosts left in the scene
@@ -1248,6 +1324,7 @@ class OnionSkinUI(QtWidgets.QWidget):
             self._vp_label.setStyleSheet("color:#ddd;")
             self._btn_single.setEnabled(True)
 
+        restored = self._restore_session()
         adopted = self.core.adopt_existing()
         self._rebuild_layer_list()
         self._refresh_state()
@@ -1256,6 +1333,10 @@ class OnionSkinUI(QtWidgets.QWidget):
             self._set_status(
                 f"Recovered {adopted} ghost layer"
                 f"{'s' if adopted != 1 else ''} from the scene.", "warn")
+        elif restored:
+            self._set_status(
+                "Restored target and background settings from the scene.",
+                "info")
         elif panel:
             self._set_status(
                 "Viewport detected. Select an animated object, then press "
@@ -1264,6 +1345,41 @@ class OnionSkinUI(QtWidgets.QWidget):
             self._set_status(
                 "Click inside a 3-D viewport, then press "
                 "'Select Viewport'.", "info")
+
+    def _restore_session(self):
+        """Reload the target rig, background geo, and toggles saved in
+        the scene so reopening the window doesn't lose the setup.
+        Returns True if anything was restored."""
+        restored_target = self.core.load_prefs()
+
+        for cb, state in (
+                (self._hier_cb, self.core.include_hierarchy),
+                (self._isolate_cb, self.core.isolate_rig),
+                (self._bg_include_cb, self.core.include_background)):
+            cb.blockSignals(True)
+            cb.setChecked(bool(state))
+            cb.blockSignals(False)
+
+        if restored_target:
+            obj = self.core.target_object
+            count = len(self.core._cached_keys)
+            self._obj_label.setText(obj)
+            self._obj_label.setStyleSheet("color:#ddd; font-weight:bold;")
+            self._key_info.setText(
+                f"{count} keyframe{'s' if count != 1 else ''} found")
+            self._key_info.setStyleSheet(
+                "color:#8c8; font-size:11px;" if count
+                else "color:#c88; font-size:11px;")
+            if self.core._rig_top_node:
+                self._rig_info.setText(
+                    f"Rig top node: {self.core._rig_top_node}")
+                self._rig_info.setStyleSheet("color:#aac; font-size:11px;")
+            self._update_preset_enabled()
+
+        if self.core.existing_background_nodes():
+            self._update_bg_label()
+
+        return restored_target or bool(self.core.background_nodes)
 
     def _build_ui(self):
         self.setStyleSheet("""
@@ -1306,6 +1422,9 @@ class OnionSkinUI(QtWidgets.QWidget):
         self._scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(
             QtCore.Qt.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarAlwaysOn)
+        self._scroll.setMinimumHeight(240)
         content = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(content)
         root.setContentsMargins(6, 6, 6, 6)
@@ -1521,6 +1640,29 @@ class OnionSkinUI(QtWidgets.QWidget):
         self._empty_hint.setAlignment(QtCore.Qt.AlignCenter)
         ll.addWidget(self._empty_hint)
 
+        flip_row = QtWidgets.QHBoxLayout()
+        flip_lbl = QtWidgets.QLabel("Flip Ghosts:")
+        flip_lbl.setStyleSheet("color:#ccc;")
+        flip_row.addWidget(flip_lbl)
+        self._btn_ghost_prev = QtWidgets.QPushButton("◀ Prev")
+        self._btn_ghost_prev.setEnabled(False)
+        self._btn_ghost_prev.setToolTip(
+            "Show only the previous ghost plane (wraps around).\n"
+            "Use Show All to bring every ghost back.")
+        self._btn_ghost_prev.clicked.connect(
+            lambda: self._on_flip_ghost(-1))
+        flip_row.addWidget(self._btn_ghost_prev)
+        self._btn_ghost_next = QtWidgets.QPushButton("Next ▶")
+        self._btn_ghost_next.setEnabled(False)
+        self._btn_ghost_next.setToolTip(
+            "Show only the next ghost plane (wraps around).\n"
+            "Use Show All to bring every ghost back.")
+        self._btn_ghost_next.clicked.connect(
+            lambda: self._on_flip_ghost(1))
+        flip_row.addWidget(self._btn_ghost_next)
+        flip_row.addStretch()
+        ll.addLayout(flip_row)
+
         bulk_row = QtWidgets.QHBoxLayout()
         self._btn_show_all = QtWidgets.QPushButton("Show All")
         self._btn_show_all.setEnabled(False)
@@ -1722,17 +1864,25 @@ class OnionSkinUI(QtWidgets.QWidget):
                     f"Target: {obj} has no keyframes — only 'Ghost Current "
                     "Frame Only' will work.", "warn")
 
+    def _update_bg_label(self):
+        nodes = self.core.existing_background_nodes()
+        if not nodes:
+            self._bg_label.setText("None set")
+            self._bg_label.setStyleSheet("color:#aaa;")
+            self._btn_bg_vis.setEnabled(False)
+            return
+        names = [n.split("|")[-1] for n in nodes]
+        shown = ", ".join(names[:3])
+        if len(nodes) > 3:
+            shown += f" (+{len(nodes) - 3} more)"
+        self._bg_label.setText(shown)
+        self._bg_label.setStyleSheet("color:#ddd;")
+        self._btn_bg_vis.setEnabled(True)
+
     def _on_bg_add(self):
         count = self.core.set_background_from_selection()
         if count:
-            names = [n.split("|")[-1]
-                     for n in self.core.existing_background_nodes()]
-            shown = ", ".join(names[:3])
-            if count > 3:
-                shown += f" (+{count - 3} more)"
-            self._bg_label.setText(shown)
-            self._bg_label.setStyleSheet("color:#ddd;")
-            self._btn_bg_vis.setEnabled(True)
+            self._update_bg_label()
             self._set_status(
                 f"Background geo set ({count} node"
                 f"{'s' if count != 1 else ''}). It will appear in "
@@ -1750,13 +1900,12 @@ class OnionSkinUI(QtWidgets.QWidget):
                 except Exception:
                     pass
         self.core.clear_background()
-        self._bg_label.setText("None set")
-        self._bg_label.setStyleSheet("color:#aaa;")
-        self._btn_bg_vis.setEnabled(False)
+        self._update_bg_label()
         self._set_status("Background geo cleared.", "ok")
 
     def _on_bg_include_changed(self, checked):
         self.core.include_background = bool(checked)
+        self.core.save_prefs()
         self._set_status(
             "Background geo will {}be included in isolated captures."
             .format("" if checked else "NOT "), "info")
@@ -1771,6 +1920,7 @@ class OnionSkinUI(QtWidgets.QWidget):
 
     def _on_isolate_changed(self):
         self.core.isolate_rig = self._isolate_cb.isChecked()
+        self.core.save_prefs()
         if self.core.isolate_rig and self.core._rig_top_node:
             self._set_status(
                 f"Isolate ON — rig root: {self.core._rig_top_node}", "info")
@@ -1779,6 +1929,7 @@ class OnionSkinUI(QtWidgets.QWidget):
 
     def _on_hier_changed(self, checked):
         self.core.include_hierarchy = bool(checked)
+        self.core.save_prefs()
         if self.core.target_object:
             count = self.core.rescan_keys()
             hier_txt = "+ hierarchy" if self.core.include_hierarchy else "object only"
@@ -1881,17 +2032,39 @@ class OnionSkinUI(QtWidgets.QWidget):
         self.core.outline_mode = checked
         self._set_status(f"Outline {'ON' if checked else 'OFF'}", "info")
 
-    def _set_all_visible(self, vis):
-        self.core.set_all_visible(vis)
+    def _force_viewport_refresh(self):
+        """Cycle imagePlane display off/on to force Maya to redraw."""
         if self.core.model_panel:
             cmds.modelEditor(
                 self.core.model_panel, edit=True, imagePlane=False)
             cmds.modelEditor(
                 self.core.model_panel, edit=True, imagePlane=True)
             cmds.refresh(force=True)
+
+    def _set_all_visible(self, vis):
+        self._solo_index = None
+        self.core.set_all_visible(vis)
+        self._force_viewport_refresh()
         for item in self._layer_items:
             item.sync_from_layer()
         self._set_status("All " + ("shown." if vis else "hidden."), "ok")
+
+    def _on_flip_ghost(self, step):
+        layers = self.core.layers
+        if not layers:
+            return
+        if self._solo_index is None or self._solo_index >= len(layers):
+            self._solo_index = 0 if step > 0 else len(layers) - 1
+        else:
+            self._solo_index = (self._solo_index + step) % len(layers)
+        self.core.solo_layer(self._solo_index)
+        self._force_viewport_refresh()
+        for item in self._layer_items:
+            item.sync_from_layer()
+        ly = layers[self._solo_index]
+        self._set_status(
+            f"Ghost {self._solo_index + 1}/{len(layers)}:  {ly.label()}",
+            "info")
 
     def _on_layer_alpha(self, index, alpha):
         if 0 <= index < len(self.core.layers):
@@ -1906,13 +2079,7 @@ class OnionSkinUI(QtWidgets.QWidget):
     def _on_layer_vis(self, index, vis):
         if 0 <= index < len(self.core.layers):
             self.core.layers[index].set_visible(vis)
-            # Cycle imagePlane display off/on to force Maya to redraw
-            if self.core.model_panel:
-                cmds.modelEditor(
-                    self.core.model_panel, edit=True, imagePlane=False)
-                cmds.modelEditor(
-                    self.core.model_panel, edit=True, imagePlane=True)
-                cmds.refresh(force=True)
+            self._force_viewport_refresh()
 
     def _on_near_opacity(self, val):
         self._near_lbl.setText(f"{val}%")
@@ -1962,6 +2129,7 @@ class OnionSkinUI(QtWidgets.QWidget):
     # -- Layer list --------------------------------------------------------
 
     def _rebuild_layer_list(self):
+        self._solo_index = None
         while self._layer_layout.count() > 0:
             item = self._layer_layout.takeAt(0)
             w = item.widget()
@@ -1989,6 +2157,8 @@ class OnionSkinUI(QtWidgets.QWidget):
         self._btn_show_all.setEnabled(has)
         self._btn_hide_all.setEnabled(has)
         self._btn_fix.setEnabled(has)
+        self._btn_ghost_prev.setEnabled(has)
+        self._btn_ghost_next.setEnabled(has)
 
     # -- About / Help ------------------------------------------------------
 
@@ -2040,7 +2210,14 @@ class OnionSkinUI(QtWidgets.QWidget):
             "<p><span style='color:#5588cc'>● Blue</span> = before, "
             "<span style='color:#66cc66'>● Green</span> = current, "
             "<span style='color:#cc6655'>● Red</span> = after.<br>"
-            "Each layer: visibility toggle, opacity slider, delete.</p>"
+            "Each layer: visibility toggle, opacity slider, delete.<br>"
+            "<b>Flip Ghosts</b> shows one plane at a time (Prev/Next, "
+            "wraps around); <b>Show All</b> brings every ghost back.</p>"
+            "<h3>Session Memory</h3>"
+            "<p>The target rig, background geo, and capture toggles are "
+            "saved with the scene and restored when the window reopens. "
+            "Replace them any time with <b>Set from Selection</b> / "
+            "<b>Add Selected</b>.</p>"
             "<h3>Display Options</h3>"
             "<p><b>Near/Far Opacity</b> auto-fades layers by distance.<br>"
             "<b>Re-Align Planes</b> re-pins every ghost to the camera's "
