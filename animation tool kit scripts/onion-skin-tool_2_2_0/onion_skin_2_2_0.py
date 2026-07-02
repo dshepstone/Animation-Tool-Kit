@@ -52,6 +52,10 @@ v2.2.0 changes:
     - The target rig, background geo, and capture toggles are saved into
       the scene (fileInfo) and restored when the window reopens — and can
       be replaced any time with 'Set from Selection' / 'Add Selected'.
+    - Frame Navigation moved under Ghosted Layers, labeled "1 Frame" /
+      "1 Key", and key jumps now follow the target rig's keyframes
+      instead of requiring a selection (the old buttons silently did
+      nothing without one).
 
 Original MEL script (v0.8.3):
     Author:  Syed Ali Ahsan  <yoda@cyber.net.pk>  (7 Feb 2007)
@@ -746,15 +750,39 @@ class OnionSkinCore:
     def step_back():
         mel.eval("playButtonStepBackward")
 
-    @staticmethod
-    def next_key():
-        cmds.currentTime(
-            cmds.findKeyframe(timeSlider=True, which="next"), edit=True)
+    def next_key(self):
+        """Jump to the next keyframe of the target object (falls back to
+        the time-slider keys when no target is set).  Returns the new
+        frame, or None if there is no key to jump to."""
+        cur = cmds.currentTime(query=True)
+        if self.target_object and self.rescan_keys():
+            keys = [k for k in self._cached_keys if k > cur + 0.001]
+            if keys:
+                cmds.currentTime(keys[0], edit=True)
+                return keys[0]
+            return None
+        t = cmds.findKeyframe(timeSlider=True, which="next")
+        if t is not None and abs(t - cur) > 0.001:
+            cmds.currentTime(t, edit=True)
+            return t
+        return None
 
-    @staticmethod
-    def prev_key():
-        cmds.currentTime(
-            cmds.findKeyframe(timeSlider=True, which="previous"), edit=True)
+    def prev_key(self):
+        """Jump to the previous keyframe of the target object (falls back
+        to the time-slider keys when no target is set).  Returns the new
+        frame, or None if there is no key to jump to."""
+        cur = cmds.currentTime(query=True)
+        if self.target_object and self.rescan_keys():
+            keys = [k for k in self._cached_keys if k < cur - 0.001]
+            if keys:
+                cmds.currentTime(keys[-1], edit=True)
+                return keys[-1]
+            return None
+        t = cmds.findKeyframe(timeSlider=True, which="previous")
+        if t is not None and abs(t - cur) > 0.001:
+            cmds.currentTime(t, edit=True)
+            return t
+        return None
 
     # -- Internal capture --------------------------------------------------
 
@@ -1685,6 +1713,23 @@ class OnionSkinUI(QtWidgets.QWidget):
 
         root.addWidget(lg)
 
+        # ---- Frame Navigation (kept next to the ghost flip buttons) ----
+        ng = QtWidgets.QGroupBox("Frame Navigation")
+        nl = QtWidgets.QHBoxLayout(ng)
+        for lb, tip, sl in [
+            ("◀ 1 Frame", "Step back one frame", self._on_step_back),
+            ("◀ 1 Key", "Jump to the previous keyframe of the target "
+                        "object", self._on_prev_key),
+            ("1 Key ▶", "Jump to the next keyframe of the target object",
+                        self._on_next_key),
+            ("1 Frame ▶", "Step forward one frame", self._on_step_fwd),
+        ]:
+            b = QtWidgets.QPushButton(lb)
+            b.setToolTip(tip)
+            b.clicked.connect(sl)
+            nl.addWidget(b)
+        root.addWidget(ng)
+
         # ---- Display Options ----
         dg = QtWidgets.QGroupBox("Display Options")
         dl = QtWidgets.QVBoxLayout(dg)
@@ -1730,22 +1775,6 @@ class OnionSkinUI(QtWidgets.QWidget):
         dl.addLayout(fix_row)
 
         root.addWidget(dg)
-
-        # ---- Frame Navigation ----
-        ng = QtWidgets.QGroupBox("Frame Navigation")
-        nl = QtWidgets.QHBoxLayout(ng)
-        for lb, tip, sl in [
-            ("◀", "Step back", self.core.step_back),
-            ("⏮", "Prev key", self.core.prev_key),
-            ("⏭", "Next key", self.core.next_key),
-            ("▶", "Step fwd", self.core.step_forward),
-        ]:
-            b = QtWidgets.QPushButton(lb)
-            b.setToolTip(tip)
-            b.setFixedWidth(48)
-            b.clicked.connect(sl)
-            nl.addWidget(b)
-        root.addWidget(ng)
 
         root.addStretch()
         self._scroll.setWidget(content)
@@ -2080,6 +2109,32 @@ class OnionSkinUI(QtWidgets.QWidget):
         if 0 <= index < len(self.core.layers):
             self.core.layers[index].set_visible(vis)
             self._force_viewport_refresh()
+
+    # -- Frame navigation ----------------------------------------------------
+
+    def _on_step_back(self):
+        self.core.step_back()
+        self._set_status(
+            f"Frame {int(cmds.currentTime(query=True))}", "info")
+
+    def _on_step_fwd(self):
+        self.core.step_forward()
+        self._set_status(
+            f"Frame {int(cmds.currentTime(query=True))}", "info")
+
+    def _on_prev_key(self):
+        t = self.core.prev_key()
+        if t is None:
+            self._set_status("No earlier keyframe found.", "warn")
+        else:
+            self._set_status(f"Frame {int(t)}  (keyframe)", "info")
+
+    def _on_next_key(self):
+        t = self.core.next_key()
+        if t is None:
+            self._set_status("No later keyframe found.", "warn")
+        else:
+            self._set_status(f"Frame {int(t)}  (keyframe)", "info")
 
     def _on_near_opacity(self, val):
         self._near_lbl.setText(f"{val}%")
