@@ -1,7 +1,7 @@
 // =============================================================================
 // install_xform_copy_paste.mel
 //
-// DRAG AND DROP INSTALLER — Copy Xform World Space for Maya
+// DRAG AND DROP INSTALLER - Copy Xform World Space for Maya
 //
 // How to use:
 //   Drag this .mel file from Windows Explorer / Finder onto the Maya viewport.
@@ -9,7 +9,7 @@
 //
 // Files required in the SAME folder as this .mel:
 //   - xform_copy_paste.py
-//   - xform_copy_paste.png          (optional — falls back to default icon)
+//   - xform_copy_paste.png          (optional - falls back to default icon)
 //   - install_xform_copy_paste.mel  (this file)
 // =============================================================================
 
@@ -137,7 +137,7 @@ global proc xcp__replaceShelfButton(
 {
     if ($shelf == "" || !`shelfLayout -ex $shelf`)
     {
-        warning("xform_copy_paste: Could not find shelf '" + $shelf + "' — skipping shelf button.");
+        warning("xform_copy_paste: Could not find shelf '" + $shelf + "' - skipping shelf button.");
         return;
     }
 
@@ -223,7 +223,7 @@ global proc xcp__install()
     if ($installDir == "")
     {
         confirmDialog
-            -title   ($toolName + " — Install Failed")
+            -title   ($toolName + " - Install Failed")
             -message  "Could not locate the installer folder.\n\nInstallation cancelled."
             -button  "OK";
         return;
@@ -236,7 +236,7 @@ global proc xcp__install()
     if (!xcp__fileExists($srcPy))
     {
         confirmDialog
-            -title   ($toolName + " — Missing File")
+            -title   ($toolName + " - Missing File")
             -message ("Could not find:\n\n" + $srcPy
                       + "\n\nMake sure xform_copy_paste.py is in the same folder as this .mel file.")
             -button  "OK";
@@ -262,7 +262,7 @@ global proc xcp__install()
     }
     else
     {
-        warning("xform_copy_paste: xform_copy_paste.png not found — shelf buttons will use default icon.");
+        warning("xform_copy_paste: xform_copy_paste.png not found - shelf button will use default icon.");
     }
 
     // ---- Determine active shelf ------------------------------------------------
@@ -286,25 +286,29 @@ global proc xcp__install()
     xcp__replaceShelfButton(
         $currentShelf,
         "XformCP",
-        "Copy Xform World Space — open tool window",
+        "Copy Xform World Space - open tool window",
         $iconToUse,
         $showCmd);
 
     // ---- Done -----------------------------------------------------------------
     print ("// =================================================================\n");
-    print ("// Copy Xform World Space — Installation Complete\n");
+    print ("// Copy Xform World Space - Installation Complete\n");
     print ("// Script -> " + $scriptsDir + $pyFile   + "\n");
     print ("// Icon   -> " + $iconsDir   + $iconFile + "\n");
     print ("// Shelf  -> " + $currentShelf            + " (1 button: XformCP)\n");
     print ("// =================================================================\n");
 
     confirmDialog
-        -title   ($toolName + " — Installed!")
-        -message ("Installation complete!\n\n"
-                  + "Script copied to:\n"  + $scriptsDir + "\n\n"
-                  + "Icon copied to:\n"    + $iconsDir   + "\n\n"
-                  + "Shelf button \"XformCP\" added to the \"" + $currentShelf + "\" shelf.\n\n"
-                  + "Click the shelf button to open the tool window.")
+        -title   ($toolName + " Installed Successfully")
+        -message ("Copy Xform World Space is ready to use!\n\n"
+                  + "What was installed:\n"
+                  + "  -  Script copied to:  " + $scriptsDir + "\n"
+                  + "  -  Icon copied to:  " + $iconsDir + "\n"
+                  + "  -  \"XformCP\" button added to the \"" + $currentShelf + "\" shelf\n\n"
+                  + "Getting started:\n"
+                  + "Click the XformCP shelf button to open the tool window.\n"
+                  + "Use \"Setup / Edit Hotkeys...\" in the window to bind any\n"
+                  + "copy or paste function to a Maya keyboard shortcut.")
         -button  "OK";
 }
 
