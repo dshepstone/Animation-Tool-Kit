@@ -22,6 +22,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 
 import maya.cmds as cmds
+import maya.mel as mel
 import maya.OpenMayaUI as omui
 from shiboken6 import wrapInstance
 from PySide6 import QtCore, QtWidgets, QtGui
@@ -29,13 +30,13 @@ from PySide6 import QtCore, QtWidgets, QtGui
 
 TOOL_NAME = "SmartSelectSetsToolV2"
 TOOL_TITLE = "Smart Select Sets"
-TOOL_VERSION = "2.4.0"
+TOOL_VERSION = "2.5.0"
 SCHEMA_VERSION = 2
 SCENE_NODE_NAME = "ConestogaSelectionGroupNode"
 SCENE_ATTR_NAME = "groupsData"
 DEFAULT_CATEGORY = "Uncategorized"
 HIGHLIGHT_COLOR = [1.0, 0.95, 0.55]
-HEADER_ACCENT = "#b79aff"
+HEADER_ACCENT = "#2e6da4"  # ATK toolbar blue
 
 
 # ------------------------------
@@ -197,10 +198,12 @@ class SmartSelectSetsManager:
         if not name:
             raise ValueError("Group name cannot be empty.")
 
-        category = self.ensure_category(category).name
+        # Validate the objects BEFORE touching the category dict so a failed
+        # creation never leaves an empty category behind as a side effect.
         long_paths = self.normalize_objects(objects)
         if not long_paths:
             raise ValueError("No valid objects were provided.")
+        category = self.ensure_category(category).name
 
         group_id = self.next_group_id
         self.next_group_id += 1
@@ -264,6 +267,21 @@ class SmartSelectSetsManager:
         removed = before - len(group.objects)
         group.modified_at = time.time()
         return removed
+
+    def duplicate_group(self, group_id: int) -> int:
+        """Create a copy of a group (same members, category and color)."""
+        source = self.require_group(group_id)
+        new_id = self.next_group_id
+        self.next_group_id += 1
+        self.groups[new_id] = SelectionGroup(
+            group_id=new_id,
+            name=source.name + "_copy",
+            category=source.category,
+            objects=list(source.objects),
+            color=list(source.color),
+            notes=source.notes,
+        )
+        return new_id
 
     def require_group(self, group_id: int) -> SelectionGroup:
         if group_id not in self.groups:
@@ -563,15 +581,20 @@ class GroupButton(QtWidgets.QPushButton):
     def apply_color(self, color: List[float]) -> None:
         self.base_color = list(color)
         rgb = tuple(max(0, min(255, int(c * 255))) for c in color)
+        # Pick black or white text for contrast against the button colour
+        luminance = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+        text = "#1a1a1a" if luminance > 140 else "#ffffff"
         self.setStyleSheet(
             "QPushButton {"
             f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]});"
-            "border: 1px solid #4c4c4c;"
-            "border-radius: 6px;"
+            f"color: {text};"
+            "border: 1px solid #5c5c5c;"
+            "border-radius: 4px;"
             "padding: 6px 10px;"
             "text-align: left;"
+            "font-size: 12px;"
             "}"
-            "QPushButton:hover { border: 1px solid #202020; }"
+            "QPushButton:hover { border: 1px solid #ffffff; }"
         )
 
 
@@ -636,6 +659,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         self.category_widgets: Dict[str, dict] = {}
         self.popout_windows: Dict[str, "CategoryPopoutWindow"] = {}
         self._timers: List[QtCore.QTimer] = []
+        self._validation_cache: Optional[Dict[int, dict]] = None
 
         self._build_ui()
         self._connect_scene_jobs()
@@ -660,7 +684,10 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         self.search_field = QtWidgets.QLineEdit()
         self.search_field.setObjectName("SearchField")
         self.search_field.setPlaceholderText("Filter groups or categories...")
-        self.search_field.textChanged.connect(self.refresh_ui)
+        self.search_field.setClearButtonEnabled(True)
+        # Filtering only re-renders — it reuses the cached validation instead
+        # of re-resolving every stored object on each keystroke.
+        self.search_field.textChanged.connect(lambda _t: self.refresh_ui(revalidate=False))
         layout.addWidget(self.search_field)
 
         self.scroll_area = QtWidgets.QScrollArea()
@@ -681,101 +708,168 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         layout.addWidget(self.status_label)
 
     def _main_stylesheet(self) -> str:
+        # Matches the ATK toolbar / Reset Tool design language
         return f"""
         QDialog {{
-            background-color: #242424;
-            color: #e8e8e8;
+            background-color: #3c3c3c;
+            color: #cccccc;
         }}
         QLabel {{
-            color: #e8e8e8;
+            color: #cccccc;
+            background: transparent;
+        }}
+        QLabel#TitleLabel {{
+            font-size: 14px;
+            font-weight: bold;
+            color: #ffffff;
+        }}
+        QLabel#SubtitleLabel {{
+            font-size: 11px;
+            color: #999999;
         }}
         QLabel#StatusLabel {{
-            color: #9c9c9c;
+            color: #848484;
+            font-size: 10px;
             padding: 2px 4px;
         }}
         QLineEdit, QComboBox, QPlainTextEdit {{
-            background-color: #2f2f2f;
-            border: 1px solid #434343;
-            border-radius: 7px;
+            background-color: #4a4a4a;
+            border: 1px solid #666666;
+            border-radius: 4px;
             padding: 6px 8px;
-            color: #ededed;
+            color: #dddddd;
+            font-size: 12px;
         }}
-        QLineEdit#SearchField {{
-            min-height: 18px;
-            padding: 8px 10px;
-            border-radius: 9px;
+        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{
+            border-color: {HEADER_ACCENT};
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: #3c3c3c;
+            color: #dddddd;
+            border: 1px solid #555555;
+            selection-background-color: {HEADER_ACCENT};
         }}
         QPushButton, QToolButton {{
-            background-color: #3b3b3b;
-            border: 1px solid #4a4a4a;
-            border-radius: 8px;
-            padding: 7px 10px;
-            color: #f2f2f2;
+            background-color: #555555;
+            border: 1px solid #666666;
+            border-radius: 4px;
+            padding: 6px 12px;
+            color: #dddddd;
+            font-size: 12px;
         }}
         QPushButton:hover, QToolButton:hover {{
-            border: 1px solid {HEADER_ACCENT};
-            background-color: #434343;
+            border: 1px solid #888888;
+            background-color: #636363;
+            color: #ffffff;
         }}
         QPushButton:pressed, QToolButton:pressed {{
-            background-color: #2f2f2f;
+            background-color: #444444;
+        }}
+        QPushButton#PrimaryButton {{
+            background-color: {HEADER_ACCENT};
+            color: #ffffff;
+            border: 1px solid #4088c0;
+            font-weight: bold;
+            min-height: 30px;
+        }}
+        QPushButton#PrimaryButton:hover {{
+            background-color: #3a7ec0;
+            border-color: #5599d4;
+        }}
+        QPushButton#PrimaryButton:pressed {{
+            background-color: #205080;
         }}
         QGroupBox {{
-            background-color: #2b2b2b;
-            border: 1px solid #3d3d3d;
-            border-radius: 12px;
+            background-color: #434343;
+            border: 1px solid #555555;
+            border-radius: 4px;
             margin-top: 10px;
-            padding: 10px 8px 8px 8px;
-            font-weight: 600;
+            padding: 12px 8px 8px 8px;
+            font-weight: bold;
+            font-size: 11px;
+        }}
+        QGroupBox[dragHover="true"] {{
+            border: 1px solid {HEADER_ACCENT};
         }}
         QGroupBox::title {{
             subcontrol-origin: margin;
             left: 10px;
             padding: 0 4px;
-            color: #f0f0f0;
+            color: #ffffff;
         }}
         QScrollArea {{
             background: transparent;
+            border: none;
+        }}
+        QScrollArea > QWidget > QWidget {{
+            background: transparent;
         }}
         QMenu {{
-            background-color: #2c2c2c;
-            color: #f0f0f0;
-            border: 1px solid #4a4a4a;
-            padding: 6px;
+            background-color: #3c3c3c;
+            color: #dddddd;
+            border: 1px solid #555555;
+            padding: 4px;
         }}
         QMenu::item {{
             padding: 6px 18px;
-            border-radius: 6px;
+            border-radius: 3px;
         }}
         QMenu::item:selected {{
-            background-color: #454545;
+            background-color: {HEADER_ACCENT};
+            color: #ffffff;
         }}
         QMenuBar {{
-            background-color: #2a2a2a;
-            border: 1px solid #424242;
-            border-radius: 8px;
-            padding: 3px 6px;
+            background-color: #3c3c3c;
+            border: none;
+            padding: 2px 4px;
         }}
         QMenuBar::item {{
             background: transparent;
-            color: #f0f0f0;
-            padding: 6px 10px;
-            border-radius: 6px;
+            color: #cccccc;
+            padding: 5px 10px;
+            border-radius: 3px;
         }}
         QMenuBar::item:selected {{
-            background-color: #3d3d3d;
+            background-color: #555555;
         }}
         QMenuBar::item:pressed {{
-            background-color: #454545;
+            background-color: #444444;
         }}
         QScrollBar:vertical {{
-            background: #262626;
-            width: 12px;
+            background: #333333;
+            width: 10px;
             margin: 0;
+            border-radius: 5px;
         }}
         QScrollBar::handle:vertical {{
-            background: #4c4c4c;
-            min-height: 20px;
+            background: #5a5a5a;
+            min-height: 24px;
+            border-radius: 5px;
+        }}
+        QScrollBar::handle:vertical:hover {{
+            background: #6d6d6d;
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0;
+        }}
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+            background: none;
+        }}
+        QSlider::groove:horizontal {{
+            background: #4a4a4a;
+            height: 4px;
+            border-radius: 2px;
+        }}
+        QSlider::handle:horizontal {{
+            background: {HEADER_ACCENT};
+            width: 12px;
+            margin: -5px 0;
             border-radius: 6px;
+            border: 1px solid #4088c0;
+        }}
+        QSlider::sub-page:horizontal {{
+            background: #2e5c86;
+            border-radius: 2px;
         }}
         """
 
@@ -788,87 +882,42 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         return menu_bar
 
     def _build_header_bar(self) -> QtWidgets.QWidget:
-        container = QtWidgets.QFrame()
-        container.setObjectName("HeaderBar")
-        container.setStyleSheet(
-            "QFrame#HeaderBar {background-color: #343434; border: 1px solid #484848; border-radius: 12px;}"
+        container = QtWidgets.QWidget()
+        col = QtWidgets.QVBoxLayout(container)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(4)
+
+        title = QtWidgets.QLabel(TOOL_TITLE)
+        title.setObjectName("TitleLabel")
+        col.addWidget(title)
+
+        subtitle = QtWidgets.QLabel(
+            "Store selections as clickable buttons, organised into categories. "
+            "Left-click a button to select, Shift+click to add, right-click for options."
         )
+        subtitle.setObjectName("SubtitleLabel")
+        subtitle.setWordWrap(True)
+        col.addWidget(subtitle)
+        col.addSpacing(8)
 
-        row = QtWidgets.QHBoxLayout(container)
-        row.setContentsMargins(10, 10, 10, 10)
-        row.setSpacing(8)
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.setSpacing(8)
 
-        self.primary_group_button = QtWidgets.QPushButton("Select_Set")
-        self.primary_group_button.setObjectName("PrimaryGroupPreview")
-        self.primary_group_button.setMinimumHeight(58)
-        self.primary_group_button.setMinimumWidth(82)
+        self.primary_group_button = QtWidgets.QPushButton("Create Set from Selection")
+        self.primary_group_button.setObjectName("PrimaryButton")
+        self.primary_group_button.setToolTip(
+            "Store the current Maya selection as a new clickable selection button."
+        )
         self.primary_group_button.clicked.connect(self.create_group_dialog)
-        self.primary_group_button.setStyleSheet(
-            f"QPushButton#PrimaryGroupPreview {{"
-            f"background-color: #ece7f8; color: #5f468f; border: 4px solid {HEADER_ACCENT};"
-            "border-radius: 8px; font-weight: 600; padding: 10px 8px; text-align: center;"
-            "}"
-            "QPushButton#PrimaryGroupPreview:hover {background-color: #f5f1ff;}"
-        )
-        row.addWidget(self.primary_group_button, 0)
+        btn_row.addWidget(self.primary_group_button, 1)
 
-        tools_widget = QtWidgets.QWidget()
-        tools_layout = QtWidgets.QHBoxLayout(tools_widget)
-        tools_layout.setContentsMargins(4, 0, 4, 0)
-        tools_layout.setSpacing(6)
+        new_category_btn = QtWidgets.QPushButton("New Category")
+        new_category_btn.setToolTip("Create an empty category block to organise buttons into.")
+        new_category_btn.clicked.connect(self.create_category_dialog)
+        btn_row.addWidget(new_category_btn)
 
-        self._header_actions = []
-        self._header_actions.append(self._make_icon_button("+", "Create Selection Group", self.create_group_dialog))
-        self._header_actions.append(self._make_icon_button("C", "Create Category", self.create_category_dialog))
-        self._header_actions.append(self._make_icon_button("S", "Save to Scene", self.save_to_scene))
-        self._header_actions.append(self._make_icon_button("L", "Load from Scene", self.load_from_scene))
-        for btn in self._header_actions:
-            tools_layout.addWidget(btn)
-
-        row.addWidget(tools_widget, 0)
-        row.addStretch(1)
-
-        self.minimize_button = QtWidgets.QToolButton()
-        self.minimize_button.setText("–")
-        self.minimize_button.setToolTip("Minimize")
-        self.minimize_button.setAutoRaise(True)
-        self.minimize_button.setCursor(QtCore.Qt.PointingHandCursor)
-        self.minimize_button.setFixedSize(28, 28)
-        self.minimize_button.clicked.connect(self.showMinimized)
-        self.minimize_button.setStyleSheet(
-            "QToolButton {background: transparent; border: none; color: #d1d1d1; font-size: 18px; font-weight: 700;}"
-            "QToolButton:hover {color: #ffffff; background-color: #454545; border-radius: 8px;}"
-        )
-        row.addWidget(self.minimize_button, 0, QtCore.Qt.AlignTop)
-
-        self.close_button = QtWidgets.QToolButton()
-        self.close_button.setText("×")
-        self.close_button.setToolTip("Close")
-        self.close_button.setAutoRaise(True)
-        self.close_button.setCursor(QtCore.Qt.PointingHandCursor)
-        self.close_button.setFixedSize(28, 28)
-        self.close_button.clicked.connect(self.close)
-        self.close_button.setStyleSheet(
-            "QToolButton {background: transparent; border: none; color: #d1d1d1; font-size: 18px; font-weight: 700;}"
-            "QToolButton:hover {color: #ffffff; background-color: #454545; border-radius: 8px;}"
-        )
-        row.addWidget(self.close_button, 0, QtCore.Qt.AlignTop)
+        col.addLayout(btn_row)
         return container
-
-    def _make_icon_button(self, symbol: str, tooltip: str, callback) -> QtWidgets.QToolButton:
-        button = QtWidgets.QToolButton()
-        button.setText(symbol)
-        button.setToolTip(tooltip)
-        button.setAutoRaise(False)
-        button.setCursor(QtCore.Qt.PointingHandCursor)
-        button.setFixedSize(28, 28)
-        button.clicked.connect(callback)
-        button.setStyleSheet(
-            f"QToolButton {{background-color: {HEADER_ACCENT}; color: #ffffff; border: 1px solid #8b73cf; border-radius: 7px; font-weight: 700;}}"
-            "QToolButton:hover {background-color: #c7b1ff; color: #2f2148;}"
-            "QToolButton:pressed {background-color: #9a7fe2;}"
-        )
-        return button
 
     def _build_secondary_toolbar(self) -> QtWidgets.QLayout:
         row = QtWidgets.QHBoxLayout()
@@ -893,9 +942,19 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         row.addWidget(self.menu_button)
 
         validate_btn = QtWidgets.QPushButton("Validate")
+        validate_btn.setToolTip("Check every group for missing scene objects.")
         validate_btn.clicked.connect(self.validate_all_groups)
         row.addWidget(validate_btn)
 
+        save_btn = QtWidgets.QPushButton("Save")
+        save_btn.setToolTip("Save all groups into the current Maya scene.")
+        save_btn.clicked.connect(self.save_to_scene)
+        row.addWidget(save_btn)
+
+        load_btn = QtWidgets.QPushButton("Load")
+        load_btn.setToolTip("Reload groups stored in the current Maya scene.")
+        load_btn.clicked.connect(self.load_from_scene)
+        row.addWidget(load_btn)
 
         row.addStretch(1)
 
@@ -917,6 +976,15 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             self.manager.save_to_scene_node()
         except Exception as exc:
             cmds.warning(f"Failed to auto-save Smart Select Sets: {exc}")
+
+        # Kill the scene-open scriptJobs; leaving them alive fires callbacks
+        # into a deleted window on every scene change after closing.
+        for job_id in getattr(self, "_script_jobs", []):
+            try:
+                cmds.scriptJob(kill=job_id, force=True)
+            except Exception:
+                pass
+        self._script_jobs = []
 
         for popup in list(self.popout_windows.values()):
             try:
@@ -948,17 +1016,31 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         self.group_buttons.clear()
         self.category_widgets.clear()
 
-    def refresh_ui(self) -> None:
+    def current_validation(self) -> Dict[int, dict]:
+        """Return the (cached) validation state for all groups."""
+        if self._validation_cache is None:
+            self._validation_cache = self.manager.validate_all()
+        return self._validation_cache
+
+    def refresh_ui(self, revalidate: bool = True) -> None:
         self.clear_categories_ui()
         filter_text = self.search_field.text().strip().lower()
 
         category_names = sorted(self.manager.categories.keys(), key=lambda x: (x != DEFAULT_CATEGORY, x.lower()))
-        validation = self.manager.validate_all()
+        if revalidate:
+            self._validation_cache = None
+        validation = self.current_validation()
 
         for category_name in category_names:
             category = self.manager.categories[category_name]
             groups = [g for g in self.manager.groups.values() if g.category == category_name]
             groups.sort(key=lambda g: g.name.lower())
+
+            # The default category only renders once it actually holds groups,
+            # so a fresh session starts with a single clean box on first use
+            # instead of a permanently empty 'Uncategorized' block.
+            if category_name == DEFAULT_CATEGORY and not groups:
+                continue
 
             if filter_text:
                 category_label = self.manager.get_category_label(category_name)
@@ -1009,7 +1091,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             for group in groups:
                 label = f"{category.prefix}:{group.name}" if category.prefix else group.name
                 button = GroupButton(group.group_id, label, group.color)
-                state = validation[group.group_id]
+                state = validation.get(group.group_id) or self.manager.validate_group(group.group_id)
                 if state["missing"]:
                     button.setToolTip(
                         "Missing objects:\n" + "\n".join(state["missing"][:12]) +
@@ -1170,7 +1252,17 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         button.apply_color(HIGHLIGHT_COLOR)
         timer = QtCore.QTimer(self)
         timer.setSingleShot(True)
-        timer.timeout.connect(lambda: button.apply_color(group.color))
+
+        def _restore():
+            try:
+                button.apply_color(group.color)
+            except RuntimeError:
+                pass  # button was rebuilt/deleted in the meantime
+            if timer in self._timers:
+                self._timers.remove(timer)
+            timer.deleteLater()
+
+        timer.timeout.connect(_restore)
         timer.start(800)
         self._timers.append(timer)
 
@@ -1178,6 +1270,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         menu = QtWidgets.QMenu(self)
         menu.addAction("Select", lambda: self._select_context(group_id, "replace"))
         menu.addAction("Add to Selection", lambda: self._select_context(group_id, "add"))
+        menu.addAction("Remove from Selection", lambda: self._select_context(group_id, "deselect"))
         menu.addSeparator()
         menu.addAction("Add Current Selection to Group", lambda: self._add_current_selection_to_group(group_id))
         menu.addAction("Remove Current Selection from Group", lambda: self._remove_current_selection_from_group(group_id))
@@ -1186,6 +1279,10 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         menu.addAction("Rename Group", lambda: self._rename_group_dialog(group_id))
         menu.addAction("Move Group to Category", lambda: self._move_group_dialog(group_id))
         menu.addAction("Choose Button Color", lambda: self._set_group_color(group_id))
+        menu.addAction("Duplicate Group", lambda: self._duplicate_group(group_id))
+        menu.addSeparator()
+        menu.addAction("Add Button to Maya Shelf", lambda: self._add_group_to_shelf(group_id))
+        menu.addAction("Copy Object List to Clipboard", lambda: self._copy_group_objects(group_id))
         menu.addSeparator()
         menu.addAction("Validate Group", lambda: self._show_group_validation(group_id))
         menu.addAction("Repair Group Paths", lambda: self._repair_group(group_id))
@@ -1199,6 +1296,95 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             self._flash_button(group_id)
         except Exception as exc:
             self._show_error(str(exc))
+
+    def _duplicate_group(self, group_id: int) -> None:
+        try:
+            self.manager.duplicate_group(group_id)
+            self.refresh_ui()
+        except Exception as exc:
+            self._show_error(str(exc))
+
+    def _copy_group_objects(self, group_id: int) -> None:
+        try:
+            group = self.manager.require_group(group_id)
+            QtWidgets.QApplication.clipboard().setText("\n".join(group.objects))
+            self.status_label.setText(
+                f"Copied {len(group.objects)} object path(s) from '{group.name}' to the clipboard."
+            )
+        except Exception as exc:
+            self._show_error(str(exc))
+
+    def _add_group_to_shelf(self, group_id: int) -> None:
+        """Add a self-contained shelf button that reselects this group.
+
+        The object list is embedded in the shelf button command, so the
+        button keeps working even when Smart Select Sets is not open.
+        """
+        try:
+            group = self.manager.require_group(group_id)
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+
+        try:
+            shelf_top = mel.eval("$tmp = $gShelfTopLevel")
+            current_shelf = cmds.shelfTabLayout(shelf_top, query=True, selectTab=True)
+        except Exception:
+            current_shelf = None
+        if not current_shelf:
+            self._show_error("Could not find an active Maya shelf to add the button to.")
+            return
+
+        py_cmd = (
+            "# Smart Select Sets shelf button\n"
+            "import maya.cmds as cmds\n"
+            "set_name = {name!r}\n"
+            "objs = {objects!r}\n"
+            "found = []\n"
+            "missing = []\n"
+            "for obj in objs:\n"
+            "    if cmds.objExists(obj):\n"
+            "        found.append(obj)\n"
+            "        continue\n"
+            "    leaf = obj.split('|')[-1].split(':')[-1]\n"
+            "    hits = cmds.ls(leaf, '*:' + leaf, long=True) or []\n"
+            "    if len(hits) == 1:\n"
+            "        found.append(hits[0])\n"
+            "    else:\n"
+            "        missing.append(obj)\n"
+            "if found:\n"
+            "    mods = cmds.getModifiers()\n"
+            "    cmds.select(found, add=bool(mods & 1))  # Shift+click adds\n"
+            "else:\n"
+            "    cmds.warning('Smart Select Sets: no objects of set %s found in this scene.' % set_name)\n"
+            "if missing:\n"
+            "    cmds.warning('Smart Select Sets: %d object(s) of set %s are missing.'\n"
+            "                 % (len(missing), set_name))\n"
+        ).format(name=group.name, objects=list(group.objects))
+
+        overlay = (group.name[:5] or "Set")
+        rgba = [max(0.0, min(1.0, float(c))) for c in (group.color or [0.7, 0.7, 0.7])[:3]]
+        try:
+            cmds.shelfButton(
+                parent=current_shelf,
+                label=f"SelectSet_{group.name}",
+                annotation=(
+                    f"Smart Select Sets: select '{group.name}' "
+                    f"({len(group.objects)} object(s)). Shift+click to add to selection."
+                ),
+                image="pythonFamily.png",
+                imageOverlayLabel=overlay,
+                overlayLabelBackColor=rgba + [0.8],
+                sourceType="python",
+                command=py_cmd,
+            )
+        except Exception as exc:
+            self._show_error(f"Could not create the shelf button: {exc}")
+            return
+
+        self.status_label.setText(
+            f"Added '{group.name}' to the '{current_shelf}' shelf."
+        )
 
     def _add_current_selection_to_group(self, group_id: int) -> None:
         selection = cmds.ls(selection=True, long=True) or []
@@ -1434,34 +1620,45 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
     def show_help(self) -> None:
         self._show_text_dialog(
             "Help",
-            f"""{TOOL_TITLE} helps you build clickable Maya selection buttons so you can quickly reselect controls, props, or rig parts without hunting through the Outliner.\n\n"
+            f"{TOOL_TITLE} helps you build clickable Maya selection buttons so you can "
+            "quickly reselect controls, props, or rig parts without hunting through the Outliner.\n\n"
             "Quick Start\n"
             "1. Select one or more objects in Maya.\n"
-            "2. Click the large Select_Set button or the + button.\n"
+            "2. Click 'Create Set from Selection'.\n"
             "3. Give the new button a name, choose a category, and pick a color.\n"
             "4. Click the new selection button later to reselect those objects.\n\n"
             "Categories\n"
             "- Categories are blocks that hold related selection buttons.\n"
+            "- New buttons land in 'Uncategorized' unless you pick a category; the\n"
+            "  Uncategorized block only appears once it actually holds buttons.\n"
             "- Use categories for characters, props, cameras, or different rig sections.\n"
             "- Prefix lets you apply or remap a namespace-style prefix for that category.\n"
             "- Pop Out opens a smaller floating picker window for that category only.\n"
             "- Rename changes the category name shown in the UI.\n"
-            "- Delete removes the category block. If it is a normal category, its buttons are moved to Uncategorized.\n\n"
+            "- Delete removes the category block. If it is a normal category, its buttons\n"
+            "  are moved to Uncategorized.\n\n"
             "Selection Buttons\n"
             "- Left-click selects the stored objects.\n"
             "- Shift + click adds that group to the current Maya selection.\n"
-            "- Right-click a button for extra tools like rename, recolor, replace members, add members, remove members, validate, or move to another category.\n"
+            "- Right-click a button for extra tools: select/add/remove from selection,\n"
+            "  edit members, rename, recolor, duplicate, move to another category,\n"
+            "  add the button to a Maya shelf, copy the object list, validate, repair,\n"
+            "  or delete.\n"
+            "- 'Add Button to Maya Shelf' creates a self-contained shelf button on the\n"
+            "  active shelf that reselects the set even when this window is closed\n"
+            "  (Shift+click the shelf button to add to the selection).\n"
             "- You can drag a selection button onto another category block to move it there.\n\n"
             "Saving\n"
             "- Save to Scene stores the data inside the current Maya file.\n"
             "- Load from Scene restores saved groups from the Maya file.\n"
             "- Export JSON creates a backup file you can reuse in other scenes.\n"
             "- Import JSON loads a saved backup file.\n"
-            "- The tool also tries to auto-save when the main window closes.\n\n"
+            "- The tool also auto-saves when the main window closes.\n\n"
             "Validation\n"
             "- Validate checks whether stored objects still exist.\n"
             "- This is useful after rig updates, renaming, or reference swaps.\n"
-            "- Missing objects can often be repaired by applying the correct category prefix or editing the group membership.\n\n"
+            "- Missing objects can often be repaired by applying the correct category\n"
+            "  prefix or editing the group membership.\n\n"
             "Pop-Out Windows\n"
             "- Pop-out windows are small floating pickers for one category.\n"
             "- They can stay open even if the main window is minimized.\n"
@@ -1470,28 +1667,34 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             "- Make one category per character or rig for cleaner organization.\n"
             "- Use clear button names like Left Arm, Face Ctrls, or Props.\n"
             "- Export JSON before major scene or rig changes as a backup.\n"
-            "- If buttons stop selecting correctly after a rig update, run Validate and reapply the category prefix.\n"""
+            "- If buttons stop selecting correctly after a rig update, run Validate and\n"
+            "  reapply the category prefix.\n"
         )
 
     def show_about(self) -> None:
         self._show_text_dialog(
             "About",
-            f"""{TOOL_TITLE}\nVersion {TOOL_VERSION}\n\n"
-            "Smart Select Sets is a Maya picker and selection-set tool designed to make character and shot work faster. It lets you store object selections as named buttons, organize them into categories, and open small pop-out pickers for focused animation work.\n\n"
+            f"{TOOL_TITLE}\nVersion {TOOL_VERSION}\n\n"
+            "Smart Select Sets is a Maya picker and selection-set tool designed to make "
+            "character and shot work faster. It lets you store object selections as named "
+            "buttons, organize them into categories, and open small pop-out pickers for "
+            "focused animation work.\n\n"
             "Main features\n"
             "- Category-based selection buttons\n"
             "- Drag and drop buttons between categories\n"
+            "- Add any selection button to a Maya shelf\n"
             "- Prefix remapping for category-based namespaces\n"
             "- Pop-out picker windows for individual categories\n"
             "- Scene save/load plus JSON import/export\n"
             "- Validation tools for missing or renamed objects\n"
             "- Auto-save support when closing the main window\n\n"
             "Typical use\n"
-            "This tool is useful for character rigs, props, facial controls, body controls, camera sets, and shot-specific animation helpers.\n\n"
+            "This tool is useful for character rigs, props, facial controls, body controls, "
+            "camera sets, and shot-specific animation helpers.\n\n"
             "How it stores data\n"
-            "Groups are stored with long Maya object paths when possible for better reliability. The tool can save that data into the Maya scene and also export it as JSON for backup or reuse.\n\n"
-            "Goal\n"
-            "The goal of the tool is to give you a cleaner, faster way to manage selection sets than relying only on the Outliner or manual selection.\n"""
+            "Groups are stored with long Maya object paths when possible for better "
+            "reliability. The tool can save that data into the Maya scene and also export "
+            "it as JSON for backup or reuse.\n"
         )
 
     def _show_text_dialog(self, title: str, text: str) -> None:
@@ -1744,7 +1947,9 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
         flow = FlowLayout()
         groups = [g for g in self.manager.groups.values() if g.category == self.category_name]
         groups.sort(key=lambda g: g.name.lower())
-        validation = self.manager.validate_all()
+        # Reuse the host window's cached validation instead of re-resolving
+        # every stored object each time the popout refreshes.
+        validation = self.host_window.current_validation()
 
         if not groups:
             empty = QtWidgets.QLabel("No groups in this set yet.")
@@ -1790,6 +1995,10 @@ class CreateGroupDialog(QtWidgets.QDialog):
         self.category_combo = QtWidgets.QComboBox()
         for label, internal_name in self._category_pairs:
             self.category_combo.addItem(label, internal_name)
+        # New buttons land in the default category unless the user picks one
+        default_index = self.category_combo.findData(DEFAULT_CATEGORY)
+        if default_index >= 0:
+            self.category_combo.setCurrentIndex(default_index)
         layout.addWidget(self.category_combo)
 
         row = QtWidgets.QHBoxLayout()
@@ -1899,7 +2108,12 @@ def maya_main_window():
     return wrapInstance(int(ptr), QtWidgets.QWidget)
 
 
+_window = None  # keeps the window alive when launched without a Maya parent
+
+
 def show_smart_select_sets() -> SmartSelectSetsWindow:
+    global _window
+
     for widget in QtWidgets.QApplication.topLevelWidgets():
         if widget.objectName() == SmartSelectSetsWindow.WINDOW_OBJECT_NAME:
             try:
@@ -1908,11 +2122,11 @@ def show_smart_select_sets() -> SmartSelectSetsWindow:
             except Exception:
                 pass
 
-    window = SmartSelectSetsWindow()
-    window.show()
-    window.raise_()
-    window.activateWindow()
-    return window
+    _window = SmartSelectSetsWindow()
+    _window.show()
+    _window.raise_()
+    _window.activateWindow()
+    return _window
 
 
 # Legacy-friendly alias for shelf buttons / old launchers.

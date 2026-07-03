@@ -202,7 +202,7 @@ TOOL_REGISTRY = [
         "icon_file": "selectionSet.png",
         "icon_key":  "select",
         "group":     "rigging",
-        "version":   "2.0.4",
+        "version":   "2.5.0",
     },
     {
         "id":        "character_snapshot",

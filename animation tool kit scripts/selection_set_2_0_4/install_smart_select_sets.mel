@@ -1,7 +1,7 @@
 // =============================================================================
 // install_smart_select_sets.mel
 //
-// DRAG AND DROP INSTALLER — Smart Select Sets v2 for Maya
+// DRAG AND DROP INSTALLER - Smart Select Sets v2 for Maya
 //
 // How to use:
 //   Drag this .mel file from Windows Explorer / Finder onto the Maya viewport.
@@ -135,7 +135,7 @@ global proc sss__replaceShelfButton(
 {
     if ($shelf == "" || !`shelfLayout -ex $shelf`)
     {
-        warning("Smart Select Sets: could not find shelf '" + $shelf + "' — skipping shelf button.");
+        warning("Smart Select Sets: could not find shelf '" + $shelf + "' - skipping shelf button.");
         return;
     }
 
@@ -187,7 +187,7 @@ global proc sss__install()
     if ($installDir == "")
     {
         confirmDialog
-            -title   ($toolName + " — Install Failed")
+            -title   ($toolName + " - Install Failed")
             -message  "Could not locate the installer folder.\n\nInstallation cancelled."
             -button  "OK";
         return;
@@ -199,7 +199,7 @@ global proc sss__install()
     if (!sss__fileExists($srcPy))
     {
         confirmDialog
-            -title   ($toolName + " — Missing File")
+            -title   ($toolName + " - Missing File")
             -message ("Could not find:\n\n" + $srcPy
                       + "\n\nMake sure SmartSelectSets_v2.py is in the same folder as this .mel file.")
             -button  "OK";
@@ -222,7 +222,7 @@ global proc sss__install()
     }
     else
     {
-        warning("Smart Select Sets: selectionSet.png not found — shelf button will use default icon.");
+        warning("Smart Select Sets: selectionSet.png not found - shelf button will use default icon.");
     }
 
     global string $gShelfTopLevel;
@@ -240,14 +240,14 @@ global proc sss__install()
     sss__replaceShelfButton($currentShelf, $shelfLabel, $annotation, $iconToUse, $pyCmd);
 
     print ("// ============================================================\n");
-    print ("// Smart Select Sets — Installation Complete\n");
+    print ("// Smart Select Sets - Installation Complete\n");
     print ("// Script  -> " + $scriptsDir + $pyFile   + "\n");
     print ("// Icon    -> " + $iconsDir   + $iconFile + "\n");
     print ("// Shelf   -> " + $currentShelf            + "\n");
     print ("// ============================================================\n");
 
     confirmDialog
-        -title   ($toolName + " — Installed!")
+        -title   ($toolName + " - Installed!")
         -message ("Installation complete!\n\n"
                   + "Script copied to:\n"  + $scriptsDir + "\n\n"
                   + "Icon copied to:\n"    + $iconsDir   + "\n\n"
