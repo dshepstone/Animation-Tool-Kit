@@ -1,15 +1,27 @@
 ================================================================
-  WIRE SHAPE TOOL FOR MAYA — README
-  Rig Control Curve Creator | Maya 2022–2026
+  WIRE SHAPE TOOL FOR MAYA - README
+  Rig Control Curve Creator | Maya 2022-2026
 ================================================================
 
 WHAT IS THIS TOOL?
 ------------------
 Wire Shape Tool is a Maya UI panel for quickly creating curve-based
-rig control shapes. It includes MEL-sourced classic Comet shapes
-(arrow, circle, cube, orient, locator, etc.) and additional Python
-shapes (Circle 4-Arrow, Double Arrow, Star, Diamond, Pyramid,
-Capsule, and more).
+rig control shapes, organised into categories:
+
+  Primitives          - circles, square, cube, sphere, diamonds,
+                        triangle, hexagon, star, pyramid, capsule,
+                        half circle, plus, cross
+  Arrows & Direction  - arrow, double arrow, 4-way arrow,
+                        circle 4-arrow, curved arrow, spin arrows,
+                        orient
+  Rig Controls        - root, gear, pole vector, lollipop, paddle,
+                        foot, eye target, flag
+  Utility             - null/group, locator, joint, bulb
+
+It also builds an Offset Dummy: a locator-style gizmo control wrapped
+in any number of offset groups (name_ZERO > name_OFS1... > name_CTRL)
+for use as a clean null, constraint target or layered offset, plus a
+helper that wraps existing objects in matched offset groups.
 
 Shapes snap to any selected object and are named with a _CTRL suffix
 ready to use as rig controls.
@@ -19,20 +31,20 @@ ready to use as rig controls.
   FILES INCLUDED IN THIS PACKAGE
 ================================================================
 
-  install_wire_shape_tool.mel   ← Drag-and-drop installer (this runs the install)
-  wire_shape_tool.py            ← The main tool script
-  Shape_Icon.png                ← Shelf button icon
-  README.txt                    ← This file
+  install_wire_shape_tool.mel   <- Drag-and-drop installer (this runs the install)
+  wire_shape_tool.py            <- The main tool script
+  Shape_Icon.png                <- Shelf button icon
+  README.txt                    <- This file
 
 ALL FOUR FILES must be kept in the same folder before installing.
 
 
 ================================================================
-  OPTION A — DRAG AND DROP INSTALL (Recommended)
+  OPTION A - DRAG AND DROP INSTALL (Recommended)
 ================================================================
 
 1. Extract / place all four files into the same folder on your
-   computer (e.g. Desktop, Downloads — anywhere is fine).
+   computer (e.g. Desktop, Downloads - anywhere is fine).
 
 2. Open Maya.
 
@@ -42,19 +54,19 @@ ALL FOUR FILES must be kept in the same folder before installing.
    or macOS Finder directly onto the Maya viewport.
 
 5. Maya will:
-     • Copy  wire_shape_tool.py  →  your Maya scripts folder
-     • Copy  Shape_Icon.png      →  your Maya icons folder
-     • Add a shelf button to the "Custom" shelf
+     - Copy  wire_shape_tool.py  ->  your Maya scripts folder
+     - Copy  Shape_Icon.png      ->  your Maya icons folder
+     - Add a shelf button to the "Custom" shelf
 
 6. A confirmation dialog will appear when install is complete.
 
 7. Click the shelf button (compass icon) to launch the tool.
 
-That's it — you're done!
+That's it - you're done!
 
 
 ================================================================
-  OPTION B — MANUAL INSTALL
+  OPTION B - MANUAL INSTALL
 ================================================================
 
 If you prefer to install by hand, copy the files yourself:
@@ -85,8 +97,8 @@ If you prefer to install by hand, copy the files yourself:
        wire_shape_tool.show()
 
   4. To make a shelf button manually:
-       • Run the command above in the Script Editor
-       • Middle-mouse drag the tab from the Script Editor
+       - Run the command above in the Script Editor
+       - Middle-mouse drag the tab from the Script Editor
          input area onto any shelf
 
 
@@ -94,9 +106,9 @@ If you prefer to install by hand, copy the files yourself:
   LAUNCHING THE TOOL AFTER INSTALL
 ================================================================
 
-  • Click the shelf button (compass icon) on the "Custom" shelf, OR
+  - Click the shelf button (compass icon) on the "Custom" shelf, OR
 
-  • Run in the Script Editor (Python tab):
+  - Run in the Script Editor (Python tab):
 
       import sys, importlib
       import maya.cmds as cmds
@@ -114,18 +126,23 @@ If you prefer to install by hand, copy the files yourself:
   USING THE TOOL
 ================================================================
 
-  • MEL Shapes tab   — Classic wireShape.mel controls (arrow,
-                       circle, cube, orient, locator, etc.)
+  Shape sections     - Primitives, Arrows & Direction,
+                       Rig Controls and Utility. Click any button
+                       to create that control.
 
-  • Extra Shapes tab — Python curve shapes (Circle 4-Arrow,
-                       Double Arrow, Star, Diamond, Pyramid,
-                       Capsule, 4-Way Arrow)
+  Offset Dummy       - Choose the number of offset groups, then
+                       "Create Offset Dummy" builds the gizmo
+                       control inside its offset chain.
+                       "Wrap Selection in Offset Groups" inserts
+                       matched groups above the selected objects
+                       without changing their world position.
 
-  Snap to Selection  — When checked, the created control moves
+  Snap to Selection  - When checked, the created control moves
                        to the pivot of your current selection
                        automatically.
 
-  Search box         — Filter shapes by name in real time.
+  Search box         - Filter shapes by name in real time; empty
+                       sections hide while filtering.
 
   All shapes are created at the world origin (or snapped to
   selection) and named with a _CTRL suffix.
@@ -139,7 +156,7 @@ If you prefer to install by hand, copy the files yourself:
   Maya 2023    PySide2 / Qt5
   Maya 2024    PySide2 / Qt5
   Maya 2025    PySide2 / Qt5
-  Maya 2026    PySide6 / Qt6   ← Primary target
+  Maya 2026    PySide6 / Qt6   <- Primary target
 
   The script auto-detects Qt version at load time.
 
@@ -149,19 +166,19 @@ If you prefer to install by hand, copy the files yourself:
 ================================================================
 
   "No module named 'wire_shape_tool'"
-    → The .py file is not in your scripts folder.
+    -> The .py file is not in your scripts folder.
       Re-run the installer or copy it manually (see Option B).
 
   Shelf button shows no icon
-    → Shape_Icon.png was not found during install.
+    -> Shape_Icon.png was not found during install.
       Copy it manually to your Maya prefs/icons/ folder.
 
   Install dialog does not appear
-    → Make sure all four files are in the same folder before
+    -> Make sure all four files are in the same folder before
       dragging the .mel file onto the viewport.
 
   Tool opens but shapes don't snap
-    → Ensure "Snap to Selection" is checked in the tool header.
+    -> Ensure "Snap to Selection" is checked in the tool header.
 
 
 ================================================================
@@ -170,7 +187,7 @@ If you prefer to install by hand, copy the files yourself:
 
   1. Delete  wire_shape_tool.py  from your scripts folder.
   2. Delete  Shape_Icon.png  from your icons folder.
-  3. Right-click the shelf button → Delete Button.
+  3. Right-click the shelf button -> Delete Button.
 
 
 ================================================================
