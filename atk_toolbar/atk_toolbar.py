@@ -670,7 +670,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
         menu.addSeparator()
         menu.addAction("About Animation Tool Kit", self._show_about)
-        menu.exec_(btn.mapToGlobal(pos))
+        menu.exec(btn.mapToGlobal(pos))
 
     def _tool_context_menu(self, tool, btn, pos, installed):
         menu = QtWidgets.QMenu(self)
@@ -701,7 +701,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         menu.addSeparator()
         about_act = menu.addAction("About This Tool")
         about_act.triggered.connect(lambda: self._show_tool_about(tool))
-        menu.exec_(btn.mapToGlobal(pos))
+        menu.exec(btn.mapToGlobal(pos))
 
     @staticmethod
     def _show_about():
@@ -712,7 +712,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             lines.append("• {} v{}".format(t["label"], t["version"]))
         msg.setText("<br>".join(lines))
         msg.setIcon(QtWidgets.QMessageBox.Information)
-        msg.exec_()
+        msg.exec()
 
     @staticmethod
     def _show_tool_about(tool):
@@ -725,7 +725,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         ).format(tool["label"], tool["version"], tool["tooltip"], tool["module"])
         msg.setText(text)
         msg.setIcon(QtWidgets.QMessageBox.Information)
-        msg.exec_()
+        msg.exec()
 
     # ── Rebuild ──────────────────────────────────────────────────────────────
 

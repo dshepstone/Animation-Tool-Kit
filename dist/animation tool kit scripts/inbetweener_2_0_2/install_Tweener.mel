@@ -3035,7 +3035,7 @@ class VertexTweenerUI(QtWidgets.QDialog):
         yes_btn.clicked.connect(on_yes)
         no_btn.clicked.connect(on_no)
 
-        dialog.exec_()
+        dialog.exec()
         return confirmed[0]
 
     def _refresh_scan_defaults_status(self):
@@ -3387,9 +3387,10 @@ class VertexTweenerUI(QtWidgets.QDialog):
         close_btn.clicked.connect(dialog.close)
         layout.addWidget(close_btn)
 
-        dialog.exec_()
+        dialog.exec()
 
 def show():
     return VertexTweenerUI.show_dialog()
+
 #==END_PYTHON==#
 */

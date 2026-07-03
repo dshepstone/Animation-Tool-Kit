@@ -6,7 +6,7 @@
   Place these files in the SAME folder before dragging:
     - install_reset.mel          (this file)
     - transform_reset_tool.py
-    - reset_icon.png             (optional — shelf button works without it)
+    - reset_icon.png             (optional - shelf button works without it)
 */
 
 global proc resetToolInstall()
@@ -42,7 +42,7 @@ global proc resetToolInstall()
     $py += "# --- Validate main script exists ---\n";
     $py += "if not os.path.isfile(src_script):\n";
     $py += "    cmds.confirmDialog(\n";
-    $py += "        title='Reset All Tool — Install Failed',\n";
+    $py += "        title='Reset All Tool - Install Failed',\n";
     $py += "        message='Missing file: transform_reset_tool.py\\nPlace it in the same folder as install_reset.mel',\n";
     $py += "        button=['OK'])\n";
     $py += "    raise RuntimeError('Missing transform_reset_tool.py')\n";
@@ -89,7 +89,7 @@ global proc resetToolInstall()
     $py += "cmds.shelfButton(\n";
     $py += "    parent=current_shelf,\n";
     $py += "    label='Reset All',\n";
-    $py += "    annotation='Reset All Tool — Reset translate/rotate/scale on selected objects',\n";
+    $py += "    annotation='Reset All Tool - Reset translate/rotate/scale on selected objects',\n";
     $py += "    image=icon_name,\n";
     $py += "    imageOverlayLabel='',\n";
     $py += "    command=launch_cmd,\n";
@@ -98,7 +98,7 @@ global proc resetToolInstall()
     $py += "\n";
     $py += "# --- Done ---\n";
     $py += "cmds.confirmDialog(\n";
-    $py += "    title='Reset All Tool — Installed',\n";
+    $py += "    title='Reset All Tool - Installed',\n";
     $py += "    message=(\n";
     $py += "        'Reset All Tool installed successfully!\\n\\n'\n";
     $py += "        'Script installed to:\\n' + dst_script + '\\n\\n'\n";

@@ -405,7 +405,7 @@ def _ensure_writable_hotkey_set():
         dlg = _HotkeySetSelectDialog(
             custom_sets, parent=_get_maya_main_window()
         )
-        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
             return None
         choice = dlg.selected_set()
         if choice == "< Create New Set >":

@@ -1,7 +1,7 @@
 // =============================================================================
 // install_character_snapshot.mel
 //
-// DRAG AND DROP INSTALLER — Character Snapshot v1.4.0 for Maya
+// DRAG AND DROP INSTALLER - Character Snapshot v1.4.0 for Maya
 //
 // How to use:
 //   Drag this .mel file from Windows Explorer / Finder onto the Maya viewport.
@@ -137,7 +137,7 @@ global proc cs__replaceShelfButton(
 {
     if ($shelf == "" || !`shelfLayout -ex $shelf`)
     {
-        warning("Character Snapshot: could not find shelf '" + $shelf + "' — skipping shelf button.");
+        warning("Character Snapshot: could not find shelf '" + $shelf + "' - skipping shelf button.");
         return;
     }
 
@@ -190,7 +190,7 @@ global proc cs__install()
     if ($installDir == "")
     {
         confirmDialog
-            -title   ($toolName + " — Install Failed")
+            -title   ($toolName + " - Install Failed")
             -message  "Could not locate the installer folder.\n\nInstallation cancelled."
             -button  "OK";
         return;
@@ -202,7 +202,7 @@ global proc cs__install()
     if (!cs__fileExists($srcPy))
     {
         confirmDialog
-            -title   ($toolName + " — Missing File")
+            -title   ($toolName + " - Missing File")
             -message ("Could not find:\n\n" + $srcPy
                       + "\n\nMake sure " + $pyFile
                       + " is in the same folder as this .mel file.")
@@ -226,7 +226,7 @@ global proc cs__install()
     }
     else
     {
-        warning("Character Snapshot: snapshot.png not found — shelf button will use default icon.");
+        warning("Character Snapshot: snapshot.png not found - shelf button will use default icon.");
     }
 
     global string $gShelfTopLevel;
@@ -244,14 +244,14 @@ global proc cs__install()
     cs__replaceShelfButton($currentShelf, $shelfLabel, $annotation, $iconToUse, $pyCmd);
 
     print ("// ============================================================\n");
-    print ("// Character Snapshot — Installation Complete\n");
+    print ("// Character Snapshot - Installation Complete\n");
     print ("// Script  -> " + $scriptsDir + $pyFile   + "\n");
     print ("// Icon    -> " + $iconsDir   + $iconFile + "\n");
     print ("// Shelf   -> " + $currentShelf            + "\n");
     print ("// ============================================================\n");
 
     confirmDialog
-        -title   ($toolName + " — Installed!")
+        -title   ($toolName + " - Installed!")
         -message ("Installation complete!\n\n"
                   + "Script copied to:\n"  + $scriptsDir + "\n\n"
                   + "Icon copied to:\n"    + $iconsDir   + "\n\n"

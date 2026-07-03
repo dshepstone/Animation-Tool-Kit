@@ -6,7 +6,7 @@ Compatible with Maya 2020+
 Place these files in the SAME folder before dragging:
   - install_onion_skin.mel  (this file)
   - onion_skin_2_2_0.py
-  - onionSkinIcon.png       (optional — shelf button works without it)
+  - onionSkinIcon.png       (optional - shelf button works without it)
 */
 
 global proc onionSkinInstall() {
@@ -73,7 +73,7 @@ global proc onionSkinInstall() {
     $pyCmd += "cmds.shelfButton(\n";
     $pyCmd += "    parent=current_shelf,\n";
     $pyCmd += "    label='Onion Skin',\n";
-    $pyCmd += "    annotation='Launch Onion Skin v2.2.0 — Multi-plane Ghosting',\n";
+    $pyCmd += "    annotation='Launch Onion Skin v2.2.0 - Multi-plane Ghosting',\n";
     $pyCmd += "    image=icon_name,\n";
     $pyCmd += "    command=launch_cmd,\n";
     $pyCmd += "    sourceType='python',\n";
