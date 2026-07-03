@@ -1997,17 +1997,29 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
 class CreateGroupDialog(QtWidgets.QDialog):
     def __init__(self, category_pairs: List[Tuple[str, str]], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Create Selection Group")
-        self.resize(380, 140)
+        self.setWindowTitle("Create Selection Set")
+        self.setMinimumWidth(380)
         self.chosen_color = [0.7, 0.7, 0.7]
         self._category_pairs = list(category_pairs)
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(6)
 
+        def field_label(text):
+            lbl = QtWidgets.QLabel(text)
+            lbl.setObjectName("SubtitleLabel")
+            return lbl
+
+        # Selection set (button) name
+        layout.addWidget(field_label("Set name"))
         self.name_edit = QtWidgets.QLineEdit()
-        self.name_edit.setPlaceholderText("Group name")
+        self.name_edit.setPlaceholderText("e.g. Foot L, Face Ctrls, Props")
         layout.addWidget(self.name_edit)
+        layout.addSpacing(8)
 
+        # Existing category dropdown
+        layout.addWidget(field_label("Add to existing category"))
         self.category_combo = QtWidgets.QComboBox()
         for label, internal_name in self._category_pairs:
             self.category_combo.addItem(label, internal_name)
@@ -2016,26 +2028,63 @@ class CreateGroupDialog(QtWidgets.QDialog):
         if default_index >= 0:
             self.category_combo.setCurrentIndex(default_index)
         layout.addWidget(self.category_combo)
+        layout.addSpacing(8)
 
-        row = QtWidgets.QHBoxLayout()
+        # Optional new category — overrides the dropdown when filled in
+        layout.addWidget(field_label("...or create a new category (optional)"))
+        self.new_category_edit = QtWidgets.QLineEdit()
+        self.new_category_edit.setPlaceholderText("e.g. Feet - leave empty to use the dropdown")
+        self.new_category_edit.textChanged.connect(self._on_new_category_changed)
+        layout.addWidget(self.new_category_edit)
+        layout.addSpacing(10)
+
+        # Colour picker with a live swatch
+        color_row = QtWidgets.QHBoxLayout()
+        color_row.setSpacing(8)
         color_btn = QtWidgets.QPushButton("Choose Color")
         color_btn.clicked.connect(self.choose_color)
-        row.addWidget(color_btn)
-        row.addStretch(1)
-        layout.addLayout(row)
+        color_row.addWidget(color_btn)
+        self._swatch = QtWidgets.QLabel()
+        self._swatch.setFixedSize(46, 24)
+        color_row.addWidget(self._swatch)
+        color_row.addStretch(1)
+        layout.addLayout(color_row)
+        self._update_swatch()
+        layout.addSpacing(10)
 
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        ok_btn = buttons.button(QtWidgets.QDialogButtonBox.Ok)
+        ok_btn.setText("Create")
+        ok_btn.setObjectName("PrimaryButton")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+        self.name_edit.setFocus()
+
+    def _on_new_category_changed(self, text: str) -> None:
+        # A typed category name takes over from the dropdown
+        self.category_combo.setEnabled(not text.strip())
+
+    def _update_swatch(self) -> None:
+        rgb = tuple(max(0, min(255, int(c * 255))) for c in self.chosen_color)
+        self._swatch.setStyleSheet(
+            f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]});"
+            "border: 1px solid #666666; border-radius: 4px;"
+        )
 
     def choose_color(self) -> None:
         color = QtWidgets.QColorDialog.getColor(parent=self)
         if color.isValid():
             self.chosen_color = [color.redF(), color.greenF(), color.blueF()]
+            self._update_swatch()
 
     def get_values(self) -> Tuple[str, str]:
-        return self.name_edit.text().strip(), str(self.category_combo.currentData() or self.category_combo.currentText().strip())
+        name = self.name_edit.text().strip()
+        new_category = self.new_category_edit.text().strip()
+        if new_category:
+            return name, new_category
+        return name, str(self.category_combo.currentData() or self.category_combo.currentText().strip())
 
 
 # ------------------------------
