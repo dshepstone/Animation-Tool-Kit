@@ -238,48 +238,46 @@ class ZurbriggStyleCollapsibleHeader(QWidget):
         self.icon_label = QLabel("-")
         self.icon_label.setFixedWidth(15)
         self.icon_label.setAlignment(Qt.AlignCenter)
-        
+        self.icon_label.setStyleSheet("color: #5599d4; font-weight: bold; background: transparent;")
+
         # Title with indicator color
         self.title_label = QLabel(title)
         bold_font = QFont()
         bold_font.setBold(True)
         self.title_label.setFont(bold_font)
-        
+        self.title_label.setStyleSheet("color: #ffffff; background: transparent;")
+
         # Add widgets to layout
         self.layout.addWidget(self.icon_label)
         self.layout.addWidget(self.title_label)
         self.layout.addStretch()
-        
-        # Set frame style and fixed height
-        self.setAutoFillBackground(True)
-        palette = self.palette()
-        palette.setColor(self.backgroundRole(), palette.mid().color())
-        self.setPalette(palette)
-        
+
+        # ATK toolbar-style header strip
+        self.setObjectName("CollapsibleHeader")
+        self.setStyleSheet(
+            "QWidget#CollapsibleHeader {"
+            "  background-color: #4a4a4a;"
+            "  border: 1px solid #5c5c5c;"
+            "  border-radius: 3px;"
+            "}"
+        )
+        self.setCursor(Qt.PointingHandCursor)
+
         self.setFixedHeight(26)
-        
+
         # Default state is expanded
         self.is_expanded = True
-    
+
     def update_state(self, is_expanded):
         """Update the icon based on the expanded state"""
         self.is_expanded = is_expanded
         self.icon_label.setText("-" if is_expanded else "+")
-    
+
     def mousePressEvent(self, event):
         """Handle mouse press event to toggle collapse state"""
         if self.parent():
             self.parent().toggle_content()
         super(ZurbriggStyleCollapsibleHeader, self).mousePressEvent(event)
-
-    def add_widget(self, widget):
-        """Add a widget to the content layout"""
-        self.content_layout.addWidget(widget)
-        
-        # Add a small spacer at the bottom for visual breathing room
-        spacer = QWidget()
-        spacer.setFixedHeight(5)
-        self.content_layout.addWidget(spacer)
 
 class ZurbriggStyleCollapsibleFrame(QWidget):
     """
