@@ -297,18 +297,23 @@ class ResetTransformsDialog(QtWidgets.QDialog):
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+_dialog = None  # keeps the window alive when launched without a Maya parent
+
+
 def show():
     """Show the Transform Reset dialog, closing any existing instance first."""
+    global _dialog
+
     for widget in QtWidgets.QApplication.allWidgets():
         if widget.objectName() == WINDOW_OBJECT_NAME:
             widget.close()
             widget.deleteLater()
 
-    dialog = ResetTransformsDialog(parent=_get_maya_main_window())
-    dialog.show()
-    dialog.raise_()
-    dialog.activateWindow()
-    return dialog
+    _dialog = ResetTransformsDialog(parent=_get_maya_main_window())
+    _dialog.show()
+    _dialog.raise_()
+    _dialog.activateWindow()
+    return _dialog
 
 
 def run():

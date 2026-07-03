@@ -175,6 +175,19 @@ TOOL_REGISTRY = [
         "tooltip":   "Reset translate, rotate and scale on selected objects",
         "module":    "transform_reset_tool",
         "launch_fn": "show",
+        # Left-click on the toolbar button resets all transforms immediately;
+        # the full window lives in the right-click menu.
+        "quick_fn":  "reset_all",
+        "quick_tip": "Left-click: reset all transforms on selection<br>"
+                     "Right-click: open Reset Tool window and more options",
+        "context_actions": [
+            ("Reset All Transforms", "reset_all"),
+            ("Reset Translate",      "reset_translate"),
+            ("Reset Rotate",         "reset_rotate"),
+            ("Reset Scale",          "reset_scale"),
+            None,
+            ("Setup / Edit Hotkeys...", "show_hotkey_setup"),
+        ],
         "icon_file": "reset_icon.png",
         "icon_key":  "reset",
         "group":     "rigging",
