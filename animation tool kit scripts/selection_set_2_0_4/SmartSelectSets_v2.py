@@ -660,6 +660,11 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         self.popout_windows: Dict[str, "CategoryPopoutWindow"] = {}
         self._timers: List[QtCore.QTimer] = []
         self._validation_cache: Optional[Dict[int, dict]] = None
+        # Categories the user created or populated during this session.
+        # Empty category boxes only render if they are in this set, so a
+        # fresh scene (or one whose saved categories hold no sets) starts
+        # with no boxes at all.
+        self._session_categories: set = set()
 
         self._build_ui()
         self._connect_scene_jobs()
@@ -1036,10 +1041,12 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             groups = [g for g in self.manager.groups.values() if g.category == category_name]
             groups.sort(key=lambda g: g.name.lower())
 
-            # The default category only renders once it actually holds groups,
-            # so a fresh session starts with a single clean box on first use
-            # instead of a permanently empty 'Uncategorized' block.
-            if category_name == DEFAULT_CATEGORY and not groups:
+            # A category box only renders once it actually holds sets (or was
+            # created/used this session, so it can serve as a drop target).
+            # A fresh scene therefore starts with no boxes at all.
+            if groups:
+                self._session_categories.add(category_name)
+            elif category_name not in self._session_categories:
                 continue
 
             if filter_text:
@@ -1121,7 +1128,9 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
                 "rename_button": rename_btn,
             }
 
-        self.status_label.setText(f"Categories: {len(self.manager.categories)}   Groups: {len(self.manager.groups)}")
+        self.status_label.setText(
+            f"Categories: {len(self.category_widgets)}   Groups: {len(self.manager.groups)}"
+        )
         self._sync_popout_windows()
 
     def _sync_popout_windows(self) -> None:
@@ -1174,6 +1183,9 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             return
         try:
             self.manager.create_category(text)
+            # User-created categories render immediately (even while empty)
+            # so they can act as drag-and-drop targets.
+            self._session_categories.add((text or "").strip())
             self.refresh_ui()
         except Exception as exc:
             self._show_error(str(exc))
@@ -1589,6 +1601,8 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
     def load_from_scene(self, show_feedback: bool = True) -> None:
         try:
             found = self.manager.load_from_scene_node()
+            # Fresh data, fresh view: only categories that hold sets render
+            self._session_categories.clear()
             self.refresh_ui()
             if show_feedback:
                 self._show_info("Groups loaded from the scene." if found else "No saved scene data found.")
@@ -1611,6 +1625,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             return
         try:
             self.manager.import_from_json(file_path)
+            self._session_categories.clear()
             self.refresh_ui()
             self._show_info("Groups imported successfully.")
         except Exception as exc:
@@ -1629,8 +1644,9 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             "4. Click the new selection button later to reselect those objects.\n\n"
             "Categories\n"
             "- Categories are blocks that hold related selection buttons.\n"
-            "- New buttons land in 'Uncategorized' unless you pick a category; the\n"
-            "  Uncategorized block only appears once it actually holds buttons.\n"
+            "- New buttons land in 'Uncategorized' unless you pick a category.\n"
+            "- A category box only appears once it holds saved sets (or right after\n"
+            "  you create it with 'New Category'), so an empty scene shows no boxes.\n"
             "- Use categories for characters, props, cameras, or different rig sections.\n"
             "- Prefix lets you apply or remap a namespace-style prefix for that category.\n"
             "- Pop Out opens a smaller floating picker window for that category only.\n"
