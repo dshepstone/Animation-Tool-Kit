@@ -1289,8 +1289,13 @@ class XformCopyPasteDialog(QtWidgets.QDialog):
 # Public entry point
 # ---------------------------------------------------------------------------
 
+_dialog = None  # keeps the window alive when launched without a Maya parent
+
+
 def show():
     """Show the Xform Copy Paste dialog, closing any existing instance first."""
+    global _dialog
+
     # Remove the legacy cmds-based window if a previous version left one open
     try:
         if cmds.window(_LEGACY_WIN_ID, exists=True):
@@ -1303,12 +1308,12 @@ def show():
             widget.close()
             widget.deleteLater()
 
-    dialog = XformCopyPasteDialog(parent=_get_maya_main_window())
-    dialog.show()
-    dialog.raise_()
-    dialog.activateWindow()
+    _dialog = XformCopyPasteDialog(parent=_get_maya_main_window())
+    _dialog.show()
+    _dialog.raise_()
+    _dialog.activateWindow()
     _update_status()
-    return dialog
+    return _dialog
 
 
 # ---------------------------------------------------------------------------

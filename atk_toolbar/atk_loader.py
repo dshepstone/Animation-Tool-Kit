@@ -141,10 +141,22 @@ TOOL_REGISTRY = [
         "tooltip":   "Snap one object to another using world-space transforms",
         "module":    "anim_snap",
         "launch_fn": "launch",
+        # Left-click on the toolbar button snaps immediately (all axes);
+        # the full window lives in the right-click menu.
+        "quick_fn":  "snap",
+        "quick_tip": "Left-click: snap first selected to second (all axes)<br>"
+                     "Right-click: open AnimSnap window and more options",
+        "context_actions": [
+            ("Snap (Translate + Rotate)", "snap"),
+            ("Snap Translate Only",       "snap_translate"),
+            ("Snap Rotate Only",          "snap_rotate"),
+            None,
+            ("Setup / Edit Hotkeys...",   "show_hotkey_setup"),
+        ],
         "icon_file": "animSnap.png",
         "icon_key":  "snap",
         "group":     "viewport",
-        "version":   "1.0.0",
+        "version":   "1.1.0",
     },
     {
         "id":        "wire_shape",
@@ -331,13 +343,27 @@ def launch_tool(tool_id):
     Errors are caught and reported via cmds.warning so the toolbar stays alive
     even if an individual tool fails to load.
     """
+    launch_tool_fn(tool_id)
+
+
+def launch_tool_fn(tool_id, fn_name=None):
+    """Import a tool module and call a named function on it.
+
+    ``fn_name`` defaults to the tool's registered ``launch_fn``.  Used by the
+    toolbar for quick-action buttons and context-menu actions (e.g. AnimSnap's
+    left-click snap) that call functions other than the window launcher.
+
+    Errors are caught and reported via cmds.warning so the toolbar stays alive
+    even if an individual tool fails to load.
+    """
     tool = _tool_by_id(tool_id)
     if tool is None:
         cmds.warning("ATK Toolbar: unknown tool id '{}'".format(tool_id))
         return
 
     module_name = tool["module"]
-    fn_name = tool["launch_fn"]
+    if fn_name is None:
+        fn_name = tool["launch_fn"]
 
     try:
         if module_name not in sys.modules:

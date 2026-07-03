@@ -550,12 +550,23 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
         if show_tips:
             tip = "<b>{}</b><br>{}".format(tool["label"], tool["tooltip"])
+            if installed and tool.get("quick_tip"):
+                tip += "<br><i style='color:#999;'>{}</i>".format(tool["quick_tip"])
             if not installed:
                 tip += "<br><i style='color:#ff6666;'>Not installed</i>"
             btn.setToolTip(tip)
 
         if installed:
-            btn.clicked.connect(lambda checked=False, tid=tool["id"]: atk_loader.launch_tool(tid))
+            # Tools with a quick_fn run it on left-click (e.g. AnimSnap snaps
+            # immediately); the window launcher stays in the right-click menu.
+            quick_fn = tool.get("quick_fn")
+            if quick_fn:
+                btn.clicked.connect(
+                    lambda checked=False, tid=tool["id"], fn=quick_fn:
+                        atk_loader.launch_tool_fn(tid, fn)
+                )
+            else:
+                btn.clicked.connect(lambda checked=False, tid=tool["id"]: atk_loader.launch_tool(tid))
 
         # Right-click context menu
         btn.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -672,6 +683,20 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             open_act.triggered.connect(lambda: atk_loader.launch_tool(tool["id"]))
         else:
             open_act.setEnabled(False)
+
+        # Tool-specific quick actions (e.g. AnimSnap's snap variants)
+        if installed and tool.get("context_actions"):
+            menu.addSeparator()
+            for entry in tool["context_actions"]:
+                if entry is None:
+                    menu.addSeparator()
+                    continue
+                label, fn_name = entry
+                act = menu.addAction(label)
+                act.triggered.connect(
+                    lambda checked=False, tid=tool["id"], fn=fn_name:
+                        atk_loader.launch_tool_fn(tid, fn)
+                )
 
         menu.addSeparator()
         about_act = menu.addAction("About This Tool")
