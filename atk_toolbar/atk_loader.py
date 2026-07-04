@@ -141,10 +141,22 @@ TOOL_REGISTRY = [
         "tooltip":   "Snap one object to another using world-space transforms",
         "module":    "anim_snap",
         "launch_fn": "launch",
+        # Left-click on the toolbar button snaps immediately (all axes);
+        # the full window lives in the right-click menu.
+        "quick_fn":  "snap",
+        "quick_tip": "Left-click: snap first selected to second (all axes)<br>"
+                     "Right-click: open AnimSnap window and more options",
+        "context_actions": [
+            ("Snap (Translate + Rotate)", "snap"),
+            ("Snap Translate Only",       "snap_translate"),
+            ("Snap Rotate Only",          "snap_rotate"),
+            None,
+            ("Setup / Edit Hotkeys...",   "show_hotkey_setup"),
+        ],
         "icon_file": "animSnap.png",
         "icon_key":  "snap",
         "group":     "viewport",
-        "version":   "1.0.0",
+        "version":   "1.1.0",
     },
     {
         "id":        "wire_shape",
@@ -155,7 +167,7 @@ TOOL_REGISTRY = [
         "icon_file": "Shape_Icon.png",
         "icon_key":  "wire",
         "group":     "rigging",
-        "version":   "1.0.0",
+        "version":   "2.0.0",
     },
     {
         "id":        "reset",
@@ -163,6 +175,19 @@ TOOL_REGISTRY = [
         "tooltip":   "Reset translate, rotate and scale on selected objects",
         "module":    "transform_reset_tool",
         "launch_fn": "show",
+        # Left-click on the toolbar button resets all transforms immediately;
+        # the full window lives in the right-click menu.
+        "quick_fn":  "reset_all",
+        "quick_tip": "Left-click: reset all transforms on selection<br>"
+                     "Right-click: open Reset Tool window and more options",
+        "context_actions": [
+            ("Reset All Transforms", "reset_all"),
+            ("Reset Translate",      "reset_translate"),
+            ("Reset Rotate",         "reset_rotate"),
+            ("Reset Scale",          "reset_scale"),
+            None,
+            ("Setup / Edit Hotkeys...", "show_hotkey_setup"),
+        ],
         "icon_file": "reset_icon.png",
         "icon_key":  "reset",
         "group":     "rigging",
@@ -177,7 +202,7 @@ TOOL_REGISTRY = [
         "icon_file": "selectionSet.png",
         "icon_key":  "select",
         "group":     "rigging",
-        "version":   "2.0.4",
+        "version":   "2.5.0",
     },
     {
         "id":        "character_snapshot",
@@ -210,7 +235,7 @@ TOOL_REGISTRY = [
         "icon_file": "saveplus.png",
         "icon_key":  "save",
         "group":     "pipeline",
-        "version":   "2.0.4",
+        "version":   "2.0.5",
     },
     {
         "id":        "studio_library",
@@ -331,13 +356,27 @@ def launch_tool(tool_id):
     Errors are caught and reported via cmds.warning so the toolbar stays alive
     even if an individual tool fails to load.
     """
+    launch_tool_fn(tool_id)
+
+
+def launch_tool_fn(tool_id, fn_name=None):
+    """Import a tool module and call a named function on it.
+
+    ``fn_name`` defaults to the tool's registered ``launch_fn``.  Used by the
+    toolbar for quick-action buttons and context-menu actions (e.g. AnimSnap's
+    left-click snap) that call functions other than the window launcher.
+
+    Errors are caught and reported via cmds.warning so the toolbar stays alive
+    even if an individual tool fails to load.
+    """
     tool = _tool_by_id(tool_id)
     if tool is None:
         cmds.warning("ATK Toolbar: unknown tool id '{}'".format(tool_id))
         return
 
     module_name = tool["module"]
-    fn_name = tool["launch_fn"]
+    if fn_name is None:
+        fn_name = tool["launch_fn"]
 
     try:
         if module_name not in sys.modules:

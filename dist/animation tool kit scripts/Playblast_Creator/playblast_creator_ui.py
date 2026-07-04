@@ -602,7 +602,7 @@ class PBCLineEdit(QtWidgets.QLineEdit):
             action.setData(item[1])
             action.triggered.connect(self.on_context_menu_item_selected)
 
-        context_menu.exec_(self.mapToGlobal(pos))
+        context_menu.exec(self.mapToGlobal(pos))
 
     def on_context_menu_item_selected(self):
         self.insert(self.sender().data())
@@ -3312,7 +3312,7 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         if seed and len(seed) == len(self._visibility_dialog.visibility_checkboxes):
             self._visibility_dialog.set_visibility_data(seed)
 
-        if self._visibility_dialog.exec_() == QtWidgets.QDialog.Accepted:
+        if self._visibility_dialog.exec() == QtWidgets.QDialog.Accepted:
             # Force dropdown to "Custom" so the next blast picks up
             # the dialog's selections via apply_visibility_preset().
             idx = self.visibility_cmb.findText("Custom")

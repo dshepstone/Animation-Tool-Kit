@@ -12,8 +12,8 @@ from datetime import datetime
 from savePlus_maya import cmds
 
 # Constants
-VERSION = "2.0.4"
-DEBUG_MODE = True
+VERSION = "2.0.5"
+DEBUG_MODE = False
 DEFAULT_PROJECT_DIRS = [
     "assets",
     "cache",

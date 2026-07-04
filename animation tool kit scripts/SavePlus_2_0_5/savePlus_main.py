@@ -32,6 +32,234 @@ VERSION = savePlus_core.VERSION
 UNIQUE_IDENTIFIER = "SavePlus_v1_ToolButton"
 TIMER_COUNT = 0  # Add this line to track timer firing count
 
+# Stylesheet matching the ATK toolbar / Reset Tool design language
+ATK_STYLESHEET = """
+QMainWindow, QWidget {
+    background-color: #3c3c3c;
+    color: #cccccc;
+}
+QLabel {
+    color: #cccccc;
+    background: transparent;
+}
+QLabel#TitleLabel {
+    font-size: 14px;
+    font-weight: bold;
+    color: #ffffff;
+}
+QLabel#SubtitleLabel {
+    font-size: 11px;
+    color: #999999;
+}
+QLineEdit, QComboBox, QSpinBox, QTextEdit, QPlainTextEdit {
+    background-color: #4a4a4a;
+    color: #dddddd;
+    border: 1px solid #666666;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 11px;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus,
+QTextEdit:focus, QPlainTextEdit:focus {
+    border-color: #2e6da4;
+}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {
+    color: #777777;
+    background-color: #414141;
+}
+QComboBox QAbstractItemView {
+    background-color: #3c3c3c;
+    color: #dddddd;
+    border: 1px solid #555555;
+    selection-background-color: #2e6da4;
+}
+QPushButton {
+    background-color: #555555;
+    color: #dddddd;
+    border: 1px solid #666666;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 11px;
+}
+QPushButton:hover {
+    background-color: #636363;
+    border-color: #888888;
+    color: #ffffff;
+}
+QPushButton:pressed {
+    background-color: #444444;
+}
+QPushButton#PrimaryButton {
+    background-color: #2e6da4;
+    color: #ffffff;
+    border: 1px solid #4088c0;
+    font-weight: bold;
+}
+QPushButton#PrimaryButton:hover {
+    background-color: #3a7ec0;
+    border-color: #5599d4;
+}
+QPushButton#PrimaryButton:pressed {
+    background-color: #205080;
+}
+QCheckBox {
+    color: #cccccc;
+    font-size: 11px;
+    spacing: 6px;
+    background: transparent;
+}
+QGroupBox {
+    background-color: #434343;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    margin-top: 10px;
+    padding-top: 8px;
+    font-weight: bold;
+    font-size: 11px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+    color: #ffffff;
+}
+QTabWidget::pane {
+    border: 1px solid #555555;
+    border-radius: 4px;
+    top: -1px;
+    background-color: #3c3c3c;
+}
+QTabBar::tab {
+    background-color: #464646;
+    color: #bbbbbb;
+    border: 1px solid #555555;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    padding: 6px 16px;
+    margin-right: 2px;
+    font-size: 11px;
+}
+QTabBar::tab:selected {
+    background-color: #2e6da4;
+    color: #ffffff;
+    border-color: #4088c0;
+}
+QTabBar::tab:hover:!selected {
+    background-color: #555555;
+    color: #ffffff;
+}
+QListWidget, QTableWidget {
+    background-color: #333333;
+    color: #dddddd;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    alternate-background-color: #383838;
+    font-size: 11px;
+}
+QListWidget::item {
+    padding: 4px;
+}
+QListWidget::item:selected, QTableWidget::item:selected {
+    background-color: #2e6da4;
+    color: #ffffff;
+}
+QListWidget::item:hover {
+    background-color: #454545;
+}
+QHeaderView::section {
+    background-color: #4a4a4a;
+    color: #dddddd;
+    border: none;
+    border-right: 1px solid #555555;
+    border-bottom: 1px solid #555555;
+    padding: 5px;
+    font-size: 11px;
+    font-weight: bold;
+}
+QMenuBar {
+    background-color: #3c3c3c;
+    color: #cccccc;
+    border: none;
+}
+QMenuBar::item {
+    background: transparent;
+    padding: 5px 10px;
+    border-radius: 3px;
+}
+QMenuBar::item:selected {
+    background-color: #555555;
+}
+QMenu {
+    background-color: #3c3c3c;
+    color: #dddddd;
+    border: 1px solid #555555;
+    padding: 4px;
+}
+QMenu::item {
+    padding: 6px 18px;
+    border-radius: 3px;
+}
+QMenu::item:selected {
+    background-color: #2e6da4;
+    color: #ffffff;
+}
+QStatusBar {
+    background-color: #363636;
+    color: #999999;
+    font-size: 10px;
+}
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+QScrollBar:vertical {
+    background: #333333;
+    width: 10px;
+    margin: 0;
+    border-radius: 5px;
+}
+QScrollBar::handle:vertical {
+    background: #5a5a5a;
+    min-height: 24px;
+    border-radius: 5px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #6d6d6d;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+QScrollBar:horizontal {
+    background: #333333;
+    height: 10px;
+    margin: 0;
+    border-radius: 5px;
+}
+QScrollBar::handle:horizontal {
+    background: #5a5a5a;
+    min-width: 24px;
+    border-radius: 5px;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: none;
+}
+QToolTip {
+    background-color: #2e2e2e;
+    color: #dddddd;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 4px;
+    font-size: 11px;
+}
+"""
+
 def truncate_path(path, max_length=40):
     """
     Truncate a path for display by preserving the beginning and end
@@ -131,17 +359,8 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             self.setMinimumWidth(550)
             self.setMinimumHeight(200)
             
-            # Set application-wide tooltip style
-            self.setStyleSheet("""
-                QToolTip {
-                    background-color: #2A2A2A;
-                    color: white;
-                    border: 1px solid #3A3A3A;
-                    border-radius: 3px;
-                    padding: 3px;
-                    font-size: 11px;
-                }
-            """)
+            # Apply the ATK toolbar design language across the whole window
+            self.setStyleSheet(ATK_STYLESHEET)
 
             # Flag to control auto-resize behavior
             self.auto_resize_enabled = True
@@ -181,16 +400,27 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             header_layout = QHBoxLayout()
             header_layout.setContentsMargins(10, 5, 10, 5)
             
-           # Minimal title in tab header
+            # Title header matching the other ATK tools
             title_layout = QHBoxLayout()
-            title_layout.setContentsMargins(5, 2, 5, 2)
+            title_layout.setContentsMargins(8, 6, 8, 6)
 
-            # Version label only in small text
-            version_label = QLabel(f"SavePlus v{VERSION}")
+            title_col = QVBoxLayout()
+            title_col.setSpacing(2)
+            title_label = QLabel("SavePlus")
+            title_label.setObjectName("TitleLabel")
+            subtitle_label = QLabel(
+                "Version up, back up and track your Maya scenes without "
+                "overwriting previous work."
+            )
+            subtitle_label.setObjectName("SubtitleLabel")
+            subtitle_label.setWordWrap(True)
+            title_col.addWidget(title_label)
+            title_col.addWidget(subtitle_label)
+            title_layout.addLayout(title_col, 1)
+
+            version_label = QLabel(f"v{VERSION}")
             version_label.setStyleSheet("color: #7f8c8d; font-size: 9px;")
-            version_label.setAlignment(Qt.AlignRight)
-
-            title_layout.addStretch()
+            version_label.setAlignment(Qt.AlignRight | Qt.AlignTop)
             title_layout.addWidget(version_label)
 
             main_layout.addLayout(title_layout)
@@ -253,42 +483,19 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             buttons_layout = QHBoxLayout()
             buttons_layout.setContentsMargins(0, 10, 0, 10)  # Add some vertical padding
 
-            # Style buttons with consistent, modern appearance
-            button_style = """
-            QPushButton {
-                border-radius: 4px;
-                background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-                                                stop: 0 #3a3a3a, stop: 1 #2a2a2a);
-                border: 1px solid #444444;
-                padding: 6px 12px;
-                min-height: 30px;
-                color: #ffffff;  /* White text for maximum contrast */
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-                                                stop: 0 #4a4a4a, stop: 1 #3a3a3a);
-                color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-                                                stop: 0 #2a2a2a, stop: 1 #3a3a3a);
-                color: #ffffff;
-            }
-            """
-
-            # Create buttons with keyboard shortcut indicators
+            # Create buttons with keyboard shortcut indicators.
+            # Save Plus is the primary action, styled ATK blue via the
+            # global stylesheet; the others use the standard button style.
             save_button = QPushButton("Save Plus (Ctrl+S)")
+            save_button.setObjectName("PrimaryButton")
             save_button.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
             save_button.setMinimumHeight(40)
-            save_button.setStyleSheet(button_style)
             save_button.clicked.connect(self.save_plus)
-            save_button.setToolTip("Increment the version number and save.\n\nExample: scene_v01.ma → scene_v02.ma\n\nAny quick note entered below will be attached to this version.")
+            save_button.setToolTip("Increment the version number and save.\n\nExample: scene_v01.ma -> scene_v02.ma\n\nAny quick note entered below will be attached to this version.")
 
             save_new_button = QPushButton("Save As New (Ctrl+Shift+S)")
             save_new_button.setIcon(self.style().standardIcon(QStyle.SP_FileIcon))
             save_new_button.setMinimumHeight(40)
-            save_new_button.setStyleSheet(button_style)
             save_new_button.clicked.connect(self.save_as_new)
             save_new_button.setToolTip("Save with the exact filename shown above.\n\nUseful for starting a new file or saving to a specific name without incrementing.")
 
@@ -296,9 +503,8 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             backup_button = QPushButton("Create Backup (Ctrl+B)")
             backup_button.setIcon(self.style().standardIcon(QStyle.SP_DriveFDIcon))
             backup_button.setMinimumHeight(40)
-            backup_button.setStyleSheet(button_style)
             backup_button.clicked.connect(self.create_backup)
-            backup_button.setToolTip("Save a versioned backup copy of the current file.\n\nExample: scene_122.ma → scene_123.ma\n\nUseful before making major changes.")
+            backup_button.setToolTip("Save a versioned backup copy of the current file.\n\nExample: scene_122.ma -> scene_123.ma\n\nUseful before making major changes.")
 
             buttons_layout.addWidget(save_button)
             buttons_layout.addWidget(save_new_button)
@@ -376,19 +582,6 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
 
             self.quick_note_input = QLineEdit()
             self.quick_note_input.setPlaceholderText("Optional: Add a note before saving...")
-            self.quick_note_input.setStyleSheet("""
-                QLineEdit {
-                    background-color: #2A2A2A;
-                    border: 1px solid #444444;
-                    border-radius: 4px;
-                    padding: 6px 10px;
-                    color: #FFFFFF;
-                    font-size: 11px;
-                }
-                QLineEdit:focus {
-                    border: 1px solid #0066CC;
-                }
-            """)
             self.quick_note_input.setToolTip("Type a note here before clicking 'Save Plus'.\n\nThis note will be attached to the saved version for future reference.\n\nLeave empty if no note is needed - this is optional.")
             quick_note_layout.addWidget(self.quick_note_input)
 
@@ -506,7 +699,7 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
 
             # Preview label
             self.filename_preview = QLabel("No filename")
-            self.filename_preview.setStyleSheet("color: #0066CC; font-weight: bold;")
+            self.filename_preview.setStyleSheet("color: #5599d4; font-weight: bold;")
 
             # Generate and Reset buttons
             name_gen_buttons_layout = QHBoxLayout()
@@ -547,7 +740,7 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
 
             # Live compact preview label (always shows what the compact name would look like)
             self.compact_filename_preview = QLabel("\u2014")
-            self.compact_filename_preview.setStyleSheet("color: #5599CC; font-style: italic;")
+            self.compact_filename_preview.setStyleSheet("color: #5599d4; font-style: italic;")
 
             name_gen_layout.addRow("Assignment:", assignment_layout)
             name_gen_layout.addRow("Last Name:", self.lastname_input)
@@ -666,7 +859,7 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             save_path_layout.setSpacing(3)
 
             self.save_location_label = QLabel()
-            self.save_location_label.setStyleSheet("color: #0066CC; background-color: transparent; padding: 0;")
+            self.save_location_label.setStyleSheet("color: #5599d4; background-color: transparent; padding: 0;")
             save_path_layout.addWidget(self.save_location_label, 1)  # Give label stretch priority
 
             # Add folder open button that opens the current directory
@@ -723,10 +916,10 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             version_preview_display.setSpacing(6)
 
             self.version_preview_icon = QLabel("→")
-            self.version_preview_icon.setStyleSheet("color: #0066CC; font-weight: bold; font-size: 14px;")
+            self.version_preview_icon.setStyleSheet("color: #5599d4; font-weight: bold; font-size: 14px;")
 
             self.version_preview_text = QLabel("N/A")
-            self.version_preview_text.setStyleSheet("color: #0066CC; font-weight: bold;")
+            self.version_preview_text.setStyleSheet("color: #5599d4; font-weight: bold;")
 
             version_preview_display.addWidget(self.version_preview_icon)
             version_preview_display.addWidget(self.version_preview_text)
@@ -1042,7 +1235,7 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             project_root_layout.addWidget(browse_root_button)
             
             self.project_name_preview = QLabel("Project name preview: ")
-            self.project_name_preview.setStyleSheet("color: #0066CC; font-weight: bold;")
+            self.project_name_preview.setStyleSheet("color: #5599d4; font-weight: bold;")
             
             create_project_button = QPushButton("Create Project")
             create_project_button.clicked.connect(self.create_project)
@@ -1506,19 +1699,10 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             reset_button.clicked.connect(self.reset_preferences_to_defaults)
 
             apply_button = QPushButton("Apply Settings")
+            apply_button.setObjectName("PrimaryButton")
             apply_button.setFixedWidth(120)
             apply_button.setToolTip("Save all preference changes")
             apply_button.clicked.connect(self.save_preferences)
-            apply_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #0066CC;
-                    color: white;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #0077DD;
-                }
-            """)
 
             button_layout.addWidget(reset_button)
             button_layout.addStretch()
@@ -1612,69 +1796,18 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             # Initialize the timer system after UI is loaded
             QtCore.QTimer.singleShot(2000, self.bootstrap_timer)
 
-            # Force multiple initial timer checks to verify operation
-            if self.enable_timed_warning.isChecked():
-                print("\n" + "#"*70)
-                print("## STARTING TIMER VERIFICATION SEQUENCE")
-                print("#"*70 + "\n")
-                
-                # Reset the counter
-                if not hasattr(SavePlusUI, 'TIMER_COUNT'):
-                    SavePlusUI.TIMER_COUNT = 0
-                SavePlusUI.TIMER_COUNT = 0
-                
-                # Simulate last save being 4 minutes ago for immediate testing
-                print("[SavePlus Debug] Setting up timer for immediate testing")
-                self.last_save_time = time.time() - (4 * 60)
-                
-                # Schedule multiple checks at different intervals
-                QtCore.QTimer.singleShot(1000, lambda: print("\n[VERIFY] Scheduling initial timer check #1"))
-                QtCore.QTimer.singleShot(1500, self.check_save_time)
-                
-                QtCore.QTimer.singleShot(6000, lambda: print("\n[VERIFY] Scheduling initial timer check #2"))
-                QtCore.QTimer.singleShot(6500, self.check_save_time)
-                
-                QtCore.QTimer.singleShot(11000, lambda: print("\n[VERIFY] Scheduling initial timer check #3"))
-                QtCore.QTimer.singleShot(11500, self.check_save_time)
-                
-                # Force UI update
-                QtCore.QTimer.singleShot(16000, lambda: print("[SavePlus Debug] Timer verification sequence complete"))
-                
-                # Setup a more robust timer initialization
-                self.save_timer = QTimer()
-                self.save_timer.setTimerType(QtCore.Qt.CoarseTimer)
-                self.save_timer.timeout.connect(self.check_save_time)
-                print("[DEBUG] Qt timer created with proper signal connection")
+            # Set up file monitoring (scene open / new scene events).  This
+            # must always run — earlier versions only wired it up when save
+            # reminders were enabled, so the UI missed file changes.
+            self.setup_file_monitoring()
 
-                # Set up file monitoring
-                self.setup_file_monitoring()
+            # Check if we're starting with a new file and reset UI appropriately
+            if not cmds.file(query=True, sceneName=True):
+                print("[SavePlus Debug] Starting with a new file - initializing UI accordingly")
+                QtCore.QTimer.singleShot(100, self.reset_for_new_file)
 
-                # Load the timer state from preferences without triggering toggle
-                timer_enabled = self.load_option_var(self.OPT_VAR_ENABLE_TIMED_WARNING, False)
-                if timer_enabled:
-                    print("[DEBUG] Timer should be enabled from preferences")
-                    # Block signals to prevent immediate toggle
-                    self.enable_timed_warning.blockSignals(True)
-                    self.enable_timed_warning.setChecked(True)
-                    self.enable_timed_warning.blockSignals(False)
-                    # Start timer after a delay
-                    QtCore.QTimer.singleShot(1000, lambda: self.toggle_timed_warning(2))
-
-                # Check if we're starting with a new file and reset UI appropriately
-                if not cmds.file(query=True, sceneName=True):
-                    print("[SavePlus Debug] Starting with a new file - initializing UI accordingly")
-                    # Use a slight delay to ensure UI is fully initialized
-                    QtCore.QTimer.singleShot(100, self.reset_for_new_file)
-
-                # Force check for new file on startup with slight delay to ensure UI is ready
-                QtCore.QTimer.singleShot(500, self.force_reset_project_display)
-
-                # Create a periodic check for new files
-                self.new_file_timer = QTimer()
-                self.new_file_timer.setInterval(1000)  # Check every second
-                self.new_file_timer.timeout.connect(lambda: self.force_reset_project_display() 
-                                                if not cmds.file(query=True, sceneName=True) else None)
-                self.new_file_timer.start()
+            # Force check for new file on startup with slight delay to ensure UI is ready
+            QtCore.QTimer.singleShot(500, self.force_reset_project_display)
 
         except Exception as e:
             error_message = f"Error initializing SavePlus UI: {str(e)}"
@@ -1705,54 +1838,47 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
         print(f"Save reminder interval updated to {value} minutes")
 
     def closeEvent(self, event):
-        """Handle clean up when window is closed"""
+        """Handle clean up when window is closed.
+
+        Kills every timer and scriptJob this window created.  The scene-event
+        jobs are created with protected=True, so they must be killed with
+        force=True — a plain kill silently fails and the job keeps firing
+        into the deleted window on every scene change.
+        """
         savePlus_core.debug_print("Closing SavePlus UI")
         try:
             # Stop redirecting output
             if hasattr(self, 'log_redirector') and self.log_redirector:
                 self.log_redirector.stop_redirect()
-            
-            # Stop Qt timer
-            if hasattr(self, 'save_timer') and self.save_timer.isActive():
-                self.save_timer.stop()
-                print("[DEBUG] Stopped Qt timer during close")
-                
-            # Kill any active scriptJobs
-            if hasattr(self, 'timer_job_id') and self.timer_job_id is not None:
-                try:
-                    cmds.scriptJob(kill=self.timer_job_id)
-                    print(f"[DEBUG] Killed timer scriptJob during close: {self.timer_job_id}")
-                    self.timer_job_id = None
-                except Exception as e:
-                    print(f"[DEBUG] Error killing scriptJob during close: {e}")
-            
-            # Kill file open job
-            if hasattr(self, 'file_open_job') and self.file_open_job is not None:
-                try:
-                    cmds.scriptJob(kill=self.file_open_job)
-                    print(f"[DEBUG] Killed file open scriptJob during close")
-                except Exception as e:
-                    print(f"[DEBUG] Error killing file open scriptJob: {e}")
-            
-            # Kill new scene job
-            if hasattr(self, 'new_scene_job') and self.new_scene_job is not None:
-                try:
-                    cmds.scriptJob(kill=self.new_scene_job)
-                    print(f"[DEBUG] Killed new scene scriptJob during close")
-                except Exception as e:
-                    print(f"[DEBUG] Error killing new scene scriptJob: {e}")
-            
-            # Stop backup timer
-            if hasattr(self, 'backup_timer') and self.backup_timer:
-                self.backup_timer.stop()
-            
+
+            # Stop Qt timers
+            for timer_attr in ('save_timer', 'backup_timer', 'new_file_timer'):
+                timer = getattr(self, timer_attr, None)
+                if timer is not None:
+                    try:
+                        timer.stop()
+                    except Exception:
+                        pass
+
+            # Kill every scriptJob this window registered
+            for job_attr in ('timer_job_id', 'file_open_job', 'new_scene_job',
+                             'workspace_change_callback', 'debug_scriptJob'):
+                job_id = getattr(self, job_attr, None)
+                if job_id is not None:
+                    try:
+                        cmds.scriptJob(kill=job_id, force=True)
+                        savePlus_core.debug_print(f"Killed scriptJob {job_attr}: {job_id}")
+                    except Exception as e:
+                        savePlus_core.debug_print(f"Error killing {job_attr}: {e}")
+                    setattr(self, job_attr, None)
+
             # Disable auto resize to prevent errors during shutdown
             self.auto_resize_enabled = False
         except Exception as e:
             savePlus_core.debug_print(f"Error during close: {e}")
-        
+
         super(SavePlusUI, self).closeEvent(event)
-    
+
     def create_menu_bar(self):
         """Create the menu bar with all menu items"""
         menu_bar = self.menuBar()
@@ -2056,7 +2182,7 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
                 self.save_location_label.setStyleSheet("color: #4CAF50; font-size: 10px; background-color: transparent; padding: 3px; border-radius: 2px;")
             else:
                 # Blue text for non-project paths with dark background
-                self.save_location_label.setStyleSheet("color: #0066CC; font-size: 10px; background-color: transparent; padding: 3px; border-radius: 2px;")
+                self.save_location_label.setStyleSheet("color: #5599d4; font-size: 10px; background-color: transparent; padding: 3px; border-radius: 2px;")
 
     def browse_default_save_location(self):
         """Open file browser to select default save location directory"""
@@ -3806,6 +3932,10 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
 
     def update_version_preview(self):
         """Update the version preview to show what the next save will be"""
+        # Signals fired while the UI is still being built can land here
+        # before the preview widget exists — nothing to update yet.
+        if not hasattr(self, 'version_preview_text'):
+            return
         try:
             filename = self.filename_input.text()
             if not filename:
@@ -3901,43 +4031,6 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
         except Exception as e:
             print(f"[ERROR] Timer check failed in scriptJob: {str(e)}")
             traceback.print_exc()
-
-    def closeEvent(self, event):
-        """Handle clean up when window is closed"""
-        savePlus_core.debug_print("Closing SavePlus UI")
-        try:
-            # Stop redirecting output
-            if hasattr(self, 'log_redirector') and self.log_redirector:
-                self.log_redirector.stop_redirect()
-            
-            # Stop Qt timer
-            if hasattr(self, 'save_timer') and self.save_timer.isActive():
-                self.save_timer.stop()
-                print("[DEBUG] Stopped Qt timer during close")
-                
-            # Kill any active scriptJobs
-            if hasattr(self, 'timer_job_id') and self.timer_job_id is not None:
-                try:
-                    cmds.scriptJob(kill=self.timer_job_id)
-                    print(f"[DEBUG] Killed timer scriptJob during close: {self.timer_job_id}")
-                    self.timer_job_id = None
-                except Exception as e:
-                    print(f"[DEBUG] Error killing scriptJob during close: {e}")
-            
-            # Stop backup timer
-            if hasattr(self, 'backup_timer') and self.backup_timer:
-                self.backup_timer.stop()
-            
-            if hasattr(self, 'new_file_timer') and self.new_file_timer.isActive():
-                self.new_file_timer.stop()
-                print("[DEBUG] Stopped new file check timer during close")
-
-            # Disable auto resize to prevent errors during shutdown
-            self.auto_resize_enabled = False
-        except Exception as e:
-            savePlus_core.debug_print(f"Error during close: {e}")
-        
-        super(SavePlusUI, self).closeEvent(event)
 
     def bootstrap_timer(self):
         """Safely establish the timer after all UI components are ready"""

@@ -1,7 +1,7 @@
 // =============================================================================
 // install_atk_toolbar.mel
 //
-// DRAG AND DROP INSTALLER — Animation Tool Kit Toolbar for Maya
+// DRAG AND DROP INSTALLER - Animation Tool Kit Toolbar for Maya
 //
 // How to use:
 //   Drag this .mel file from Windows Explorer / Finder onto the Maya viewport.
@@ -159,7 +159,7 @@ global proc atk__replaceShelfButton(
 {
     if ($shelf == "" || !`shelfLayout -ex $shelf`)
     {
-        warning("ATK Toolbar: could not find shelf '" + $shelf + "' — skipping shelf button.");
+        warning("ATK Toolbar: could not find shelf '" + $shelf + "' - skipping shelf button.");
         return;
     }
 
@@ -197,7 +197,7 @@ global proc atk__install()
     string $pkgFolder   = "atk_toolbar";
     string $iconFile    = "ATK_icon.png";
     string $shelfLabel  = "ATK";
-    string $annotation  = "ATK_TOOLBAR_SHELF_BUTTON — Toggle the Animation Tool Kit Toolbar on/off";
+    string $annotation  = "ATK_TOOLBAR_SHELF_BUTTON - Toggle the Animation Tool Kit Toolbar on/off";
 
     // Shelf button command: toggle the toolbar visibility on/off without
     // reloading the package, so workspaceControl state is preserved between
@@ -217,7 +217,7 @@ global proc atk__install()
     if ($installDir == "")
     {
         confirmDialog
-            -title   ($toolName + " — Install Failed")
+            -title   ($toolName + " - Install Failed")
             -message  "Could not locate the installer folder.\n\nInstallation cancelled."
             -button  "OK";
         return;
@@ -228,7 +228,7 @@ global proc atk__install()
     if (!`filetest -d $srcPkgDir`)
     {
         confirmDialog
-            -title   ($toolName + " — Missing Folder")
+            -title   ($toolName + " - Missing Folder")
             -message ("Could not find:\n\n" + $srcPkgDir
                       + "\n\nMake sure the atk_toolbar/ folder is in the same directory as this .mel file.")
             -button  "OK";
@@ -240,7 +240,7 @@ global proc atk__install()
     string $prefDir    = atk__normPath(`internalVar -userPrefDir`);
     string $iconsDir   = $prefDir + "icons/";
 
-    // ---- 1. Copy atk_toolbar package (.py files) → userScriptDir/atk_toolbar/ --
+    // ---- 1. Copy atk_toolbar package (.py files) -> userScriptDir/atk_toolbar/ --
     print "// Copying toolbar package files:\n";
     string $dstPkgDir = $scriptsDir + $pkgFolder + "/";
 
@@ -272,7 +272,7 @@ global proc atk__install()
     }
     else
     {
-        warning("ATK Toolbar: " + $iconFile + " not found — shelf button will use default icon.");
+        warning("ATK Toolbar: " + $iconFile + " not found - shelf button will use default icon.");
     }
 
     // Copy gearIcon.png (settings button icon) to icons dir
@@ -302,7 +302,7 @@ global proc atk__install()
     // Tool folders live under "animation tool kit scripts/" next to this installer
     string $toolsBase = $installDir + "animation tool kit scripts/";
 
-    // ---- 3. Copy individual tool scripts → userScriptDir ----------------------
+    // ---- 3. Copy individual tool scripts -> userScriptDir ----------------------
     print "// Copying tool scripts:\n";
 
     // Single-file tools: copy the main .py to scriptsDir
@@ -333,7 +333,7 @@ global proc atk__install()
             warning("ATK Installer: tool script not found (skipped): " + $fullSrc);
     }
 
-    // SavePlus is a multi-file package — copy all its .py files
+    // SavePlus is a multi-file package - copy all its .py files
     string $savePlusFiles[] = {
         "SavePlus_2_0_5/savePlus_launcher.py",
         "SavePlus_2_0_5/savePlus_core.py",
@@ -350,7 +350,7 @@ global proc atk__install()
             warning("ATK Installer: SavePlus file not found (skipped): " + $fullSrc);
     }
 
-    // Studio Library is a multi-package tool — copy its src/ packages to scriptsDir
+    // Studio Library is a multi-package tool - copy its src/ packages to scriptsDir
     string $studioLibSrc = $toolsBase + "studiolibrary-2.21.1/src/";
     string $studioLibPkgs[] = {
         "studiolibrary",
@@ -379,7 +379,7 @@ global proc atk__install()
             warning("ATK Installer: Studio Library package not found (skipped): " + $pkgSrc);
     }
 
-    // Bookmarks (time_bookmarks) is a package — copy from Bookmarks/src/time_bookmarks
+    // Bookmarks (time_bookmarks) is a package - copy from Bookmarks/src/time_bookmarks
     string $bookmarksSrc = $toolsBase + "Bookmarks/src/time_bookmarks";
     if (`filetest -d $bookmarksSrc`)
     {
@@ -397,7 +397,7 @@ global proc atk__install()
     else
         warning("ATK Installer: Bookmarks package not found (skipped): " + $bookmarksSrc);
 
-    // Tangent Tools is a package — copy from tangent_tools/src/tangent_tools
+    // Tangent Tools is a package - copy from tangent_tools/src/tangent_tools
     string $tangentToolsSrc = $toolsBase + "tangent_tools/src/tangent_tools";
     if (`filetest -d $tangentToolsSrc`)
     {
@@ -415,7 +415,7 @@ global proc atk__install()
     else
         warning("ATK Installer: Tangent Tools package not found (skipped): " + $tangentToolsSrc);
 
-    // Playblast Creator v2.0.4 — matches the standalone installer layout so
+    // Playblast Creator v2.0.4 - matches the standalone installer layout so
     // the plug-in file and UI resolve the same way whether the toolbar or
     // the drag-and-drop installer copied them in.
     string $pbcSrcDir = $toolsBase + "Playblast_Creator";
@@ -448,7 +448,7 @@ global proc atk__install()
     else
         warning("ATK Installer: Playblast Creator folder not found (skipped): " + $pbcSrcDir);
 
-    // ---- 4. Copy tool icons → userBitmapsDir ----------------------------------
+    // ---- 4. Copy tool icons -> userBitmapsDir ----------------------------------
     print "// Copying tool icons:\n";
     string $toolIcons[] = {
         "Temp_Pivot_Tool_1_0_5/temp-pivot.png",
@@ -551,7 +551,7 @@ global proc atk__install()
 
     // ---- Done -----------------------------------------------------------------
     print ("// ============================================================\n");
-    print ("// Animation Tool Kit Toolbar — Installation Complete\n");
+    print ("// Animation Tool Kit Toolbar - Installation Complete\n");
     print ("// Package  -> " + $dstPkgDir + "\n");
     print ("// Scripts  -> " + $scriptsDir + "\n");
     print ("// Icons    -> " + $iconsDir + "\n");
@@ -559,13 +559,16 @@ global proc atk__install()
     print ("// ============================================================\n");
 
     confirmDialog
-        -title   ($toolName + " — Installed!")
-        -message ("Installation complete!\n\n"
-                  + "Toolbar package:\n" + $dstPkgDir + "\n\n"
-                  + "Tool scripts + icons copied to Maya prefs.\n\n"
-                  + "Shelf button added to the \"" + $currentShelf + "\" shelf.\n\n"
-                  + "Click the ATK shelf button to open the toolbar.")
-        -button  "OK";
+        -title   ($toolName + " Installed Successfully")
+        -message ("The Animation Tool Kit Toolbar is ready to use!\n\n"
+                  + "What was installed:\n"
+                  + "  -  Toolbar package:  " + $dstPkgDir + "\n"
+                  + "  -  Tool scripts and icons copied to your Maya preferences\n"
+                  + "  -  \"ATK\" button added to the \"" + $currentShelf + "\" shelf\n\n"
+                  + "Getting started:\n"
+                  + "Click the ATK shelf button to show or hide the toolbar.\n"
+                  + "Hover over any toolbar icon to see what the tool does.")
+        -button  "Let's Animate!";
 }
 
 // Run immediately on drag-and-drop

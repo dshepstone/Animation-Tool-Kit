@@ -1,7 +1,7 @@
 // =============================================================================
 // install_wire_shape_tool.mel
 //
-// DRAG AND DROP INSTALLER — Wire Shape Tool for Maya
+// DRAG AND DROP INSTALLER - Wire Shape Tool for Maya
 //
 // How to use:
 //   Drag this .mel file from Windows Explorer / Finder onto the Maya viewport.
@@ -137,7 +137,7 @@ global proc wst__replaceShelfButton(
 {
     if ($shelf == "" || !`shelfLayout -ex $shelf`)
     {
-        warning("Wire Shape Tool: could not find shelf '" + $shelf + "' — skipping shelf button.");
+        warning("Wire Shape Tool: could not find shelf '" + $shelf + "' - skipping shelf button.");
         return;
     }
 
@@ -175,7 +175,7 @@ global proc wst__install()
     string $pyFile     = "wire_shape_tool.py";
     string $iconFile   = "Shape_Icon.png";
     string $shelfLabel = "Wire Shapes";
-    string $annotation = "Open Wire Shape Tool — create rig control curve shapes";
+    string $annotation = "Open Wire Shape Tool - create rig control curve shapes";
 
     string $pyCmd = "";
     $pyCmd += "import sys, importlib\n";
@@ -192,7 +192,7 @@ global proc wst__install()
     if ($installDir == "")
     {
         confirmDialog
-            -title   ($toolName + " — Install Failed")
+            -title   ($toolName + " - Install Failed")
             -message  "Could not locate the installer folder.\n\nInstallation cancelled."
             -button  "OK";
         return;
@@ -205,7 +205,7 @@ global proc wst__install()
     if (!wst__fileExists($srcPy))
     {
         confirmDialog
-            -title   ($toolName + " — Missing File")
+            -title   ($toolName + " - Missing File")
             -message ("Could not find:\n\n" + $srcPy
                       + "\n\nMake sure wire_shape_tool.py is in the same folder as this .mel file.")
             -button  "OK";
@@ -231,7 +231,7 @@ global proc wst__install()
     }
     else
     {
-        warning("Wire Shape Tool: Shape_Icon.png not found — shelf button will use default icon.");
+        warning("Wire Shape Tool: Shape_Icon.png not found - shelf button will use default icon.");
     }
 
     // ---- Add shelf button to the currently active shelf -----------------------
@@ -251,14 +251,14 @@ global proc wst__install()
 
     // ---- Done -----------------------------------------------------------------
     print ("// ============================================================\n");
-    print ("// Wire Shape Tool — Installation Complete\n");
+    print ("// Wire Shape Tool - Installation Complete\n");
     print ("// Script  -> " + $scriptsDir + $pyFile   + "\n");
     print ("// Icon    -> " + $iconsDir   + $iconFile + "\n");
     print ("// Shelf   -> " + $currentShelf            + "\n");
     print ("// ============================================================\n");
 
     confirmDialog
-        -title   ($toolName + " — Installed!")
+        -title   ($toolName + " - Installed!")
         -message ("Installation complete!\n\n"
                   + "Script copied to:\n"  + $scriptsDir + "\n\n"
                   + "Icon copied to:\n"    + $iconsDir   + "\n\n"
