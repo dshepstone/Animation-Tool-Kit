@@ -53,7 +53,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.0.7"
+VERSION        = "1.0.8"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -581,16 +581,16 @@ def _auto_orient_docked():
     """Match the bar's layout to the dock area it was dropped into.
 
     Runs after a user drag docks the control (floatingChangeCommand fires on
-    the transition, never on programmatic creation).  The drop point decides
-    the orientation: the cursor is still at the spot where the user released
-    the drag, so the nearest main-window edge tells us which dock area took
-    the bar — left/right areas turn it vertical, top/bottom horizontal.  The
-    saved dock position is updated to the matching zone so the gear menu and
-    the next launch stay in sync.  Geometry (a control filling most of the
-    window's height sits in a side area; one spanning most of the width in a
-    top/bottom area) is used when it is unambiguous or the cursor is outside
-    the window.  Rebuilds in place — never undocks the control the user just
-    docked.
+    the transition, never on programmatic creation).  The control's CENTRE
+    inside the main window identifies the dock area: side areas centre the
+    bar in the left/right portion of the window, top/bottom areas centre it
+    near the top/bottom edge.  This holds even right after the drop, when a
+    wide horizontal bar makes a side area temporarily wider than it is tall
+    (the case that fooled earlier aspect/cursor-based heuristics and left
+    overlapping icons in a side dock).  Left/right areas turn the bar
+    vertical, top/bottom horizontal, and the saved dock position is synced
+    to the matching zone.  Rebuilds in place — never undocks the control the
+    user just docked.
     """
     global _toolbar_widget
     try:
@@ -608,45 +608,32 @@ def _auto_orient_docked():
 
         maya_win = _maya_main_window()
         new_orient = None
+        drop_zone  = None
 
-        # Geometry signal — trust it only when exactly one axis fires.
-        # A wide bar freshly dropped into a side area can momentarily make
-        # that area both wide AND tall, which is why the drop point below
-        # breaks the tie.
         if maya_win is not None and maya_win.width() > 0 and maya_win.height() > 0:
-            geo_vertical   = h >= maya_win.height() * 0.45
-            geo_horizontal = w >= maya_win.width() * 0.45
-            if geo_vertical != geo_horizontal:
-                new_orient = "vertical" if geo_vertical else "horizontal"
-
-        # Drop-point signal: nearest main-window edge decides the axis and
-        # the matching dock-position preference.
-        drop_zone = None
-        if maya_win is not None:
             try:
-                gp = QtGui.QCursor.pos()
-                rect = QtCore.QRect(maya_win.mapToGlobal(QtCore.QPoint(0, 0)),
-                                    maya_win.size())
-                if rect.contains(gp):
-                    d_left, d_right = gp.x() - rect.left(), rect.right() - gp.x()
-                    d_top, d_bottom = gp.y() - rect.top(), rect.bottom() - gp.y()
-                    if min(d_left, d_right) < min(d_top, d_bottom):
-                        drop_zone = "left" if d_left < d_right else "right"
-                    else:
-                        drop_zone = "below_shelf" if d_top < d_bottom else "above_timeline"
+                top_left = content.mapToGlobal(QtCore.QPoint(0, 0))
+                origin   = maya_win.mapToGlobal(QtCore.QPoint(0, 0))
+                cx = (top_left.x() - origin.x() + w / 2.0) / float(maya_win.width())
+                cy = (top_left.y() - origin.y() + h / 2.0) / float(maya_win.height())
+                # Whichever axis the centre is further off-centre on wins:
+                # far left/right of centre → side area; near the top/bottom
+                # edge → top/bottom area.
+                if abs(cx - 0.5) > abs(cy - 0.5):
+                    drop_zone  = "left" if cx < 0.5 else "right"
+                    new_orient = "vertical"
+                else:
+                    drop_zone  = "below_shelf" if cy < 0.5 else "above_timeline"
+                    new_orient = "horizontal"
             except Exception:
-                drop_zone = None
+                new_orient = None
+                drop_zone  = None
 
         if new_orient is None:
-            if drop_zone is not None:
-                new_orient = "vertical" if drop_zone in ("left", "right") else "horizontal"
-            else:
-                new_orient = "vertical" if h > w else "horizontal"
+            new_orient = "vertical" if h > w else "horizontal"
 
-        # Keep the saved dock position in sync with where the bar landed,
-        # but only when the drop point agrees with the chosen orientation.
-        if drop_zone is not None and (
-                (drop_zone in ("left", "right")) == (new_orient == "vertical")):
+        # Keep the saved dock position in sync with where the bar landed.
+        if drop_zone is not None:
             cmds.optionVar(sv=(_OPT_DOCK_POSITION, drop_zone))
 
         cur = (cmds.optionVar(q=_OPT_ORIENTATION)
@@ -695,7 +682,9 @@ def _on_floating_change():
         QtCore.QTimer.singleShot(150, _remove_min_max_buttons)
         QtCore.QTimer.singleShot(150, _resize_to_fit)
         QtCore.QTimer.singleShot(280, _auto_orient_docked)
-        QtCore.QTimer.singleShot(600, _resize_to_fit)
+        # Second pass once the dock layout has fully settled — corrects the
+        # orientation if the first measurement caught mid-transition geometry.
+        QtCore.QTimer.singleShot(650, _auto_orient_docked)
 
 
 # ---------------------------------------------------------------------------
