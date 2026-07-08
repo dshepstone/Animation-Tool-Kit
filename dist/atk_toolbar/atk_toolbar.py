@@ -53,7 +53,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.0.6"
+VERSION        = "1.0.7"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -421,6 +421,62 @@ def _dock_to_preferred():
     QtCore.QTimer.singleShot(0, show)
 
 
+def _dock_to_position(dock_pos):
+    """Re-dock the toolbar at one of DOCK_POSITIONS and remember it as the
+    preferred position (keeps the gear menu and next launch in sync with
+    where the user actually dropped the bar)."""
+    if dock_pos in DOCK_POSITIONS:
+        cmds.optionVar(sv=(_OPT_DOCK_POSITION, dock_pos))
+    QtCore.QTimer.singleShot(0, show)
+
+
+# ---------------------------------------------------------------------------
+# Grip-drag drop zones
+# ---------------------------------------------------------------------------
+# Maya only shows its own dock drop zones for a native tab drag; a window
+# moved programmatically (the grip drag) never triggers them.  So the grip
+# release checks the cursor against the main window's edges and re-docks the
+# bar itself, mirroring the four Workspace dock positions.
+_EDGE_SNAP_X   = 90    # px from the main window's left/right edge
+_EDGE_SNAP_TOP = 170   # px from the top edge (status line + shelf region)
+_EDGE_SNAP_BOT = 140   # px from the bottom edge (timeline region)
+
+
+def _screen_available_at(gp):
+    """availableGeometry of the screen containing global point gp, or None."""
+    try:
+        screen = QtGui.QGuiApplication.screenAt(gp)
+        if screen is None:
+            screen = QtGui.QGuiApplication.primaryScreen()
+        if screen is not None:
+            return screen.availableGeometry()
+    except Exception:
+        pass
+    return None
+
+
+def _dock_zone_at(gp):
+    """Dock position for a drag released at global point gp, or None to stay floating."""
+    maya_win = _maya_main_window()
+    if maya_win is None:
+        return None
+    try:
+        rect = QtCore.QRect(maya_win.mapToGlobal(QtCore.QPoint(0, 0)), maya_win.size())
+    except Exception:
+        return None
+    if not rect.contains(gp):
+        return None
+    if gp.x() - rect.left() <= _EDGE_SNAP_X:
+        return "left"
+    if rect.right() - gp.x() <= _EDGE_SNAP_X:
+        return "right"
+    if rect.bottom() - gp.y() <= _EDGE_SNAP_BOT:
+        return "above_timeline"
+    if gp.y() - rect.top() <= _EDGE_SNAP_TOP:
+        return "below_shelf"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Smooth undock (tear-off) transition
 # ---------------------------------------------------------------------------
@@ -433,6 +489,7 @@ def _dock_to_preferred():
 # it in with a short fade (plus a subtle grow when the mouse is not still
 # dragging it).
 _release_anim = None   # keep a reference so the animation is not GC'd mid-flight
+_grip_drag_active = False   # True while the grip handle is dragging the bar
 
 
 def _get_floating_window():
@@ -454,6 +511,8 @@ def _get_floating_window():
 def _begin_float_release():
     """Make the freshly torn-off window invisible so the flag-stripping and
     resize that follow an undock happen off-screen instead of visibly popping."""
+    if _grip_drag_active:
+        return
     win = _get_floating_window()
     if win is not None:
         try:
@@ -465,6 +524,8 @@ def _begin_float_release():
 def _finish_float_release():
     """Ease the floating toolbar window in after the chrome work is done."""
     global _release_anim
+    if _grip_drag_active:
+        return
     win = _get_floating_window()
     if win is None:
         return
@@ -581,6 +642,12 @@ def _on_floating_change():
         floating = False
 
     if floating:
+        if _grip_drag_active:
+            # A grip drag tore the bar off: leave the window completely
+            # alone — stripping flags or resizing would recreate/move the
+            # native window under the mouse grab and send the bar flying.
+            # The grip's release handler runs the deferred chrome work.
+            return
         QtCore.QTimer.singleShot(0, _begin_float_release)
         QtCore.QTimer.singleShot(150, _remove_min_max_buttons)
         QtCore.QTimer.singleShot(160, _resize_to_fit)
@@ -636,6 +703,7 @@ class _GripHandle(QtWidgets.QWidget):
         self._hovered = False
         self._press_global = None   # global pos of the press starting a drag
         self._dragging = False
+        self._win_offset = None     # grab point inside the floating window frame
 
         if orientation == "horizontal":
             self.setFixedWidth(10)
@@ -693,12 +761,14 @@ class _GripHandle(QtWidgets.QWidget):
         if event.button() == QtCore.Qt.LeftButton:
             self._press_global = _event_global_pos(event)
             self._dragging = False
+            self._win_offset = None
             self.setCursor(QtCore.Qt.ClosedHandCursor)
             event.accept()
             return
         super(_GripHandle, self).mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        global _grip_drag_active
         if self._press_global is None:
             super(_GripHandle, self).mouseMoveEvent(event)
             return
@@ -709,8 +779,12 @@ class _GripHandle(QtWidgets.QWidget):
             if (gp - self._press_global).manhattanLength() < drag_dist:
                 return
             # Threshold crossed: tear the bar off its dock and let the
-            # floating window follow the mouse until release.
+            # floating window follow the mouse until release.  The flag
+            # makes _on_floating_change leave the window alone — its
+            # chrome work (setWindowFlags/resize) would recreate the
+            # native window under the grab and send the bar flying.
             self._dragging = True
+            _grip_drag_active = True
             if not _toolbar_is_floating():
                 _undock_toolbar()
                 # Maya re-parents the content into a new top-level window;
@@ -722,25 +796,63 @@ class _GripHandle(QtWidgets.QWidget):
 
         win = self.window()
         maya_win = _maya_main_window()
-        if win is not None and win is not maya_win:
+        if win is None or win is maya_win:
+            event.accept()
+            return
+
+        if self._win_offset is None:
+            # First move after the tear-off: grab the window by the grip.
+            # Include the frame offset (title bar) so win.move() — which
+            # positions the frame, not the client area — keeps the grip
+            # under the cursor instead of sagging the bar downwards.
             try:
-                offset = self.mapTo(win, _event_local_pos(event))
+                local = self.mapTo(win, _event_local_pos(event))
+                frame_delta = win.geometry().topLeft() - win.frameGeometry().topLeft()
+                self._win_offset = local + frame_delta
             except Exception:
-                offset = QtCore.QPoint(24, 16)
-            win.move(gp - offset)
+                self._win_offset = QtCore.QPoint(24, 16)
+
+        target = gp - self._win_offset
+        avail = _screen_available_at(gp)
+        if avail is not None:
+            # Never let the bar leave the screen.
+            min_x = avail.left() - win.width() + 60
+            max_x = avail.right() - 60
+            min_y = avail.top()
+            max_y = avail.bottom() - 40
+            target.setX(min(max(target.x(), min_x), max_x))
+            target.setY(min(max(target.y(), min_y), max_y))
+        win.move(target)
         event.accept()
 
     def mouseReleaseEvent(self, event):
+        global _grip_drag_active
         if event.button() == QtCore.Qt.LeftButton:
             try:
                 self.releaseMouse()
             except Exception:
                 pass
-            if not self._dragging and self._press_global is not None:
-                _undock_toolbar()   # plain click: float in place
+            was_dragging = self._dragging
+            had_press    = self._press_global is not None
             self._press_global = None
             self._dragging = False
+            self._win_offset = None
+            _grip_drag_active = False
             self.setCursor(QtCore.Qt.OpenHandCursor)
+
+            if was_dragging:
+                # Dropped near a main-window edge: snap-dock there (the
+                # orientation auto-corrects via the dock transition).
+                zone = _dock_zone_at(_event_global_pos(event))
+                if zone:
+                    _dock_to_position(zone)
+                else:
+                    # Stays floating — run the chrome work deferred during
+                    # the drag (strip min/max buttons, fit to content).
+                    QtCore.QTimer.singleShot(0, _remove_min_max_buttons)
+                    QtCore.QTimer.singleShot(60, _resize_to_fit)
+            elif had_press:
+                _undock_toolbar()   # plain click: float in place
             event.accept()
             return
         super(_GripHandle, self).mouseReleaseEvent(event)
