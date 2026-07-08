@@ -49,7 +49,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.0.3"
+VERSION        = "1.0.4"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -73,6 +73,14 @@ _DOCK_MENU_LABELS = {
 _INB_TOOLBAR_SLIDER_WIDTH = 290
 _INB_TOOLBAR_SLIDER_HEIGHT = 52
 _FRAME_STEPPER_WIDTH = 118
+
+# Vertical-bar variant of the inline Inbetweener slider: the horizontal-only
+# VertexTickedSlider is embedded in a QGraphicsView rotated -90 degrees.
+_INB_VSLIDER_LEN   = 220   # rotated slider length along the bar
+_INB_VSLIDER_THICK = 44    # rotated slider thickness across the bar
+_INB_VSLIDER_BLOCK_HEIGHT = 258   # margins + mode combo + spacing + rotated slider view
+
+_VERTICAL_SCROLLBAR_W = 14   # width reserved for the vertical bar's scrollbar
 
 _BTN_STYLE_NORMAL = (
     "QToolButton {"
@@ -102,6 +110,21 @@ _BTN_STYLE_SETTINGS = (
     "QToolButton:pressed {"
     "  background: rgba(144,164,174,80);"
     "}"
+)
+
+# Slim, dark scrollbar for the vertical bar's scroll area.
+_SCROLL_STYLE = (
+    "QScrollArea { background: transparent; border: none; }"
+    "QScrollArea > QWidget > QWidget { background: transparent; }"
+    "QScrollBar:vertical {"
+    "  background: transparent; width: 10px; margin: 0;"
+    "}"
+    "QScrollBar::handle:vertical {"
+    "  background: #5a5a5a; border-radius: 4px; min-height: 24px;"
+    "}"
+    "QScrollBar::handle:vertical:hover { background: #787878; }"
+    "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+    "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
 )
 
 # ---------------------------------------------------------------------------
@@ -182,9 +205,28 @@ def _calc_content_height():
     n_buttons, n_seps = _count_layout_items()
     n_items  = n_buttons + n_seps
     total = (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+    total += 12   # grip handle strip
     if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
-        total += (_INB_TOOLBAR_SLIDER_HEIGHT + spacing)
+        total += (_INB_VSLIDER_BLOCK_HEIGHT + spacing)
     return total
+
+
+def _horizontal_bar_height():
+    """Pixel height of the horizontal bar's content (no window chrome)."""
+    icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
+    h = icon_sz + 8 + 4   # button size + layout margins
+    if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+        h = max(h, _INB_TOOLBAR_SLIDER_HEIGHT + 4)
+    return h
+
+
+def _vertical_bar_width():
+    """Pixel width of the vertical bar, including its scrollbar allowance."""
+    icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
+    w = icon_sz + 8 + 4   # button size + layout margins
+    if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+        w = max(w, _INB_VSLIDER_THICK + 8, 60)
+    return w + _VERTICAL_SCROLLBAR_W
 
 
 def _calc_content_width():
@@ -197,6 +239,7 @@ def _calc_content_width():
     n_buttons, n_seps = _count_layout_items()
     n_items  = n_buttons + n_seps
     total = (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
+    total += 12   # grip handle strip
     if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
         total += (_INB_TOOLBAR_SLIDER_WIDTH + spacing)
     if atk_loader.is_tool_installed("add_remove") and _show_frame_stepper():
@@ -213,12 +256,16 @@ def _get_chrome_height():
         return 32
 
 
-def _resize_to_fit():
-    """Resize the floating workspaceControl to exactly fit its content.
+_QWIDGETSIZE_MAX = 16777215
 
-    Ignored when the control is docked (the dock handles sizing).
-    Uses both the Maya workspaceControl API and direct Qt window resize
-    to ensure the window shrinks in both dimensions on orientation change.
+
+def _resize_to_fit():
+    """Fit the workspaceControl to its content.
+
+    Floating: resize the wrapper window to hug the button strip.
+    Docked:   clamp the strip's thin axis (height for a horizontal bar,
+              width for a vertical one) so the dock area hugs the bar
+              instead of surrounding it with dead space.
     """
     if not cmds.workspaceControl(WORKSPACE_NAME, exists=True):
         return
@@ -226,21 +273,69 @@ def _resize_to_fit():
         floating = cmds.workspaceControl(WORKSPACE_NAME, q=True, floating=True)
     except Exception:
         return
+
+    orient = (cmds.optionVar(q=_OPT_ORIENTATION)
+              if cmds.optionVar(exists=_OPT_ORIENTATION) else "horizontal")
+
+    content = None
+    try:
+        ptr = omui.MQtUtil.findControl(WORKSPACE_NAME)
+        if ptr is not None:
+            content = wrapInstance(int(ptr), QtWidgets.QWidget)
+    except Exception:
+        content = None
+
     if not floating:
+        # Docked: cap the wrapper widget's thin axis (Maya's dock layout
+        # respects child maximum sizes) and free the long axis, then nudge
+        # the workspaceControl to the exact size.
+        try:
+            if orient == "vertical":
+                bar_w = _vertical_bar_width()
+                if content is not None:
+                    content.setMaximumWidth(bar_w)
+                    content.setMaximumHeight(_QWIDGETSIZE_MAX)
+                cmds.workspaceControl(WORKSPACE_NAME, edit=True, width=bar_w)
+            else:
+                bar_h = _horizontal_bar_height()
+                if content is not None:
+                    content.setMaximumHeight(bar_h)
+                    content.setMaximumWidth(_QWIDGETSIZE_MAX)
+                cmds.workspaceControl(WORKSPACE_NAME, edit=True, height=bar_h)
+        except Exception:
+            pass
+        try:
+            if orient == "vertical":
+                cmds.workspaceControl(WORKSPACE_NAME, edit=True,
+                                      widthProperty="fixed", heightProperty="free")
+            else:
+                cmds.workspaceControl(WORKSPACE_NAME, edit=True,
+                                      heightProperty="fixed", widthProperty="free")
+        except Exception:
+            pass
         return
 
-    icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
-    btn_sz  = icon_sz + 8
-    orient  = (cmds.optionVar(q=_OPT_ORIENTATION)
-               if cmds.optionVar(exists=_OPT_ORIENTATION) else "horizontal")
-    chrome  = _get_chrome_height()
-
+    chrome = _get_chrome_height()
     if orient == "vertical":
-        new_w = btn_sz + 8
+        new_w = _vertical_bar_width()
         new_h = _calc_content_height() + chrome
+        # Cap to the screen — the scroll area shows whatever doesn't fit.
+        try:
+            avail = QtWidgets.QApplication.primaryScreen().availableGeometry()
+            new_h = min(new_h, avail.height() - 120)
+        except Exception:
+            pass
     else:
         new_w = _calc_content_width() + 8
-        new_h = btn_sz + chrome
+        new_h = _horizontal_bar_height() + chrome
+
+    # Release any docked-state clamps so the floating window can be sized.
+    if content is not None:
+        try:
+            content.setMaximumWidth(_QWIDGETSIZE_MAX)
+            content.setMaximumHeight(_QWIDGETSIZE_MAX)
+        except Exception:
+            pass
 
     try:
         cmds.workspaceControl(WORKSPACE_NAME, edit=True,
@@ -251,9 +346,7 @@ def _resize_to_fit():
     # The workspaceControl edit often only sets minimums and won't shrink
     # the window in the non-primary axis.  Force the Qt window directly.
     try:
-        ptr = omui.MQtUtil.findControl(WORKSPACE_NAME)
-        if ptr is not None:
-            content  = wrapInstance(int(ptr), QtWidgets.QWidget)
+        if content is not None:
             win      = content.window()
             maya_win = _maya_main_window()
             if win is not None and win is not maya_win:
@@ -416,12 +509,64 @@ def _finish_float_release():
             pass
 
 
+def _auto_orient_docked():
+    """Match the bar's layout to the dock area it was dropped into.
+
+    A control filling most of the main window's height landed in a side dock
+    area and becomes a vertical bar; one spanning most of the width landed in
+    a top/bottom area and becomes horizontal.  Rebuilds in place — never
+    undocks the control the user just docked.
+    """
+    global _toolbar_widget
+    try:
+        if not cmds.workspaceControl(WORKSPACE_NAME, exists=True):
+            return
+        if cmds.workspaceControl(WORKSPACE_NAME, q=True, floating=True):
+            return
+        ptr = omui.MQtUtil.findControl(WORKSPACE_NAME)
+        if ptr is None:
+            return
+        content = wrapInstance(int(ptr), QtWidgets.QWidget)
+        w, h = content.width(), content.height()
+        if w <= 0 or h <= 0:
+            return
+
+        maya_win = _maya_main_window()
+        if maya_win is not None and maya_win.width() > 0 and maya_win.height() > 0:
+            if h >= maya_win.height() * 0.45:
+                new_orient = "vertical"
+            elif w >= maya_win.width() * 0.45:
+                new_orient = "horizontal"
+            else:
+                new_orient = "vertical" if h > w else "horizontal"
+        else:
+            new_orient = "vertical" if h > w else "horizontal"
+
+        cur = (cmds.optionVar(q=_OPT_ORIENTATION)
+               if cmds.optionVar(exists=_OPT_ORIENTATION) else "horizontal")
+        if new_orient != cur:
+            cmds.optionVar(sv=(_OPT_ORIENTATION, new_orient))
+            if _toolbar_widget is not None:
+                try:
+                    _toolbar_widget._build()
+                except RuntimeError:
+                    _toolbar_widget = None
+                    _rebuild_ui()
+            else:
+                _rebuild_ui()
+        _resize_to_fit()
+    except Exception:
+        pass
+
+
 def _on_floating_change():
     """Called by Maya's floatingChangeCommand whenever the panel is docked or undocked.
 
     Uses short timers so the new window hierarchy is fully constructed before
     we try to read it.  On an undock the chrome work runs while the window is
     hidden, then the window eases in (see _begin/_finish_float_release).
+    On a dock the layout re-orients to match the dock area's axis and the
+    strip is clamped to hug its content.
     """
     try:
         floating = bool(cmds.workspaceControl(WORKSPACE_NAME, q=True, floating=True))
@@ -436,6 +581,8 @@ def _on_floating_change():
     else:
         QtCore.QTimer.singleShot(150, _remove_min_max_buttons)
         QtCore.QTimer.singleShot(150, _resize_to_fit)
+        QtCore.QTimer.singleShot(280, _auto_orient_docked)
+        QtCore.QTimer.singleShot(600, _resize_to_fit)
 
 
 # ---------------------------------------------------------------------------
@@ -550,12 +697,28 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         show_sep = _show_separators()
 
         if orientation == "vertical":
-            layout = QtWidgets.QVBoxLayout(self)
+            # The button column lives inside a scroll area so every icon
+            # stays reachable when the bar is taller than the dock area.
+            outer = QtWidgets.QVBoxLayout(self)
+            outer.setContentsMargins(0, 0, 0, 0)
+            outer.setSpacing(0)
+
+            scroll = QtWidgets.QScrollArea(self)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+            scroll.setStyleSheet(_SCROLL_STYLE)
+            outer.addWidget(scroll)
+
+            body = QtWidgets.QWidget()
+            scroll.setWidget(body)
+            layout = QtWidgets.QVBoxLayout(body)
             layout.setContentsMargins(2, 2, 2, 2)
             layout.setSpacing(2)
 
             # Grip handle at the very top for tear-off undocking
-            layout.addWidget(_GripHandle("vertical", parent=self))
+            layout.addWidget(_GripHandle("vertical", parent=body))
 
             # Settings gear always at the top
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
@@ -572,13 +735,18 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                     self._add_sep(layout, orientation)
                 btn = self._make_tool_btn(tool, icon_sz, show_tips)
                 self._button_map[tool["id"]] = btn
-                layout.addWidget(btn)
+                layout.addWidget(btn, 0, QtCore.Qt.AlignHCenter)
                 if tool["id"] == "tangent_tools":
                     for tangent_btn in self._make_tangent_quick_buttons(icon_sz, show_tips):
-                        layout.addWidget(tangent_btn)
+                        layout.addWidget(tangent_btn, 0, QtCore.Qt.AlignHCenter)
                 prev_group = tool["group"]
 
             layout.addStretch()
+
+            # Hug the bar: fixed width across, free along the column.
+            self.setMinimumSize(0, 0)
+            self.setMaximumHeight(_QWIDGETSIZE_MAX)
+            self.setFixedWidth(_vertical_bar_width())
 
         else:  # horizontal
             layout = QtWidgets.QHBoxLayout(self)
@@ -635,6 +803,11 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                     layout.addWidget(w)
                 layout.addStretch()
 
+            # Hug the bar: fixed-ish height across, free along the row.
+            self.setMinimumSize(0, 0)
+            self.setMaximumWidth(_QWIDGETSIZE_MAX)
+            self.setMaximumHeight(_horizontal_bar_height())
+
     def _add_settings_btn(self, layout, icon_sz, show_tips, orientation):
         btn = QtWidgets.QToolButton()
         btn.setFixedSize(icon_sz + 8, icon_sz + 8)
@@ -649,13 +822,19 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         btn.customContextMenuRequested.connect(
             lambda pos, b=btn: self._settings_context_menu(b, pos)
         )
-        layout.addWidget(btn)
+        if orientation == "vertical":
+            layout.addWidget(btn, 0, QtCore.Qt.AlignHCenter)
+        else:
+            layout.addWidget(btn)
 
     def _add_inbetweener_slider(self, layout, orientation):
         if not atk_loader.is_tool_installed("inbetweener") or not _show_inline_slider():
             return
         slider = _InbetweenerToolbarSlider(parent=self, orientation=orientation)
-        layout.addWidget(slider)
+        if orientation == "vertical":
+            layout.addWidget(slider, 0, QtCore.Qt.AlignHCenter)
+        else:
+            layout.addWidget(slider)
 
     def _make_tool_btn(self, tool, icon_sz, show_tips):
         btn = QtWidgets.QToolButton()
@@ -908,13 +1087,20 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
     def _build_ui(self):
         self.setObjectName("ATKInbetweenerSlider")
         self.setStyleSheet("#ATKInbetweenerSlider { background: transparent; border: none; }")
-        main = QtWidgets.QHBoxLayout(self)
-        main.setContentsMargins(4, 0, 4, 0)
+        vertical = (self._orientation == "vertical")
+
+        if vertical:
+            main = QtWidgets.QVBoxLayout(self)
+            main.setContentsMargins(0, 4, 0, 4)
+        else:
+            main = QtWidgets.QHBoxLayout(self)
+            main.setContentsMargins(4, 0, 4, 0)
         main.setSpacing(4)
 
         if self._build_failed:
             unavailable = QtWidgets.QLabel("Inbetweener slider unavailable — update the Inbetweener tool")
             unavailable.setStyleSheet("color:#999; font-size:10px;")
+            unavailable.setWordWrap(vertical)
             main.addWidget(unavailable)
             return
 
@@ -938,20 +1124,34 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
             "BD: Blend to Default\n"
             "BE: Blend to Ease"
         )
-        self.slider_type_combo.setFixedWidth(56)
+        self.slider_type_combo.setFixedWidth(52 if vertical else 56)
         self.slider_type_combo.setFixedHeight(24)
         self.slider_type_combo.setStyleSheet(self._combo_style(
             self._config.get("LT", {}).get("color", "#6BB5FF")))
-        main.addWidget(self.slider_type_combo)
+        if vertical:
+            main.addWidget(self.slider_type_combo, 0, QtCore.Qt.AlignHCenter)
+        else:
+            main.addWidget(self.slider_type_combo)
 
         self.slider = self._vt.VertexTickedSlider(QtCore.Qt.Horizontal, label_text="LT")
         self.slider.setTracking(True)
-        self.slider.setMinimumHeight(40)
         self.slider.setRange(0, 100)
         self.slider.setValue(50)
-        self.setFixedWidth(_INB_TOOLBAR_SLIDER_WIDTH)
-        self.setFixedHeight(_INB_TOOLBAR_SLIDER_HEIGHT)
-        main.addWidget(self.slider, 1)
+        if vertical:
+            # VertexTickedSlider paints and maps the mouse horizontally only,
+            # so a vertical bar shows it through a QGraphicsView rotated -90°
+            # (min at the bottom, max at the top).  The proxy widget maps
+            # mouse events back into the slider's own coordinates, keeping
+            # the press/drag/release tween session intact.
+            self.slider.setFixedSize(_INB_VSLIDER_LEN, _INB_VSLIDER_THICK)
+            main.addWidget(self._make_rotated_slider_view(), 0, QtCore.Qt.AlignHCenter)
+            self.setFixedWidth(max(_INB_VSLIDER_THICK + 4, 56))
+            self.setFixedHeight(_INB_VSLIDER_BLOCK_HEIGHT)
+        else:
+            self.slider.setMinimumHeight(40)
+            self.setFixedWidth(_INB_TOOLBAR_SLIDER_WIDTH)
+            self.setFixedHeight(_INB_TOOLBAR_SLIDER_HEIGHT)
+            main.addWidget(self.slider, 1)
 
         self.slider_type_combo.currentTextChanged.connect(self._on_type_changed)
         self.slider.sliderPressed.connect(self._on_pressed)
@@ -961,6 +1161,27 @@ class _InbetweenerToolbarSlider(QtWidgets.QFrame):
             self._on_type_changed("LT")
         except Exception as exc:
             cmds.warning("ATK Toolbar: failed to initialize Inbetweener slider defaults: {}".format(exc))
+
+    def _make_rotated_slider_view(self):
+        """Embed the horizontal slider in a QGraphicsView rotated -90°."""
+        scene = QtWidgets.QGraphicsScene(self)
+        proxy = scene.addWidget(self.slider)
+        proxy.setRotation(-90)
+        view = QtWidgets.QGraphicsView(scene, self)
+        view.setFrameShape(QtWidgets.QFrame.NoFrame)
+        view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        view.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        view.setStyleSheet("background: transparent; border: none;")
+        view.viewport().setAutoFillBackground(False)
+        try:
+            view.setRenderHints(QtGui.QPainter.Antialiasing
+                                | QtGui.QPainter.SmoothPixmapTransform)
+        except Exception:
+            pass
+        rect = proxy.sceneBoundingRect()
+        scene.setSceneRect(rect)
+        view.setFixedSize(int(rect.width()) + 2, int(rect.height()) + 2)
+        return view
 
     @staticmethod
     def _combo_style(accent):
@@ -1289,16 +1510,12 @@ def show():
     orient = "vertical" if dock_pos in ("left", "right") else "horizontal"
     cmds.optionVar(sv=(_OPT_ORIENTATION, orient))
 
-    icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
-    btn_sz  = icon_sz + 8
-    chrome  = _get_chrome_height()
-
     if orient == "vertical":
-        init_w = btn_sz + 8
-        init_h = _calc_content_height() + chrome
+        init_w = _vertical_bar_width()
+        init_h = min(_calc_content_height(), 700)
     else:
         init_w = _calc_content_width() + 8
-        init_h = btn_sz + chrome
+        init_h = _horizontal_bar_height()
 
     # floatingChangeCommand fires every time the panel is docked or undocked,
     # letting us re-strip min/max buttons and re-fit the size after each transition.
@@ -1335,6 +1552,13 @@ def show():
     # toolbars, so actLikeMayaUIElement must stay off there).
     if dock_pos in ("above_timeline", "below_shelf"):
         dock_kw["actLikeMayaUIElement"] = True
+
+    # Fix the strip's thin axis so Maya docks it as a slim bar hugging its
+    # content instead of handing it a huge slab of the dock area.
+    if orient == "vertical":
+        dock_kw["widthProperty"] = "fixed"
+    else:
+        dock_kw["heightProperty"] = "fixed"
 
     # Candidate dock targets, tried in order until one succeeds.
     candidates = []
@@ -1373,6 +1597,10 @@ def show():
             try:
                 cmds.workspaceControl(WORKSPACE_NAME, floatingChangeCommand=float_cmd, **kw)
             except TypeError:
+                # Older Maya missing floatingChangeCommand and/or the
+                # width/height property flags — retry with the basics only.
+                kw.pop("widthProperty", None)
+                kw.pop("heightProperty", None)
                 cmds.workspaceControl(WORKSPACE_NAME, **kw)
             created = True
             break
