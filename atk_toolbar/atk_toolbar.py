@@ -53,7 +53,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.0.8"
+VERSION        = "1.0.9"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -651,6 +651,46 @@ def _auto_orient_docked():
         _resize_to_fit()
     except Exception:
         pass
+
+
+class _DockWatcher(QtCore.QObject):
+    """Watches the workspaceControl wrapper for geometry changes.
+
+    Dragging a docked bar by its tab straight into another dock area is a
+    dock-to-dock move: the floating state never toggles, so Maya's
+    floatingChangeCommand never fires and the orientation fix would never
+    run.  This filter catches the wrapper's Move/Resize events instead and,
+    once they settle (debounced), re-runs the docked orientation/size
+    correction.  Repeated runs converge: once the orientation matches the
+    dock area and the size is clamped, no further geometry events fire.
+    """
+
+    def __init__(self, parent=None):
+        super(_DockWatcher, self).__init__(parent)
+        self._timer = QtCore.QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(250)
+        self._timer.timeout.connect(self._on_settled)
+
+    def eventFilter(self, obj, event):
+        try:
+            if event.type() in (QtCore.QEvent.Move, QtCore.QEvent.Resize):
+                if not _grip_drag_active:
+                    self._timer.start()
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    def _on_settled():
+        try:
+            if not cmds.workspaceControl(WORKSPACE_NAME, exists=True):
+                return
+            if _toolbar_is_floating():
+                return
+            _auto_orient_docked()
+        except Exception:
+            pass
 
 
 def _on_floating_change():
@@ -1658,6 +1698,7 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
 # workspaceControl management
 # ---------------------------------------------------------------------------
 _toolbar_widget = None
+_dock_watcher   = None
 
 
 def _rebuild_ui():
@@ -1678,6 +1719,17 @@ def _rebuild_ui():
         return
 
     parent_widget = wrapInstance(int(ptr), QtWidgets.QWidget)
+
+    # Watch the wrapper for dock-to-dock moves (no floating transition, so
+    # floatingChangeCommand stays silent) and re-run the orientation fix.
+    global _dock_watcher
+    if _dock_watcher is None:
+        _dock_watcher = _DockWatcher()
+    try:
+        parent_widget.removeEventFilter(_dock_watcher)
+    except Exception:
+        pass
+    parent_widget.installEventFilter(_dock_watcher)
 
     # Remove any existing ATKToolbarWidget immediately (setParent(None) detaches
     # from the layout right now; deleteLater() cleans up memory later).
