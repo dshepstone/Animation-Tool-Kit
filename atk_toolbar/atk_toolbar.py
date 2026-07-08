@@ -70,15 +70,6 @@ _DOCK_MENU_LABELS = {
     "right":          "Dock Right of Viewport",
 }
 
-# Which edge of the main window each dock position falls back to when the
-# named UI component (Time Slider / Shelf toolbar) cannot be resolved.
-_DOCK_MAIN_AREA = {
-    "above_timeline": "bottom",
-    "below_shelf":    "top",
-    "left":           "left",
-    "right":          "right",
-}
-
 _INB_TOOLBAR_SLIDER_WIDTH = 290
 _INB_TOOLBAR_SLIDER_HEIGHT = 52
 _FRAME_STEPPER_WIDTH = 118
@@ -1325,47 +1316,78 @@ def show():
         "import atk_toolbar.atk_toolbar as _atk; _atk._rebuild_ui()"
     )
 
-    # Dock to the edge of the main Maya window matching the preferred dock
-    # position on open.  The user can undock or move it freely afterwards.
-    #
-    # floatingChangeCommand is only available in Maya 2024+.  If the flag is
-    # not recognised we fall back without it — the toolbar still works, it just
-    # won't auto-strip min/max buttons or resize after a dock/undock transition.
+    # Dock at the preferred position on open.  The user can undock or move
+    # the bar freely afterwards.
     dock_kw = dict(
         label=TOOLBAR_LABEL,
         retain=False,
-        actLikeMayaUIElement=True,
         initialWidth=init_w,
         initialHeight=init_h,
         minimumWidth=52,
         minimumHeight=52,
         uiScript=ui_script,
-        dockToMainWindow=[_DOCK_MAIN_AREA.get(dock_pos, "bottom"), False],
     )
 
-    # For the horizontal positions, prefer docking directly against the named
-    # Maya UI component (above the Time Slider / below the Shelf) so the bar
-    # sits exactly where expected instead of at the generic window edge.
+    # The horizontal positions behave like native Maya UI elements — slim
+    # strips docked against the Time Slider / Shelf toolbars.  The vertical
+    # positions are regular workspace controls docked into the left/right
+    # dock areas of the main window (those areas do not host UI-element
+    # toolbars, so actLikeMayaUIElement must stay off there).
+    if dock_pos in ("above_timeline", "below_shelf"):
+        dock_kw["actLikeMayaUIElement"] = True
+
+    # Candidate dock targets, tried in order until one succeeds.
+    candidates = []
     try:
-        anchor = None
-        side   = None
         if dock_pos == "above_timeline":
             anchor = mel.eval('getUIComponentToolBar("Time Slider", false)')
-            side   = "top"
+            if anchor and cmds.control(anchor, exists=True):
+                candidates.append({"dockToControl": (anchor, "top")})
         elif dock_pos == "below_shelf":
             anchor = mel.eval('getUIComponentToolBar("Shelf", false)')
-            side   = "bottom"
-        if anchor and side and cmds.control(anchor, exists=True):
-            dock_kw["dockToControl"] = [anchor, side]
-            dock_kw.pop("dockToMainWindow", None)
+            if anchor and cmds.control(anchor, exists=True):
+                candidates.append({"dockToControl": (anchor, "bottom")})
     except Exception:
         pass
 
-    try:
-        cmds.workspaceControl(WORKSPACE_NAME, floatingChangeCommand=float_cmd, **dock_kw)
-    except TypeError:
-        # Maya version does not support floatingChangeCommand — create without it
-        cmds.workspaceControl(WORKSPACE_NAME, **dock_kw)
+    # dockToMainWindow only accepts the "left", "right" and "bottom" areas.
+    if dock_pos == "left":
+        candidates.append({"dockToMainWindow": ("left", True)})
+    elif dock_pos == "right":
+        candidates.append({"dockToMainWindow": ("right", True)})
+    else:
+        # Bottom-edge fallback.  For "below_shelf" this only applies when the
+        # Shelf toolbar could not be resolved — there is no "top" dock area.
+        candidates.append({"dockToMainWindow": ("bottom", False)})
+
+    candidates.append({})   # last resort: create the control floating
+
+    # floatingChangeCommand is only available in Maya 2024+.  If the flag is
+    # not recognised we fall back without it — the toolbar still works, it just
+    # won't auto-strip min/max buttons or resize after a dock/undock transition.
+    created = False
+    for dock_args in candidates:
+        kw = dict(dock_kw)
+        kw.update(dock_args)
+        try:
+            try:
+                cmds.workspaceControl(WORKSPACE_NAME, floatingChangeCommand=float_cmd, **kw)
+            except TypeError:
+                cmds.workspaceControl(WORKSPACE_NAME, **kw)
+            created = True
+            break
+        except RuntimeError:
+            # Dock target rejected — drop any partially created control and
+            # retry with the next candidate.
+            try:
+                if cmds.workspaceControl(WORKSPACE_NAME, exists=True):
+                    cmds.deleteUI(WORKSPACE_NAME)
+            except Exception:
+                pass
+
+    if not created:
+        cmds.warning("ATK Toolbar: could not create the toolbar workspaceControl.")
+        return
 
     cmds.workspaceControl(WORKSPACE_NAME, edit=True, visible=True)
     _rebuild_ui()
