@@ -53,7 +53,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.1.0"
+VERSION        = "1.1.1"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -113,6 +113,23 @@ _BTN_STYLE_SETTINGS = (
     "}"
     "QToolButton:pressed {"
     "  background: rgba(144,164,174,80);"
+    "}"
+)
+
+# Logo button: no padding so the 'A•T' mark can fill the whole button and
+# read clearly at small icon sizes.
+_BTN_STYLE_LOGO = (
+    "QToolButton {"
+    "  background: transparent;"
+    "  border: none;"
+    "  border-radius: 4px;"
+    "  padding: 0px;"
+    "}"
+    "QToolButton:hover {"
+    "  background: rgba(255,255,255,30);"
+    "}"
+    "QToolButton:pressed {"
+    "  background: rgba(0,0,0,60);"
     "}"
 )
 
@@ -1094,9 +1111,12 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         """ATK 'A•T' logo button — opens the Shepstone website."""
         btn = QtWidgets.QToolButton()
         btn.setFixedSize(icon_sz + 8, icon_sz + 8)
-        btn.setIcon(atk_icons.make_logo_icon(icon_sz))
-        btn.setIconSize(QtCore.QSize(icon_sz, icon_sz))
-        btn.setStyleSheet(_BTN_STYLE_NORMAL)
+        # Render the logo larger than the tool glyphs: fill the whole button
+        # footprint (no padding) so the mark is clearly visible.
+        logo_px = icon_sz + 8
+        btn.setIcon(atk_icons.make_logo_icon(logo_px))
+        btn.setIconSize(QtCore.QSize(logo_px, logo_px))
+        btn.setStyleSheet(_BTN_STYLE_LOGO)
         btn.setCursor(QtCore.Qt.PointingHandCursor)
         if show_tips:
             btn.setToolTip(
