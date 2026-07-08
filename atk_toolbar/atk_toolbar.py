@@ -5,9 +5,10 @@ one per tool, with a Settings button on the left side.
 
 Docking behaviour
 -----------------
-The workspaceControl is created with ``floating=True`` and ``retain=True``.
-Maya saves the dock position on exit and restores it on the next session via
-the ``uiScript`` callback.
+The workspaceControl opens docked at the position chosen in the Workspace
+settings tab: above the Time Slider (default), below the Shelf, or vertically
+on the left/right edge of the viewport.  Tearing the bar off its dock fades
+it in smoothly instead of popping (see ``_on_floating_change``).
 
 Orientation detection
 ---------------------
@@ -48,7 +49,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.0.2"
+VERSION        = "1.0.3"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -58,6 +59,25 @@ _OPT_ORIENTATION     = atk_settings.OPT_ORIENTATION
 _OPT_ICON_ALIGNMENT  = atk_settings.OPT_ICON_ALIGNMENT
 _OPT_SHOW_INLINE_SLIDER = atk_settings.OPT_SHOW_INLINE_SLIDER
 _OPT_SHOW_FRAME_STEPPER = atk_settings.OPT_SHOW_FRAME_STEPPER
+_OPT_DOCK_POSITION      = atk_settings.OPT_DOCK_POSITION
+
+DOCK_POSITIONS = ("above_timeline", "below_shelf", "left", "right")
+
+_DOCK_MENU_LABELS = {
+    "above_timeline": "Dock Above Timeline",
+    "below_shelf":    "Dock Below Shelf",
+    "left":           "Dock Left of Viewport",
+    "right":          "Dock Right of Viewport",
+}
+
+# Which edge of the main window each dock position falls back to when the
+# named UI component (Time Slider / Shelf toolbar) cannot be resolved.
+_DOCK_MAIN_AREA = {
+    "above_timeline": "bottom",
+    "below_shelf":    "top",
+    "left":           "left",
+    "right":          "right",
+}
 
 _INB_TOOLBAR_SLIDER_WIDTH = 290
 _INB_TOOLBAR_SLIDER_HEIGHT = 52
@@ -122,6 +142,14 @@ def _get_alignment():
         if val in ("left", "center", "right"):
             return val
     return "center"
+
+
+def _get_dock_position():
+    if cmds.optionVar(exists=_OPT_DOCK_POSITION):
+        val = cmds.optionVar(q=_OPT_DOCK_POSITION)
+        if val in DOCK_POSITIONS:
+            return val
+    return "above_timeline"
 
 
 def _maya_main_window():
@@ -292,8 +320,8 @@ def _undock_toolbar():
         cmds.workspaceControl(WORKSPACE_NAME, edit=True, floating=True)
 
 
-def _dock_to_bottom():
-    """Recreate the toolbar docked to the bottom of the main Maya window.
+def _dock_to_preferred():
+    """Recreate the toolbar docked at the position chosen in the Workspace settings.
 
     Scheduled via QTimer so the gear context menu finishes closing before the
     workspaceControl is torn down and rebuilt (avoids deleting the widget while
@@ -302,14 +330,121 @@ def _dock_to_bottom():
     QtCore.QTimer.singleShot(0, show)
 
 
+# ---------------------------------------------------------------------------
+# Smooth undock (tear-off) transition
+# ---------------------------------------------------------------------------
+# When Maya tears a workspaceControl off a dock it instantly re-parents the
+# content into a brand-new top-level window, then our floatingChangeCommand
+# handler strips the min/max buttons (setWindowFlags recreates the native
+# window) and snap-resizes it.  All of that used to happen in full view,
+# which read as a hard "pop".  Instead we hide the new window the moment the
+# tear-off happens, do the chrome work while it is invisible, and then ease
+# it in with a short fade (plus a subtle grow when the mouse is not still
+# dragging it).
+_release_anim = None   # keep a reference so the animation is not GC'd mid-flight
+
+
+def _get_floating_window():
+    """Return the floating top-level window wrapping the toolbar, or None if docked."""
+    try:
+        ptr = omui.MQtUtil.findControl(WORKSPACE_NAME)
+        if ptr is None:
+            return None
+        content  = wrapInstance(int(ptr), QtWidgets.QWidget)
+        win      = content.window()
+        maya_win = _maya_main_window()
+        if win is None or win is maya_win:
+            return None
+        return win
+    except Exception:
+        return None
+
+
+def _begin_float_release():
+    """Make the freshly torn-off window invisible so the flag-stripping and
+    resize that follow an undock happen off-screen instead of visibly popping."""
+    win = _get_floating_window()
+    if win is not None:
+        try:
+            win.setWindowOpacity(0.0)
+        except Exception:
+            pass
+
+
+def _finish_float_release():
+    """Ease the floating toolbar window in after the chrome work is done."""
+    global _release_anim
+    win = _get_floating_window()
+    if win is None:
+        return
+    try:
+        if _release_anim is not None:
+            try:
+                _release_anim.stop()
+            except Exception:
+                pass
+
+        group = QtCore.QParallelAnimationGroup(win)
+
+        fade = QtCore.QPropertyAnimation(win, b"windowOpacity", win)
+        fade.setDuration(240)
+        fade.setStartValue(0.0)
+        fade.setEndValue(1.0)
+        fade.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        group.addAnimation(fade)
+
+        # Only ease the geometry when the user is no longer dragging the
+        # window — animating it under an active tear-off drag would fight
+        # the mouse.
+        if not (QtWidgets.QApplication.mouseButtons() & QtCore.Qt.LeftButton):
+            end_geo = QtCore.QRect(win.geometry())
+            dx = max(4, end_geo.width() // 20)
+            dy = max(3, end_geo.height() // 10)
+            start_geo = end_geo.adjusted(dx, dy, -dx, -dy)
+            grow = QtCore.QPropertyAnimation(win, b"geometry", win)
+            grow.setDuration(240)
+            grow.setStartValue(start_geo)
+            grow.setEndValue(end_geo)
+            grow.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+            group.addAnimation(grow)
+
+        def _ensure_opaque():
+            try:
+                win.setWindowOpacity(1.0)
+            except Exception:
+                pass
+
+        group.finished.connect(_ensure_opaque)
+        _release_anim = group
+        group.start()
+    except Exception:
+        # Never leave the window stuck transparent.
+        try:
+            win.setWindowOpacity(1.0)
+        except Exception:
+            pass
+
+
 def _on_floating_change():
     """Called by Maya's floatingChangeCommand whenever the panel is docked or undocked.
 
-    Uses a short timer so the new window hierarchy is fully constructed before
-    we try to read it.
+    Uses short timers so the new window hierarchy is fully constructed before
+    we try to read it.  On an undock the chrome work runs while the window is
+    hidden, then the window eases in (see _begin/_finish_float_release).
     """
-    QtCore.QTimer.singleShot(150, _remove_min_max_buttons)
-    QtCore.QTimer.singleShot(150, _resize_to_fit)
+    try:
+        floating = bool(cmds.workspaceControl(WORKSPACE_NAME, q=True, floating=True))
+    except Exception:
+        floating = False
+
+    if floating:
+        QtCore.QTimer.singleShot(0, _begin_float_release)
+        QtCore.QTimer.singleShot(150, _remove_min_max_buttons)
+        QtCore.QTimer.singleShot(160, _resize_to_fit)
+        QtCore.QTimer.singleShot(180, _finish_float_release)
+    else:
+        QtCore.QTimer.singleShot(150, _remove_min_max_buttons)
+        QtCore.QTimer.singleShot(150, _resize_to_fit)
 
 
 # ---------------------------------------------------------------------------
@@ -664,8 +799,9 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         float_act.triggered.connect(_undock_toolbar)
         float_act.setEnabled(not is_floating)
 
-        dock_act = menu.addAction("Dock to Bottom")
-        dock_act.triggered.connect(_dock_to_bottom)
+        dock_label = _DOCK_MENU_LABELS.get(_get_dock_position(), "Dock Toolbar")
+        dock_act = menu.addAction(dock_label)
+        dock_act.triggered.connect(_dock_to_preferred)
         dock_act.setEnabled(is_floating)
 
         menu.addSeparator()
@@ -1138,8 +1274,9 @@ def _rebuild_ui():
 def show():
     """Create or restore the ATK toolbar workspaceControl.
 
-    Always deletes and recreates the control so the UI is fully rebuilt.
-    Maya will restore the last dock position because ``retain=True``.
+    Always deletes and recreates the control so the UI is fully rebuilt,
+    docked at the position chosen in the Workspace settings (above the
+    timeline by default).
     """
     atk_loader.setup_paths()
 
@@ -1147,17 +1284,19 @@ def show():
         cmds.deleteUI(WORKSPACE_NAME)
 
     # Clear retained workspace state so launch position is deterministic:
-    # always docked above the timeline at the bottom of Maya.
+    # always docked at the position chosen in the Workspace settings.
     try:
         if cmds.workspaceControlState(WORKSPACE_NAME, exists=True):
             cmds.workspaceControlState(WORKSPACE_NAME, remove=True)
     except Exception:
         pass
 
-    # Force default launch orientation to horizontal so the bar opens above
-    # the timeline (docked to bottom of the Maya main window).
-    cmds.optionVar(sv=(_OPT_ORIENTATION, "horizontal"))
-    orient = "horizontal"
+    # The dock position dictates the launch orientation: the left/right
+    # viewport edges need a vertical strip, the timeline/shelf positions a
+    # horizontal one.
+    dock_pos = _get_dock_position()
+    orient = "vertical" if dock_pos in ("left", "right") else "horizontal"
+    cmds.optionVar(sv=(_OPT_ORIENTATION, orient))
 
     icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
     btn_sz  = icon_sz + 8
@@ -1186,9 +1325,8 @@ def show():
         "import atk_toolbar.atk_toolbar as _atk; _atk._rebuild_ui()"
     )
 
-    # Dock to the bottom of the main Maya window on first open so the toolbar
-    # appears as a horizontal strip above the timeline.  The user can undock
-    # or move it freely; all docking transitions are preserved via retain=True.
+    # Dock to the edge of the main Maya window matching the preferred dock
+    # position on open.  The user can undock or move it freely afterwards.
     #
     # floatingChangeCommand is only available in Maya 2024+.  If the flag is
     # not recognised we fall back without it — the toolbar still works, it just
@@ -1202,14 +1340,23 @@ def show():
         minimumWidth=52,
         minimumHeight=52,
         uiScript=ui_script,
-        dockToMainWindow=["bottom", False],
+        dockToMainWindow=[_DOCK_MAIN_AREA.get(dock_pos, "bottom"), False],
     )
 
-    # Prefer docking directly above Maya's Time Slider toolbar.
+    # For the horizontal positions, prefer docking directly against the named
+    # Maya UI component (above the Time Slider / below the Shelf) so the bar
+    # sits exactly where expected instead of at the generic window edge.
     try:
-        time_slider_ui = mel.eval('getUIComponentToolBar("Time Slider", false)')
-        if time_slider_ui and cmds.control(time_slider_ui, exists=True):
-            dock_kw["dockToControl"] = [time_slider_ui, "top"]
+        anchor = None
+        side   = None
+        if dock_pos == "above_timeline":
+            anchor = mel.eval('getUIComponentToolBar("Time Slider", false)')
+            side   = "top"
+        elif dock_pos == "below_shelf":
+            anchor = mel.eval('getUIComponentToolBar("Shelf", false)')
+            side   = "bottom"
+        if anchor and side and cmds.control(anchor, exists=True):
+            dock_kw["dockToControl"] = [anchor, side]
             dock_kw.pop("dockToMainWindow", None)
     except Exception:
         pass
@@ -1227,6 +1374,24 @@ def show():
     # a previous session, and runs after the dock layout has settled.
     QtCore.QTimer.singleShot(100, _resize_to_fit)
     QtCore.QTimer.singleShot(200, _remove_min_max_buttons)
+
+
+def rebuild_current():
+    """Rebuild the toolbar widget in place.
+
+    Safe to call even after the workspaceControl has been recreated (e.g. a
+    re-dock from the settings dialog destroyed the widget a stored callback
+    still points at) — it falls back to repopulating the current control.
+    """
+    global _toolbar_widget
+    if _toolbar_widget is not None:
+        try:
+            _toolbar_widget.rebuild()
+            return
+        except RuntimeError:
+            # Underlying C++ widget was deleted — repopulate from scratch.
+            _toolbar_widget = None
+    _rebuild_ui()
 
 
 def close():

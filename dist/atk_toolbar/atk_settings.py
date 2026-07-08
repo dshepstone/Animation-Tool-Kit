@@ -2,6 +2,8 @@
 
 Opens a QDialog that lets the user:
   • Choose icon size (small / medium / large)
+  • Choose where the toolbar docks (above the timeline, below the shelf,
+    or vertically on the left/right edge of the viewport)
   • Toggle individual tools on/off
   • Toggle group separator visibility
   • View tool version info (About tab)
@@ -39,6 +41,9 @@ OPT_ORIENTATION      = "atk_toolbar_orientation"      # str: "horizontal" | "ver
 OPT_ICON_ALIGNMENT   = "atk_toolbar_icon_alignment"   # str: "left" | "center" | "right"
 OPT_SHOW_INLINE_SLIDER = "atk_toolbar_show_inline_slider"  # int 0/1
 OPT_SHOW_FRAME_STEPPER = "atk_toolbar_show_frame_stepper"  # int 0/1
+OPT_DOCK_POSITION    = "atk_toolbar_dock_position"     # str: "above_timeline" | "below_shelf" | "left" | "right"
+
+DOCK_POSITIONS = ("above_timeline", "below_shelf", "left", "right")
 
 ICON_SIZES = [("Small  (24 px)", 24), ("Medium  (32 px)", 32), ("Large  (48 px)", 48)]
 
@@ -327,12 +332,34 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         layout.setSpacing(10)
 
         note = QtWidgets.QLabel(
-            "Controls how tool icons are positioned inside the horizontal bar.\n"
-            "The Settings (gear) icon is always anchored to the far left."
+            "Controls where the toolbar docks and how tool icons are\n"
+            "positioned inside the horizontal bar."
         )
         note.setObjectName("lbl_subtitle")
         note.setWordWrap(True)
         layout.addWidget(note)
+
+        dock_group = QtWidgets.QGroupBox("Docked Position")
+        dock_layout = QtWidgets.QVBoxLayout(dock_group)
+
+        self._rb_dock_timeline = QtWidgets.QRadioButton("Above the timeline  — horizontal bar")
+        self._rb_dock_shelf    = QtWidgets.QRadioButton("Below the shelf  — horizontal bar")
+        self._rb_dock_left     = QtWidgets.QRadioButton("Left of the viewport  — vertical bar")
+        self._rb_dock_right    = QtWidgets.QRadioButton("Right of the viewport  — vertical bar")
+
+        dock_layout.addWidget(self._rb_dock_timeline)
+        dock_layout.addWidget(self._rb_dock_shelf)
+        dock_layout.addWidget(self._rb_dock_left)
+        dock_layout.addWidget(self._rb_dock_right)
+
+        dock_note = QtWidgets.QLabel(
+            "Applying a new position re-docks the toolbar immediately.\n"
+            "You can still drag the bar off its dock and float it anywhere."
+        )
+        dock_note.setObjectName("lbl_subtitle")
+        dock_note.setWordWrap(True)
+        dock_layout.addWidget(dock_note)
+        layout.addWidget(dock_group)
 
         align_group = QtWidgets.QGroupBox("Icon Alignment  (horizontal bar)")
         align_layout = QtWidgets.QVBoxLayout(align_group)
@@ -475,6 +502,13 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         self._rb_align_right.setChecked(align == "right")
         self._rb_align_center.setChecked(align not in ("left", "right"))
 
+        # Docked position
+        dock_pos = self._get_dock_pref()
+        self._rb_dock_shelf.setChecked(dock_pos == "below_shelf")
+        self._rb_dock_left.setChecked(dock_pos == "left")
+        self._rb_dock_right.setChecked(dock_pos == "right")
+        self._rb_dock_timeline.setChecked(dock_pos not in ("below_shelf", "left", "right"))
+
         # Icon size
         current_size = _get_pref_int(OPT_ICON_SIZE, 32)
         for rb, px in self._size_radios:
@@ -492,6 +526,23 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         for pref_key, cb in self._inline_widget_checks.items():
             cb.setChecked(bool(_get_pref_int(pref_key, 1)))
 
+    @staticmethod
+    def _get_dock_pref():
+        if cmds.optionVar(exists=OPT_DOCK_POSITION):
+            val = cmds.optionVar(q=OPT_DOCK_POSITION)
+            if val in DOCK_POSITIONS:
+                return val
+        return "above_timeline"
+
+    def _selected_dock_position(self):
+        if self._rb_dock_shelf.isChecked():
+            return "below_shelf"
+        if self._rb_dock_left.isChecked():
+            return "left"
+        if self._rb_dock_right.isChecked():
+            return "right"
+        return "above_timeline"
+
     def _apply(self):
         # Orientation
         orient = "vertical" if self._rb_vertical.isChecked() else "horizontal"
@@ -505,6 +556,11 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         else:
             align = "center"
         cmds.optionVar(sv=(OPT_ICON_ALIGNMENT, align))
+
+        # Docked position
+        old_dock = self._get_dock_pref()
+        new_dock = self._selected_dock_position()
+        cmds.optionVar(sv=(OPT_DOCK_POSITION, new_dock))
 
         # Icon size
         for rb, px in self._size_radios:
@@ -522,13 +578,51 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         for pref_key, cb in self._inline_widget_checks.items():
             _set_pref_int(pref_key, int(cb.isChecked()))
 
-        # Trigger toolbar rebuild
+        if new_dock != old_dock:
+            # Re-dock: recreate the toolbar at the new position (this also
+            # rebuilds it, so the plain rebuild below would be redundant).
+            self._redock_toolbar()
+        else:
+            self._request_rebuild()
+
+    @staticmethod
+    def _redock_toolbar():
+        """Recreate the toolbar docked at the currently saved dock position.
+
+        Deferred with a timer so the workspaceControl (which may host the
+        widget whose gear button opened this dialog) is not torn down while
+        its event handler is still on the call stack.
+        """
+        try:
+            from . import atk_toolbar
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: could not re-dock toolbar: {}".format(exc))
+            return
+        QtCore.QTimer.singleShot(0, atk_toolbar.show)
+
+    def _request_rebuild(self):
+        """Rebuild the toolbar, surviving a stale callback.
+
+        The stored callback points at the toolbar widget that existed when
+        this dialog was opened; a re-dock recreates that widget, so fall back
+        to the module-level rebuild when the old one is gone.
+        """
         if callable(self.rebuild_callback):
-            self.rebuild_callback()
+            try:
+                self.rebuild_callback()
+                return
+            except RuntimeError:
+                self.rebuild_callback = None   # widget was deleted
+        try:
+            from . import atk_toolbar
+            atk_toolbar.rebuild_current()
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: rebuild failed: {}".format(exc))
 
     def _reset_defaults(self):
         cmds.optionVar(sv=(OPT_ORIENTATION, "horizontal"))
         cmds.optionVar(sv=(OPT_ICON_ALIGNMENT, "center"))
+        cmds.optionVar(sv=(OPT_DOCK_POSITION, "above_timeline"))
         _set_pref_int(OPT_ICON_SIZE, 32)
         _set_pref_int(OPT_SHOW_TOOLTIPS, 1)
         _set_pref_int(OPT_SHOW_SEPARATORS, 1)
@@ -557,11 +651,10 @@ class ATKSettingsDialog(QtWidgets.QDialog):
 
         # Rebuild the toolbar so inline widgets (e.g. the Inbetweener
         # slider) are recreated from the reloaded modules.
-        if callable(self.rebuild_callback):
-            try:
-                self.rebuild_callback()
-            except Exception as exc:
-                cmds.warning("ATK Toolbar: rebuild after reload failed: {}".format(exc))
+        try:
+            self._request_rebuild()
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: rebuild after reload failed: {}".format(exc))
 
         if purged:
             summary = "Reloaded {} tool module{}. Relaunch open tools to use the new scripts.".format(
@@ -593,6 +686,9 @@ def show(rebuild_callback=None):
     global _dialog_instance
     try:
         if _dialog_instance is not None and not _dialog_instance.isHidden():
+            # Refresh the callback — the toolbar widget may have been
+            # recreated (e.g. by a re-dock) since the dialog was opened.
+            _dialog_instance.rebuild_callback = rebuild_callback
             _dialog_instance.raise_()
             _dialog_instance.activateWindow()
             return _dialog_instance
