@@ -580,10 +580,17 @@ def _finish_float_release():
 def _auto_orient_docked():
     """Match the bar's layout to the dock area it was dropped into.
 
-    A control filling most of the main window's height landed in a side dock
-    area and becomes a vertical bar; one spanning most of the width landed in
-    a top/bottom area and becomes horizontal.  Rebuilds in place — never
-    undocks the control the user just docked.
+    Runs after a user drag docks the control (floatingChangeCommand fires on
+    the transition, never on programmatic creation).  The drop point decides
+    the orientation: the cursor is still at the spot where the user released
+    the drag, so the nearest main-window edge tells us which dock area took
+    the bar — left/right areas turn it vertical, top/bottom horizontal.  The
+    saved dock position is updated to the matching zone so the gear menu and
+    the next launch stay in sync.  Geometry (a control filling most of the
+    window's height sits in a side area; one spanning most of the width in a
+    top/bottom area) is used when it is unambiguous or the cursor is outside
+    the window.  Rebuilds in place — never undocks the control the user just
+    docked.
     """
     global _toolbar_widget
     try:
@@ -600,15 +607,47 @@ def _auto_orient_docked():
             return
 
         maya_win = _maya_main_window()
+        new_orient = None
+
+        # Geometry signal — trust it only when exactly one axis fires.
+        # A wide bar freshly dropped into a side area can momentarily make
+        # that area both wide AND tall, which is why the drop point below
+        # breaks the tie.
         if maya_win is not None and maya_win.width() > 0 and maya_win.height() > 0:
-            if h >= maya_win.height() * 0.45:
-                new_orient = "vertical"
-            elif w >= maya_win.width() * 0.45:
-                new_orient = "horizontal"
+            geo_vertical   = h >= maya_win.height() * 0.45
+            geo_horizontal = w >= maya_win.width() * 0.45
+            if geo_vertical != geo_horizontal:
+                new_orient = "vertical" if geo_vertical else "horizontal"
+
+        # Drop-point signal: nearest main-window edge decides the axis and
+        # the matching dock-position preference.
+        drop_zone = None
+        if maya_win is not None:
+            try:
+                gp = QtGui.QCursor.pos()
+                rect = QtCore.QRect(maya_win.mapToGlobal(QtCore.QPoint(0, 0)),
+                                    maya_win.size())
+                if rect.contains(gp):
+                    d_left, d_right = gp.x() - rect.left(), rect.right() - gp.x()
+                    d_top, d_bottom = gp.y() - rect.top(), rect.bottom() - gp.y()
+                    if min(d_left, d_right) < min(d_top, d_bottom):
+                        drop_zone = "left" if d_left < d_right else "right"
+                    else:
+                        drop_zone = "below_shelf" if d_top < d_bottom else "above_timeline"
+            except Exception:
+                drop_zone = None
+
+        if new_orient is None:
+            if drop_zone is not None:
+                new_orient = "vertical" if drop_zone in ("left", "right") else "horizontal"
             else:
                 new_orient = "vertical" if h > w else "horizontal"
-        else:
-            new_orient = "vertical" if h > w else "horizontal"
+
+        # Keep the saved dock position in sync with where the bar landed,
+        # but only when the drop point agrees with the chosen orientation.
+        if drop_zone is not None and (
+                (drop_zone in ("left", "right")) == (new_orient == "vertical")):
+            cmds.optionVar(sv=(_OPT_DOCK_POSITION, drop_zone))
 
         cur = (cmds.optionVar(q=_OPT_ORIENTATION)
                if cmds.optionVar(exists=_OPT_ORIENTATION) else "horizontal")
