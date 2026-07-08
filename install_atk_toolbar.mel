@@ -17,6 +17,7 @@
 //       atk_settings.py
 //       icons/ATK_icon.png
 //       icons/gearIcon.png
+//       icons/ATK_Bar_Logo.png
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -281,6 +282,18 @@ global proc atk__install()
     {
         atk__copyFile($gearIcon, $iconsDir);
         print ("// Icon    -> " + $iconsDir + "gearIcon.png\n");
+    }
+
+    // Copy ATK_Bar_Logo.png (website button logo) to icons dir
+    string $logoIcon = $srcPkgDir + "/icons/ATK_Bar_Logo.png";
+    if (!atk__fileExists($logoIcon))
+    {
+        $logoIcon = $installDir + "icon/ATK_Bar_Logo.png";
+    }
+    if (atk__fileExists($logoIcon))
+    {
+        atk__copyFile($logoIcon, $iconsDir);
+        print ("// Icon    -> " + $iconsDir + "ATK_Bar_Logo.png\n");
     }
 
     // Copy re-time arrow icons used by the inline frame stepper

@@ -88,6 +88,24 @@ def make_settings_icon(size=32):
     return _generate_icon("gear", "settings", size)
 
 
+def make_logo_icon(size=32):
+    """Return the Animation Tool Kit 'A•T' logo icon for the website button."""
+    icon_name = "ATK_Bar_Logo.png"
+    pref_dir = cmds.internalVar(userPrefDir=True)
+    search_paths = [
+        os.path.join(pref_dir, "icons", icon_name),
+        os.path.join(cmds.internalVar(userBitmapsDir=True), icon_name),
+        os.path.join(os.path.dirname(__file__), "icons", icon_name),
+    ]
+    for path in search_paths:
+        if os.path.isfile(path):
+            icon = QtGui.QIcon(path)
+            if not icon.isNull():
+                return icon
+    # Fall back to a generated generic icon if the PNG is missing.
+    return _generate_icon("generic", "timing", size)
+
+
 def make_warning_icon(size=32):
     """Return a warning ⚠ icon used when a tool is not installed."""
     return _generate_icon("warning", "settings", size)

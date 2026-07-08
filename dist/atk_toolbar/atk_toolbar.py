@@ -53,7 +53,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.0.9"
+VERSION        = "1.1.0"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -181,7 +181,7 @@ def _count_layout_items():
     """Return (n_buttons, n_seps) for the current visible tools and settings."""
     show_sep = bool(atk_settings._get_pref_int(_OPT_SHOW_SEPARATORS, 1))
     visible  = atk_loader.get_visible_tools()
-    n_buttons = len(visible) + 1   # +1 for the settings button
+    n_buttons = len(visible) + 2   # +2 for the settings gear and the logo button
 
     n_seps = 0
     if show_sep:
@@ -981,8 +981,9 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             # Grip handle at the very top for tear-off undocking
             layout.addWidget(_GripHandle("vertical", parent=body))
 
-            # Settings gear always at the top
+            # Settings gear always at the top, ATK logo button just below it
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
+            self._add_logo_btn(layout, icon_sz, show_tips, orientation)
             self._add_inbetweener_slider(layout, orientation)
             if show_sep:
                 self._add_sep(layout, orientation)
@@ -1017,8 +1018,9 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             # Grip handle at the far left for tear-off undocking
             layout.addWidget(_GripHandle("horizontal", parent=self))
 
-            # Settings gear always anchored to the far left
+            # Settings gear always anchored to the far left, ATK logo to its right
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
+            self._add_logo_btn(layout, icon_sz, show_tips, orientation)
             if show_sep:
                 self._add_sep(layout, orientation)
 
@@ -1087,6 +1089,32 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             layout.addWidget(btn, 0, QtCore.Qt.AlignHCenter)
         else:
             layout.addWidget(btn)
+
+    def _add_logo_btn(self, layout, icon_sz, show_tips, orientation):
+        """ATK 'A•T' logo button — opens the Shepstone website."""
+        btn = QtWidgets.QToolButton()
+        btn.setFixedSize(icon_sz + 8, icon_sz + 8)
+        btn.setIcon(atk_icons.make_logo_icon(icon_sz))
+        btn.setIconSize(QtCore.QSize(icon_sz, icon_sz))
+        btn.setStyleSheet(_BTN_STYLE_NORMAL)
+        btn.setCursor(QtCore.Qt.PointingHandCursor)
+        if show_tips:
+            btn.setToolTip(
+                "<b>Animation Tool Kit</b><br>Visit shepstone.ca"
+            )
+        btn.clicked.connect(self._open_website)
+        if orientation == "vertical":
+            layout.addWidget(btn, 0, QtCore.Qt.AlignHCenter)
+        else:
+            layout.addWidget(btn)
+
+    @staticmethod
+    def _open_website():
+        url = "https://shepstone.ca/"
+        try:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: could not open {}: {}".format(url, exc))
 
     def _add_inbetweener_slider(self, layout, orientation):
         if not atk_loader.is_tool_installed("inbetweener") or not _show_inline_slider():
