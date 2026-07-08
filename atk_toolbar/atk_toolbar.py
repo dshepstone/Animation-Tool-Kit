@@ -7,11 +7,12 @@ Docking behaviour
 -----------------
 The workspaceControl opens docked at the position chosen in the Workspace
 settings tab: above the Time Slider (default), below the Shelf, or vertically
-inside the workspace panel areas beside the viewport (the Outliner area on
-the left, the Channel Box area on the right).  The dotted grip handle acts
-as a tear-off tab — drag it to pull the bar off its dock and float it, or
-click it to float in place.  Tearing the bar off fades it in smoothly
-instead of popping (see ``_on_floating_change``).
+on the left/right edge of the viewport.  Dropping the bar in a dock area
+auto-corrects its orientation to match (vertical in side areas, horizontal
+in top/bottom areas).  The dotted grip handle acts as a tear-off tab — drag
+it to pull the bar off its dock and float it, or click it to float in
+place.  Tearing the bar off fades it in smoothly instead of popping (see
+``_on_floating_change``).
 
 Orientation detection
 ---------------------
@@ -52,7 +53,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.0.5"
+VERSION        = "1.0.6"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -167,49 +168,6 @@ def _get_dock_position():
         if val in DOCK_POSITIONS:
             return val
     return "above_timeline"
-
-
-def _existing_dock_anchors(names):
-    """Filter candidate workspaceControl names down to ones that exist and
-    are currently docked (docking against a floating control would drop the
-    toolbar into that control's floating window)."""
-    out = []
-    for name in names:
-        if not name or name in out:
-            continue
-        try:
-            if not cmds.workspaceControl(name, exists=True):
-                continue
-            if cmds.workspaceControl(name, q=True, floating=True):
-                continue
-            out.append(name)
-        except Exception:
-            continue
-    return out
-
-
-def _side_panel_anchors(side):
-    """Workspace controls to anchor a vertical bar against, per side.
-
-    Left pairs with the Outliner panel area, right with the Channel Box /
-    Layer Editor (and Attribute Editor) area, so the bar lands inside the
-    workspace next to the viewport instead of on the outer window edge.
-    """
-    names = []
-    if side == "left":
-        try:
-            names.append(mel.eval('getUIComponentDockControl("Outliner", false)'))
-        except Exception:
-            pass
-        names += ["Outliner", "outlinerPanel1Window"]
-    else:
-        try:
-            names.append(mel.eval(
-                'getUIComponentDockControl("Channel Box / Layer Editor", false)'))
-        except Exception:
-            pass
-        names += ["ChannelBoxLayerEditor", "AttributeEditor"]
-    return _existing_dock_anchors(names)
 
 
 def _maya_main_window():
@@ -1671,8 +1629,10 @@ def show():
     # The horizontal positions behave like native Maya UI elements — slim
     # strips docked against the Time Slider / Shelf toolbars; their tear-off
     # tab is the toolbar's grip handle.  The vertical positions are regular
-    # workspace controls (actLikeMayaUIElement off) so they dock into the
-    # workspace panel areas and get Maya's native drag tab as well.
+    # workspace controls docked into the left/right dock areas of the main
+    # window (those areas do not host UI-element toolbars, so
+    # actLikeMayaUIElement must stay off there); they also get Maya's
+    # native drag tab.
     if dock_pos in ("above_timeline", "below_shelf"):
         dock_kw["actLikeMayaUIElement"] = True
 
@@ -1697,18 +1657,10 @@ def show():
     except Exception:
         pass
 
-    # Vertical positions live INSIDE the workspace, in the same panel areas
-    # as the Outliner (left) / Channel Box (right), hugging the viewport
-    # edge of that area.  dockToMainWindow (outer window edge, per the
-    # standard workspaceControl pattern) is the fallback when no panel is
-    # docked on that side.
+    # dockToMainWindow only accepts the "left", "right" and "bottom" areas.
     if dock_pos == "left":
-        for anchor in _side_panel_anchors("left"):
-            candidates.append({"dockToControl": (anchor, "right")})
         candidates.append({"dockToMainWindow": ("left", True)})
     elif dock_pos == "right":
-        for anchor in _side_panel_anchors("right"):
-            candidates.append({"dockToControl": (anchor, "left")})
         candidates.append({"dockToMainWindow": ("right", True)})
     else:
         # Bottom-edge fallback.  For "below_shelf" this only applies when the
