@@ -136,6 +136,17 @@ TOOL_REGISTRY = [
         "version":   "2.2.0",
     },
     {
+        "id":        "blue_pencil_flipbook",
+        "label":     "Blue Pencil Flipbook Manager",
+        "tooltip":   "Manage Blue Pencil frames and flipbook playback for drawn animation",
+        "module":    "blue_pencil_flipbook.launch",
+        "launch_fn": "show",
+        "icon_file": "Blue_Pencil.png",
+        "icon_key":  "onion",
+        "group":     "viewport",
+        "version":   "0.2.0",
+    },
+    {
         "id":        "anim_snap",
         "label":     "AnimSnap",
         "tooltip":   "Snap one object to another using world-space transforms",
