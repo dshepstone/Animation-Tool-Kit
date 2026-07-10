@@ -296,6 +296,19 @@ global proc atk__install()
         print ("// Icon    -> " + $iconsDir + "ATK_Bar_Logo.png\n");
     }
 
+    // Copy Blue Pencil Flipbook Manager icon (lives in the repo icon/ folder,
+    // falls back to the tool folder if present)
+    string $bluePencilIcon = $installDir + "icon/Blue_Pencil.png";
+    if (!atk__fileExists($bluePencilIcon))
+    {
+        $bluePencilIcon = $installDir + "animation tool kit scripts/Blue-Pencil-Flipbook-Manager/Blue_Pencil.png";
+    }
+    if (atk__fileExists($bluePencilIcon))
+    {
+        atk__copyFile($bluePencilIcon, $iconsDir);
+        print ("// Icon    -> " + $iconsDir + "Blue_Pencil.png\n");
+    }
+
     // Copy re-time arrow icons used by the inline frame stepper
     string $retimeIcons[] = {"ReTimeArrowLeft.png", "ReTimeArrowRight.png"};
     for ($retimeIcon in $retimeIcons)
@@ -328,6 +341,7 @@ global proc atk__install()
         "Add-Remove-Inbetweens_1_0_1/insert_remove_frames_tool.py",
         "noise_generator_1_0_0/noise_generator_1_0_0.py",
         "onion-skin-tool_2_2_0/onion_skin_2_2_0.py",
+        "Blue-Pencil-Flipbook-Manager/blue_pencil_flipbook_manager.py",
         "WireShape_Tool_1_0_0/wire_shape_tool.py",
         "Reset_Tool_2_0_1/transform_reset_tool.py",
         "AnimSnap_1_0_0/anim_snap.py",
