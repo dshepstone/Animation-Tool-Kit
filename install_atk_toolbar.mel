@@ -296,6 +296,19 @@ global proc atk__install()
         print ("// Icon    -> " + $iconsDir + "ATK_Bar_Logo.png\n");
     }
 
+    // Copy Blue Pencil Flipbook Manager icon (lives in the repo icon/ folder,
+    // falls back to the tool folder if present)
+    string $bluePencilIcon = $installDir + "icon/Blue_Pencil.png";
+    if (!atk__fileExists($bluePencilIcon))
+    {
+        $bluePencilIcon = $installDir + "animation tool kit scripts/Blue-Pencil-Flipbook-Manager/Blue_Pencil.png";
+    }
+    if (atk__fileExists($bluePencilIcon))
+    {
+        atk__copyFile($bluePencilIcon, $iconsDir);
+        print ("// Icon    -> " + $iconsDir + "Blue_Pencil.png\n");
+    }
+
     // Copy re-time arrow icons used by the inline frame stepper
     string $retimeIcons[] = {"ReTimeArrowLeft.png", "ReTimeArrowRight.png"};
     for ($retimeIcon in $retimeIcons)
@@ -427,6 +440,27 @@ global proc atk__install()
     }
     else
         warning("ATK Installer: Tangent Tools package not found (skipped): " + $tangentToolsSrc);
+
+    // Blue Pencil Flipbook Manager is a package - copy the whole
+    // blue_pencil_flipbook/ folder (skipping bytecode) into scriptsDir so
+    // "import blue_pencil_flipbook.launch" resolves.
+    string $bluePencilSrc = $toolsBase + "Blue-Pencil-Flipbook-Manager/blue_pencil_flipbook";
+    if (`filetest -d $bluePencilSrc`)
+    {
+        string $bluePencilDst = $scriptsDir + "blue_pencil_flipbook/";
+        string $copyBpPy = "";
+        $copyBpPy += "import os, shutil\n";
+        $copyBpPy += "src = r\"" + $bluePencilSrc + "\"\n";
+        $copyBpPy += "dst = r\"" + $bluePencilDst + "\"\n";
+        $copyBpPy += "if os.path.exists(dst):\n";
+        $copyBpPy += "    shutil.rmtree(dst)\n";
+        $copyBpPy += "ignore = shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo')\n";
+        $copyBpPy += "shutil.copytree(src, dst, ignore=ignore)\n";
+        $copyBpPy += "print('  Copied package: blue_pencil_flipbook')\n";
+        python($copyBpPy);
+    }
+    else
+        warning("ATK Installer: Blue Pencil Flipbook Manager package not found (skipped): " + $bluePencilSrc);
 
     // Playblast Creator v2.0.4 - matches the standalone installer layout so
     // the plug-in file and UI resolve the same way whether the toolbar or
