@@ -1,0 +1,47 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Blue Pencil Flipbook Manager Help</title>
+<style>
+  body{font-family:"Segoe UI",Arial,sans-serif;line-height:1.5;color:#e6e9ef;background:#2b2f36;margin:16px}
+  h1{font-size:20px;color:#3d8bfd;border-bottom:1px solid #22262c;padding-bottom:6px}
+  h2{font-size:15px;color:#5b9dff;margin-top:22px}
+  code{background:#343941;padding:2px 5px;border-radius:4px}
+  ul{padding-left:20px}
+  .badge{display:inline-block;min-width:34px;text-align:center;border-radius:8px;padding:1px 6px;color:#fff;font-weight:bold;font-size:11px}
+  .k{background:#e0554e}.b{background:#e0952b}.i{background:#3d8bfd}
+</style></head>
+<body>
+<h1 id="use">How to Use the Flipbook Manager</h1>
+<p>Launch the tool, pick the active <b>Camera</b> and Blue Pencil <b>Layer</b> in the header, then mark drawing frames as Key, Breakdown, or Inbetween. Tracked drawings appear as thumbnail cards; clicking a card opens a larger review window (with a <b>Go To Frame</b> button that jumps Maya's current time to that drawing), and right-clicking a card offers per-frame actions. The <b>Delete Frame</b> action also removes the frame's tracked thumbnail from the strip.</p>
+<p>The <b>Camera</b> field follows the viewport you are working in: it is set to the focused viewport's camera when the tool opens or refreshes, and it re-syncs to that camera each time you mark a frame, so the drawing and its thumbnail are always tagged with and captured from the correct camera. You can still pick a camera manually to review another camera's drawings. Blue Pencil layers are read per-camera through Maya's <code>bluePencilLayer</code> command, so changing the camera reloads its layers automatically.</p>
+<p>Marking a frame captures a viewport thumbnail of that drawing the first time it is marked. In normal mode the capture uses the visible model panel first so it matches a regular playblast/viewport view, with off-screen capture methods as fallbacks. If you keep drawing on that frame, click the <b>↻ update</b> button on the card to re-capture it, or use the card's right-click <b>Regenerate Thumbnail</b> / <b>View &gt; Regenerate All Thumbnails</b>. The default stroke color is a light Blue Pencil blue; change it with the Color swatch.</p>
+<p><b>Isolate on white</b> (next to the Mark buttons) controls how the thumbnail is saved. When checked, the scene geometry and rig are hidden for the capture and the image's background is keyed to pure white, so only the Blue Pencil drawing shows on the card. When unchecked, the geometry and rig are forced visible so the thumbnail shows the model and controls behind the drawing. Your Maya viewport is restored to its own display settings afterward either way.</p>
+
+<h2 id="tools">Drawing Tools</h2>
+<p>The drawing row wraps the Maya <code>bluePencilUtil</code> commands: Draw, Transform, Pencil, Brush, Eraser, Text, Line, Arrow, Ellipse, and Rectangle. The active tool stays highlighted. Use the <b>Color</b> swatch to set the stroke color (sent to Maya as 0&ndash;255 RGB), and the <b>Size</b> and <b>Opacity</b> sliders to adjust the active tool. <b>Reset Tool</b> restores Blue Pencil defaults.</p>
+
+<h2 id="types">Frame Types</h2>
+<ul>
+  <li><span class="badge k">KEY</span> Key drawing &mdash; primary storytelling pose.</li>
+  <li><span class="badge b">BDN</span> Breakdown drawing &mdash; transitional pose.</li>
+  <li><span class="badge i">INB</span> Inbetween drawing &mdash; smoothing frame.</li>
+</ul>
+<p>Frame types are stored as tool metadata on a hidden network node in the scene, so they travel with the file.</p>
+
+<h2 id="sessions">Export &amp; Import Sessions</h2>
+<p>Use <b>File &gt; Export Session…</b> (or the <b>Export Frames</b> button) to save the current session to a self-contained folder named <code>BluePencilFlipbook_Session_&lt;timestamp&gt;</code>. It contains:</p>
+<ul>
+  <li><code>session.json</code> — the tracked-frame metadata (types, cameras, layers).</li>
+  <li><code>thumbnails/</code> — the captured thumbnail images.</li>
+  <li><code>blue_pencil.zip</code> — the actual Blue Pencil drawing archive (strokes per frame/camera), written with Maya's <code>bluePencilFrame -exportArchive</code>.</li>
+</ul>
+<p>Use <b>File &gt; Import Session…</b> (or the <b>Import Frames</b> button) and pick a previously exported session folder. The Blue Pencil drawings are restored from the archive with <code>-importArchive</code> (re-creating the frames on their camera), the thumbnails are copied back into the tool's cache, and the metadata is loaded. Choose <b>Replace</b> to swap in the imported set or <b>Merge</b> to add to the current tracked drawings. The Export/Import Session menu items and the Export/Import Frames buttons run the same operation.</p>
+
+<h2 id="playback">Playback Filters</h2>
+<p>Filtered playback uses a Qt timer and sets Maya's current time only on tracked frames. Choose <b>Keys Only</b>, <b>Keys + Breakdowns</b>, or <b>All Drawings</b>, set the FPS, and toggle Loop. The transport buttons step to the previous/next tracked drawing, play/pause, and stop.</p>
+
+<h2 id="hotkeys">Hotkeys</h2>
+<p>Use <b>Hotkeys &gt; Edit Hotkeys…</b> to open the editor, where you can set the Ctrl/Alt/Shift modifiers and key for each action and click <b>Apply</b> to bind and save them (they persist and reload). <b>Restore Defaults</b> refills the defaults and <b>Remove All</b> unbinds them. The Hotkeys menu also has quick <b>Create/Reset/Remove</b> items. Defaults: <code>Ctrl+Alt+B</code> toggles the manager, <code>Alt+R</code> resets the tool, <code>Alt+,</code> and <code>Alt+.</code> step drawings, <code>Alt+1/2/3</code> play filters, and <code>Ctrl+1/2/3</code> mark frame types.</p>
+
+<h2 id="about">About</h2>
+<p>Blue Pencil Flipbook Manager is a dockable Maya 2026 PySide2/PySide6 utility for improving Blue Pencil review workflows, styled to match the Animation Tool Kit.</p>
+</body></html>

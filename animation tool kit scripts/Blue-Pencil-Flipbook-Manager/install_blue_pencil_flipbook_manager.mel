@@ -1,0 +1,301 @@
+// =============================================================================
+// install_blue_pencil_flipbook_manager.mel
+//
+// DRAG AND DROP INSTALLER - Blue Pencil Flipbook Manager v0.1.0 for Maya
+//
+// How to use:
+//   Drag this .mel file from Windows Explorer / Finder onto the Maya viewport.
+//   Maya will run the installer automatically.
+//
+// Files required in the SAME folder as this .mel:
+//   - blue_pencil_flipbook/       (package folder)
+//   - install_blue_pencil_flipbook_manager.mel  (this file)
+//
+// Optional file in the SAME folder as this .mel:
+//   - blue_pencil_flipbook.png    (shelf icon; default Maya icon is used if missing)
+//
+// Compatible with Maya 2026+
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// Utility: normalize backslashes to forward slashes
+// -----------------------------------------------------------------------------
+global proc string bpfm__normPath(string $p)
+{
+    $p = substituteAllString($p, "\\", "/");
+    return $p;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: find last occurrence of $needle in $p, return 1-based index or -1
+// -----------------------------------------------------------------------------
+global proc int bpfm__rindex(string $p, string $needle)
+{
+    int $n = size($needle);
+    int $i;
+    if ($n < 1) return -1;
+    for ($i = size($p) - $n + 1; $i >= 1; $i--)
+    {
+        if (substring($p, $i, $i + $n - 1) == $needle)
+            return $i;
+    }
+    return -1;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: return directory portion of a path (with trailing slash)
+// -----------------------------------------------------------------------------
+global proc string bpfm__dirname(string $p)
+{
+    $p = bpfm__normPath($p);
+    int $idx = bpfm__rindex($p, "/");
+    if ($idx < 0) return "";
+    return substring($p, 1, $idx);
+}
+
+// -----------------------------------------------------------------------------
+// Utility: locate the folder this MEL file lives in by querying Maya
+// -----------------------------------------------------------------------------
+global proc string bpfm__getInstallerDir(string $procName)
+{
+    string $w = `whatIs $procName`;
+
+    if (`gmatch $w "*:*"` || `gmatch $w "*/*"`)
+    {
+        int $pos = bpfm__rindex($w, ": ");
+        if ($pos >= 0)
+        {
+            string $full = `substring $w ($pos + 2) (size($w))`;
+            $full = bpfm__normPath($full);
+            if (`filetest -f $full`)
+                return bpfm__dirname($full);
+        }
+
+        string $tokens[];
+        tokenize $w " " $tokens;
+        if (size($tokens) > 0)
+        {
+            string $maybe = $tokens[(size($tokens) - 1)];
+            $maybe = bpfm__normPath($maybe);
+            if (`filetest -f $maybe`)
+                return bpfm__dirname($maybe);
+        }
+    }
+
+    return "";
+}
+
+// -----------------------------------------------------------------------------
+// Utility: check file/folder existence
+// -----------------------------------------------------------------------------
+global proc int bpfm__fileExists(string $p)
+{
+    return `filetest -f (bpfm__normPath($p))`;
+}
+
+global proc int bpfm__dirExists(string $p)
+{
+    return `filetest -d (bpfm__normPath($p))`;
+}
+
+// -----------------------------------------------------------------------------
+// Utility: ensure directory exists (uses Python for reliability)
+// -----------------------------------------------------------------------------
+global proc bpfm__ensureDir(string $dir)
+{
+    $dir = bpfm__normPath($dir);
+    if (!`filetest -d $dir`)
+    {
+        string $py = "";
+        $py += "import os\n";
+        $py += "os.makedirs(r\"" + $dir + "\", exist_ok=True)\n";
+        python($py);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Utility: copy a single file using Python shutil (reliable cross-platform)
+// -----------------------------------------------------------------------------
+global proc bpfm__copyFile(string $src, string $dstDir)
+{
+    $src    = bpfm__normPath($src);
+    $dstDir = bpfm__normPath($dstDir);
+
+    bpfm__ensureDir($dstDir);
+
+    string $py = "";
+    $py += "import os, shutil\n";
+    $py += "src = r\"" + $src + "\"\n";
+    $py += "dst_dir = r\"" + $dstDir + "\"\n";
+    $py += "dst = os.path.join(dst_dir, os.path.basename(src))\n";
+    $py += "shutil.copy2(src, dst)\n";
+    python($py);
+}
+
+// -----------------------------------------------------------------------------
+// Utility: copy the package folder recursively using Python shutil
+// -----------------------------------------------------------------------------
+global proc bpfm__copyPackage(string $srcDir, string $dstParentDir)
+{
+    $srcDir       = bpfm__normPath($srcDir);
+    $dstParentDir = bpfm__normPath($dstParentDir);
+
+    bpfm__ensureDir($dstParentDir);
+
+    string $py = "";
+    $py += "import os, shutil\n";
+    $py += "src = r\"" + $srcDir + "\"\n";
+    $py += "dst_parent = r\"" + $dstParentDir + "\"\n";
+    $py += "dst = os.path.join(dst_parent, os.path.basename(os.path.normpath(src)))\n";
+    $py += "if os.path.isdir(dst):\n";
+    $py += "    shutil.rmtree(dst)\n";
+    $py += "ignore = shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo')\n";
+    $py += "shutil.copytree(src, dst, ignore=ignore)\n";
+    python($py);
+}
+
+// -----------------------------------------------------------------------------
+// Utility: add or replace a shelf button (no duplicates)
+// -----------------------------------------------------------------------------
+global proc bpfm__replaceShelfButton(
+    string $shelf,
+    string $label,
+    string $annotation,
+    string $icon,
+    string $pyCmd)
+{
+    if ($shelf == "" || !`shelfLayout -ex $shelf`)
+    {
+        warning("Blue Pencil Flipbook Manager: could not find shelf '" + $shelf + "' - skipping shelf button.");
+        return;
+    }
+
+    string $kids[] = `shelfLayout -q -ca $shelf`;
+    for ($k in $kids)
+    {
+        if (`control -ex $k`)
+        {
+            string $kLabel = "";
+            catchQuiet($kLabel = `shelfButton -q -l $k`);
+            if ($kLabel == $label)
+                catchQuiet(`deleteUI $k`);
+        }
+    }
+
+    shelfButton
+        -parent     $shelf
+        -label      $label
+        -annotation $annotation
+        -image      $icon
+        -sourceType "python"
+        -command    $pyCmd;
+
+    refresh -f;
+}
+
+// -----------------------------------------------------------------------------
+// Main installer
+// -----------------------------------------------------------------------------
+global proc bpfm__install()
+{
+    string $toolName    = "Blue Pencil Flipbook Manager";
+    string $packageName = "blue_pencil_flipbook";
+    string $iconFile    = "Blue_Pencil.png";
+    string $shelfLabel  = "Blue Pencil Flipbook";
+    string $annotation  = "Open Blue Pencil Flipbook Manager";
+
+    // Build the Python command the shelf button will run.
+    // It fully reloads the package (dropping every cached submodule) so a
+    // reinstall/update is picked up on the next click without restarting Maya.
+    string $pyCmd = "";
+    $pyCmd += "import sys\n";
+    $pyCmd += "import maya.cmds as cmds\n";
+    $pyCmd += "scripts_dir = cmds.internalVar(userScriptDir=True)\n";
+    $pyCmd += "if scripts_dir not in sys.path:\n";
+    $pyCmd += "    sys.path.insert(0, scripts_dir)\n";
+    $pyCmd += "_wc = 'BluePencilFlipbookManagerWorkspaceControl'\n";
+    $pyCmd += "if cmds.workspaceControl(_wc, exists=True):\n";
+    $pyCmd += "    cmds.deleteUI(_wc)\n";
+    $pyCmd += "for _m in [m for m in list(sys.modules) if m == 'blue_pencil_flipbook' or m.startswith('blue_pencil_flipbook.')]:\n";
+    $pyCmd += "    del sys.modules[_m]\n";
+    $pyCmd += "import blue_pencil_flipbook.launch as bp_launch\n";
+    $pyCmd += "bp_launch.show()\n";
+
+    string $installDir = bpfm__getInstallerDir("bpfm__install");
+    if ($installDir == "")
+    {
+        confirmDialog
+            -title   ($toolName + " - Install Failed")
+            -message  "Could not locate the installer folder.\n\nInstallation cancelled."
+            -button  "OK";
+        return;
+    }
+
+    string $srcPackage = $installDir + $packageName;
+    string $srcInit    = $srcPackage + "/__init__.py";
+    string $srcIcon    = $installDir + $iconFile;
+
+    if (!bpfm__dirExists($srcPackage) || !bpfm__fileExists($srcInit))
+    {
+        confirmDialog
+            -title   ($toolName + " - Missing Package")
+            -message ("Could not find the package folder:\n\n" + $srcPackage
+                      + "\n\nMake sure the " + $packageName
+                      + " folder is in the same folder as this .mel file.")
+            -button  "OK";
+        return;
+    }
+
+    string $scriptsDir = bpfm__normPath(`internalVar -userScriptDir`);
+    string $prefDir    = bpfm__normPath(`internalVar -userPrefDir`);
+    string $iconsDir   = $prefDir + "icons/";
+
+    bpfm__copyPackage($srcPackage, $scriptsDir);
+    print ("// Blue Pencil Flipbook Manager: package -> " + $scriptsDir + $packageName + "\n");
+
+    string $iconToUse = "commandButton.png";
+    if (bpfm__fileExists($srcIcon))
+    {
+        bpfm__copyFile($srcIcon, $iconsDir);
+        $iconToUse = $iconFile;
+        print ("// Blue Pencil Flipbook Manager: icon    -> " + $iconsDir + $iconFile + "\n");
+    }
+    else
+    {
+        warning("Blue Pencil Flipbook Manager: blue_pencil_flipbook.png not found - shelf button will use default icon.");
+    }
+
+    global string $gShelfTopLevel;
+    string $currentShelf = "";
+    if (`shelfTabLayout -ex $gShelfTopLevel`)
+        catchQuiet($currentShelf = `shelfTabLayout -q -st $gShelfTopLevel`);
+
+    if ($currentShelf == "")
+    {
+        $currentShelf = "Custom";
+        if (!`shelfLayout -ex $currentShelf`)
+            addNewShelf $currentShelf;
+    }
+
+    bpfm__replaceShelfButton($currentShelf, $shelfLabel, $annotation, $iconToUse, $pyCmd);
+
+    print ("// ============================================================\n");
+    print ("// Blue Pencil Flipbook Manager - Installation Complete\n");
+    print ("// Package -> " + $scriptsDir + $packageName + "\n");
+    print ("// Icon    -> " + $iconsDir   + $iconFile    + "\n");
+    print ("// Shelf   -> " + $currentShelf               + "\n");
+    print ("// ============================================================\n");
+
+    confirmDialog
+        -title   ($toolName + " - Installed!")
+        -message ("Installation complete!\n\n"
+                  + "Package copied to:\n" + $scriptsDir + $packageName + "\n\n"
+                  + "Shelf button added to the \"" + $currentShelf + "\" shelf.\n\n"
+                  + "Click the shelf button to launch the tool.")
+        -button  "OK";
+
+    inViewMessage -amg "<hl>Blue Pencil Flipbook Manager</hl> installed!" -pos midCenter -fade;
+}
+
+// Run immediately on drag-and-drop
+bpfm__install();
