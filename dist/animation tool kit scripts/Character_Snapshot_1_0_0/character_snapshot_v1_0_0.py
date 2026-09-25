@@ -2427,6 +2427,14 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         flags ^= QtCore.Qt.WindowMaximizeButtonHint
         self.setWindowFlags(flags)
 
+        # Keep the minimized title bar at the bottom of the screen instead of
+        # floating over Maya (ATK toolbar helper; absent when standalone).
+        try:
+            from atk_toolbar.atk_window import watch_window
+            watch_window(self)
+        except Exception:
+            pass
+
         self.setStyleSheet(DARK_STYLESHEET)
         self.setMinimumSize(820, 560)
         self.resize(900, 640)

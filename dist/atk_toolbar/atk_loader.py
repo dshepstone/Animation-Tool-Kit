@@ -10,6 +10,12 @@ import importlib
 import importlib.util
 import maya.cmds as cmds
 
+try:
+    from .atk_window import watch_launch as _watch_launch
+except Exception:                       # never let the window fix block a launch
+    import contextlib as _contextlib
+    _watch_launch = _contextlib.nullcontext
+
 # ---------------------------------------------------------------------------
 # Tool Registry
 # ---------------------------------------------------------------------------
@@ -408,7 +414,11 @@ def launch_tool_fn(tool_id, fn_name=None):
             )
             return
 
-        fn()
+        # Watch the windows the launcher opens so their minimized title bars
+        # line up at the bottom of the screen instead of floating over Maya
+        # (see atk_window.py).
+        with _watch_launch():
+            fn()
 
     except ImportError as exc:
         exc_str = str(exc)
