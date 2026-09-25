@@ -62,6 +62,13 @@ Version:
                pose, and stores the fix in the Character Snapshot metadata
                (kept on re-snapshot). Mirror, Flip and Mirror Middle use it
                automatically; Edit Rules shows "(rig fix: …)".
+             * Works on characters placed / turned in a shot: the mirror
+               plane is fitted from the rig's own left/right pairs, and the
+               whole rig is put in its default pose even for a selected-
+               controls run.
+             * Detects and repairs wrong pairings (e.g. a manual pair
+               L_handThumb ↔ R_handThumb2) that contradict the left/right
+               naming.
     2.3.3 - UI cleanup pass:
              * Removed the redundant "Take Snapshot" button — snapshot
                capture lives in the Tools menu and in the Character Snapshot
@@ -642,7 +649,7 @@ def _signed_unit_diag(m, tol=0.02):
     return signs
 
 
-def analyse_mirror_frames(src, dst, mirror_axis="X", tol=0.02):
+def analyse_mirror_frames(src, dst, mirror_axis="X", tol=0.02, mirror=None):
     """Solve the exact mirror relationship between two controls.
 
     *src* / *dst* are frame samples taken at the rig's default pose (see
@@ -653,6 +660,9 @@ def analyse_mirror_frames(src, dst, mirror_axis="X", tol=0.02):
         ro     – rotateOrder enum,  t0 / r0 – default translate / rotate
 
     For a centre control pass the same sample as *src* and *dst*.
+    *mirror* overrides the world reflection matrix — used when the
+    character is moved / rotated in the scene so the mirror plane is the
+    character's own, not the world's.
 
     Returns {"M", "N", "rules", "mode", "reasons"} or None when a frame is
     degenerate. "rules" holds exact copy/negate decisions for the translate
@@ -660,7 +670,7 @@ def analyse_mirror_frames(src, dst, mirror_axis="X", tol=0.02):
     don't (permuted / oblique axes, differing rotate orders, asymmetric
     default values) and the values must be mirrored through M and N.
     """
-    s = _mirror_m3(mirror_axis)
+    s = mirror if mirror is not None else _mirror_m3(mirror_axis)
     f_src_inv = _m3_inv(src["frame"])
     p_dst_inv = _m3_inv(dst["parent"])
     if f_src_inv is None or p_dst_inv is None:
@@ -797,7 +807,7 @@ class RigTroubleshooter(object):
     CUSTOM_PROBE    = 5.0      # unbounded custom attributes
 
     def __init__(self, adapter, prefix, controls=None, probe_custom=True,
-                 include_middles=True, mirror_axis=None):
+                 include_middles=True, mirror_axis=None, repair_pairs=True):
         self.adapter         = adapter
         self.prefix          = prefix
         self.probe_custom    = probe_custom
@@ -807,6 +817,12 @@ class RigTroubleshooter(object):
         self._to_deg         = _angle_to_degrees()
         self._cancelled      = False
         self._leaf_to_dag    = {}
+        self.repair_pairs    = repair_pairs
+        # Mirror plane — replaced in run() by the character's own frame so a
+        # rig that is moved / rotated in the shot still mirrors correctly.
+        self._s              = _mirror_m3(self.mirror_axis)
+        self._origin         = [0.0, 0.0, 0.0]
+        self._pair_repairs   = []
 
     # -- Scene helpers ------------------------------------------------------
 
@@ -960,7 +976,7 @@ class RigTroubleshooter(object):
     def _compare(self, src_eff, dst_eff, mapping):
         """Relative error between the partner's measured motion and the
         exact mirror of the source's motion. None = source didn't move."""
-        s = _mirror_m3(self.mirror_axis)
+        s = self._s
         pos_err = pos_mag = rot_err = rot_mag = 0.0
         ident = _m3_identity()
         for n_src, n_dst in mapping:
@@ -968,7 +984,7 @@ class RigTroubleshooter(object):
                 continue
             dp_s, g_s = src_eff[n_src]
             dp_d, g_d = dst_eff[n_dst]
-            exp_p = [dp_s[j] * s[j][j] for j in range(3)]
+            exp_p = [sum(dp_s[i] * s[i][j] for i in range(3)) for j in range(3)]
             exp_g = _m3_mul(_m3_mul(s, g_s), s)
             pos_mag += math.sqrt(sum(v * v for v in dp_s))
             pos_err += math.sqrt(sum((dp_d[j] - exp_p[j]) ** 2 for j in range(3)))
@@ -1130,41 +1146,127 @@ class RigTroubleshooter(object):
     def cancel(self):
         self._cancelled = True
 
+    def _name_partner(self, ctrl):
+        """Partner found purely by left/right naming, or None."""
+        leaf = ctrl.split("|")[-1]
+        ns, base = (leaf.rsplit(":", 1) if ":" in leaf else ("", leaf))
+        ns_prefix = ns + ":" if ns else ""
+        for cand in _mirror_name_candidates(base, self.adapter.left_token,
+                                            self.adapter.right_token):
+            dag = self._leaf_to_dag.get(ns_prefix + cand)
+            if dag:
+                return dag
+        return None
+
+    def _partner_for(self, ctrl):
+        """Partner to analyse *ctrl* against. A manual / recorded pair that
+        contradicts an existing name-convention partner (e.g. L_handThumb ↔
+        R_handThumb2) is reported and — with repair_pairs — replaced."""
+        partner = self.adapter.find_partner(ctrl)
+        if partner:
+            partner = self._leaf_to_dag.get(partner.split("|")[-1],
+                                            _resolve_long(partner))
+        named = self._name_partner(ctrl)
+        if named and partner and named != partner and partner != ctrl:
+            key = (ctrl.split("|")[-1], partner.split("|")[-1], named.split("|")[-1])
+            if key not in self._pair_repairs:
+                self._pair_repairs.append(key)
+            if self.repair_pairs:
+                return named
+        return partner or named
+
     def _collect(self):
-        """(pairs, middles) of scene controls to analyse."""
+        """(pairs, middles) of scene controls to analyse. Also records the
+        rig-wide pairing used to find the character's mirror plane."""
         all_ctrls = []
         for key in self.adapter.cs_controls():
             resolved = self.adapter._cs._resolve_to_scene(key)
             if resolved:
                 all_ctrls.append(_resolve_long(resolved))
         self._leaf_to_dag = {c.split("|")[-1]: c for c in all_ctrls}
+        self._pair_repairs = []
+
+        all_pairs, all_middles, done = [], [], set()
+        for ctrl in all_ctrls:
+            if ctrl in done or self.adapter.is_excluded(ctrl):
+                continue
+            side = self.adapter.get_side(ctrl) or "middle"
+            partner = self._partner_for(ctrl)
+            if partner and partner in done:
+                continue
+            if partner and cmds.objExists(partner) and partner != ctrl:
+                if side == "right":
+                    ctrl, partner = partner, ctrl
+                all_pairs.append((ctrl, partner))
+                done.update((ctrl, partner))
+            elif side == "middle":
+                all_middles.append(ctrl)
+                done.add(ctrl)
+        self._all_pairs = all_pairs
+
         wanted = None
         if self._only:
             wanted = set()
             for c in self._only:
+                c = self._leaf_to_dag.get(c.split("|")[-1], c)
                 wanted.add(c)
-                p = self.adapter.find_partner(c)
+                p = self._partner_for(c)
                 if p:
-                    wanted.add(_resolve_long(p))
-        pairs, middles, done = [], [], set()
-        for ctrl in all_ctrls:
-            if ctrl in done or self.adapter.is_excluded(ctrl):
-                continue
-            if wanted is not None and ctrl not in wanted:
-                continue
-            side = self.adapter.get_side(ctrl) or "middle"
-            partner = self.adapter.find_partner(ctrl)
-            partner = self._leaf_to_dag.get(partner.split("|")[-1],
-                                            _resolve_long(partner)) if partner else None
-            if partner and cmds.objExists(partner) and partner != ctrl:
-                if side == "right":
-                    ctrl, partner = partner, ctrl
-                pairs.append((ctrl, partner))
-                done.update((ctrl, partner))
-            elif side == "middle" and self.include_middles:
-                middles.append(ctrl)
-                done.add(ctrl)
+                    wanted.add(p)
+        pairs = [(a, b) for a, b in all_pairs
+                 if wanted is None or a in wanted or b in wanted]
+        middles = [m for m in all_middles if self.include_middles
+                   and (wanted is None or m in wanted)]
         return pairs, middles
+
+    def _set_mirror_frame(self, report):
+        """Fit the character's own mirror plane from its left/right pairs.
+
+        At the default pose every pair sits symmetrically about the
+        character's centre plane, so the plane normal is the (robust)
+        average direction from right to left control and the plane passes
+        through the pairs' midpoints. A character moved or turned in the
+        shot therefore still mirrors across its own plane, not the world's.
+        """
+        dirs, mids = [], []
+        for a, b in self._all_pairs:
+            try:
+                pa, pb = self._world(a)[0], self._world(b)[0]
+            except Exception:
+                continue
+            d = [pa[i] - pb[i] for i in range(3)]
+            length = math.sqrt(sum(v * v for v in d))
+            if length > 1e-3:
+                dirs.append([v / length for v in d])
+                mids.append([(pa[i] + pb[i]) * 0.5 for i in range(3)])
+        if len(dirs) < 3:
+            return
+        # Align every direction with the first, then take the per-axis
+        # median — ignores the odd asymmetric or constraint-driven pair.
+        ref = dirs[0]
+        dirs = [d if sum(d[i] * ref[i] for i in range(3)) >= 0 else [-v for v in d]
+                for d in dirs]
+        med = lambda vals: sorted(vals)[len(vals) // 2]
+        n = [med([d[i] for d in dirs]) for i in range(3)]
+        length = math.sqrt(sum(v * v for v in n))
+        if length < 1e-6:
+            return
+        n = [v / length for v in n]
+        dist = med([sum(m[i] * n[i] for i in range(3)) for m in mids])
+        self._s = [[(1.0 if i == j else 0.0) - 2.0 * n[i] * n[j] for j in range(3)]
+                   for i in range(3)]
+        self._origin = [n[i] * dist for i in range(3)]
+
+        axis = "XYZ".index(self.mirror_axis[-1])
+        tilt = math.degrees(math.acos(min(1.0, abs(n[axis]))))
+        if tilt > 0.5 or abs(dist) > 1e-2:
+            report["issues"].append((
+                "info", "(rig)",
+                "The character is placed in the scene (mirror plane turned "
+                "{:.0f}° from world {} and {:.3g} units from the origin). "
+                "Mirroring uses the character's own plane, fitted from its "
+                "{} left/right pairs.".format(tilt, self.mirror_axis, abs(dist),
+                                              len(dirs))))
 
     def run(self, progress_cb=None):
         """Analyse the rig. Returns a report dict (see apply())."""
@@ -1181,16 +1283,28 @@ class RigTroubleshooter(object):
             "verified": 0,
             "failed":   0,
             "unverified": 0,
+            "pair_repairs": list(self._pair_repairs),
             "cancelled": False,
         }
-        all_ctrls = [c for p in pairs for c in p] + middles
         auto_key = cmds.autoKeyframe(query=True, state=True)
         undo_on  = cmds.undoInfo(query=True, state=True)
         cmds.autoKeyframe(state=False)
         cmds.undoInfo(stateWithoutFlush=False)
         saved = {}
         try:
-            saved, n_missing = self._enter_default_pose(all_ctrls)
+            # The WHOLE rig goes to its default pose — even for a
+            # selected-controls run — so both sides' parents are symmetric.
+            saved, n_missing = self._enter_default_pose(
+                list(self._leaf_to_dag.values()))
+            self._set_mirror_frame(report)
+            for ctrl_leaf, wrong, right in self._pair_repairs:
+                report["issues"].append((
+                    "error", _ctrl_base(ctrl_leaf),
+                    "Paired with {} (manual pair / snapshot record) but its "
+                    "name partner is {}.{}".format(
+                        _ctrl_base(wrong), _ctrl_base(right),
+                        " Analysed against {}; Apply repairs the pair.".format(
+                            _ctrl_base(right)) if self.repair_pairs else "")))
             if n_missing:
                 report["issues"].append((
                     "warning", "(rig)",
@@ -1235,7 +1349,7 @@ class RigTroubleshooter(object):
         is_middle = src == dst
         s_src = self._sample_frame(src)
         s_dst = s_src if is_middle else self._sample_frame(dst)
-        fwd = analyse_mirror_frames(s_src, s_dst, self.mirror_axis)
+        fwd = analyse_mirror_frames(s_src, s_dst, self.mirror_axis, mirror=self._s)
         if fwd is None:
             report["issues"].append(("error", _ctrl_base(src),
                                      "Degenerate transform (zero scale?) — skipped."))
@@ -1246,10 +1360,12 @@ class RigTroubleshooter(object):
         if not is_middle:
             # A default pose that isn't symmetric can't mirror onto itself;
             # results stay relative to each side's default.
-            s = _mirror_m3(self.mirror_axis)
+            s, o = self._s, self._origin
             p_src, p_dst = self._world(src)[0], self._world(dst)[0]
-            gap = math.sqrt(sum((p_dst[j] - p_src[j] * s[j][j]) ** 2 for j in range(3)))
-            size = max(1.0, math.sqrt(sum(v * v for v in p_src)))
+            rel = [p_src[i] - o[i] for i in range(3)]
+            exp = [o[j] + sum(rel[i] * s[i][j] for i in range(3)) for j in range(3)]
+            gap = math.sqrt(sum((p_dst[j] - exp[j]) ** 2 for j in range(3)))
+            size = max(1.0, math.sqrt(sum(v * v for v in rel)))
             if gap > 0.01 * size:
                 report["issues"].append((
                     "warning", _ctrl_base(src),
@@ -1324,7 +1440,7 @@ class RigTroubleshooter(object):
         # --- record the forward entry and the reverse direction ---
         self._record(report, src, dst, entry, fwd)
         if not is_middle:
-            rev = analyse_mirror_frames(s_dst, s_src, self.mirror_axis)
+            rev = analyse_mirror_frames(s_dst, s_src, self.mirror_axis, mirror=self._s)
             if rev is not None:
                 r_entry = self._make_entry(rev, s_dst, s_src, src)
                 if entry["mode"] == RIG_FIX_CHANNEL:
@@ -1392,9 +1508,26 @@ class RigTroubleshooter(object):
 
         Existing entries for controls not analysed this run are kept, so a
         "selected controls only" run can refine an earlier whole-rig fix.
-        Returns (n_entries, n_overrides_cleared, n_flip_signs_cleared).
+        Conflicting pairs found by the run are repaired (bad manual pairs
+        removed, snapshot partner records corrected) when repair_pairs is on.
+        Returns (n_entries, n_overrides_cleared, n_flip_signs_cleared,
+        n_pairs_repaired).
         """
         cs = self.adapter._cs
+        n_pairs = 0
+        if self.repair_pairs:
+            for ctrl_leaf, wrong, right in report.get("pair_repairs", []):
+                bad = {_ctrl_base(ctrl_leaf), _ctrl_base(wrong)}
+                for src, prt in list(cs.manual_pairs.items()):
+                    if {_ctrl_base(src), _ctrl_base(prt)} == bad:
+                        del cs.manual_pairs[src]
+                        n_pairs += 1
+                for leaf, partner in ((ctrl_leaf, right), (right, ctrl_leaf)):
+                    data = cs._control_data(leaf)
+                    if data is not None and data.get("partner") and \
+                            _ctrl_base(data["partner"]) != _ctrl_base(partner):
+                        data["partner"] = partner
+                        n_pairs += 1
         meta = cs.metadata if isinstance(cs.metadata, dict) else {}
         fix = meta.get(_CS_META_RIG_FIX)
         if not isinstance(fix, dict) or fix.get("schema") != RIG_FIX_SCHEMA:
@@ -1432,7 +1565,7 @@ class RigTroubleshooter(object):
         cs.metadata = meta
         cs.save_to_scene()
         self.adapter.reload_fix()
-        return len(report["entries"]), n_ov, n_flip
+        return len(report["entries"]), n_ov, n_flip, n_pairs
 
 
 def clear_rig_fix(adapter):
@@ -2053,12 +2186,19 @@ class RigTroubleshootDialog(QtWidgets.QDialog):
             "fix the rig by hand) are removed when this is ticked.")
         self.clear_flip_cb = QtWidgets.QCheckBox("On apply: clear Flip Sign on fixed controls")
         self.clear_flip_cb.setChecked(True)
+        self.repair_cb = QtWidgets.QCheckBox("Repair wrong pairings (e.g. Thumb ↔ Thumb2)")
+        self.repair_cb.setChecked(True)
+        self.repair_cb.setToolTip(
+            "When a manual pair or the snapshot pairs a control with something\n"
+            "other than its left/right name partner, analyse it against the\n"
+            "name partner and fix the pairing on apply.")
         opt_lay.addWidget(self.scope_all_rb, 0, 0)
         opt_lay.addWidget(self.scope_sel_rb, 0, 1)
         opt_lay.addWidget(self.probe_cb, 1, 0)
         opt_lay.addWidget(self.middle_cb, 1, 1)
         opt_lay.addWidget(self.clear_ov_cb, 2, 0)
         opt_lay.addWidget(self.clear_flip_cb, 2, 1)
+        opt_lay.addWidget(self.repair_cb, 3, 0)
         layout.addWidget(opt_grp)
 
         self.run_btn = QtWidgets.QPushButton("Run Analysis")
@@ -2130,6 +2270,7 @@ class RigTroubleshootDialog(QtWidgets.QDialog):
             self.adapter, self.prefix, controls=controls,
             probe_custom=self.probe_cb.isChecked(),
             include_middles=self.middle_cb.isChecked(),
+            repair_pairs=self.repair_cb.isChecked(),
         )
         progress = QtWidgets.QProgressDialog(
             "Analysing rig…", "Cancel", 0, 100, self)
@@ -2235,7 +2376,7 @@ class RigTroubleshootDialog(QtWidgets.QDialog):
     def _on_apply(self):
         if not self._report or not self._troubleshooter:
             return
-        n_entries, n_ov, n_flip = self._troubleshooter.apply(
+        n_entries, n_ov, n_flip, n_pairs = self._troubleshooter.apply(
             self._report,
             clear_conflicting_overrides=self.clear_ov_cb.isChecked(),
             clear_flip_signs=self.clear_flip_cb.isChecked(),
@@ -2245,6 +2386,9 @@ class RigTroubleshootDialog(QtWidgets.QDialog):
         if self.owner is not None:
             self.owner._on_rig_fix_changed(self.adapter)
         extra = []
+        if n_pairs:
+            extra.append("{} wrong mirror pairing{} repaired".format(
+                n_pairs, "s" if n_pairs != 1 else ""))
         if n_ov:
             extra.append("{} conflicting channel override{} cleared".format(
                 n_ov, "s" if n_ov != 1 else ""))
