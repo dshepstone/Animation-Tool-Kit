@@ -2451,6 +2451,14 @@ class MirrorControls(QtWidgets.QDialog):
         flags ^= QtCore.Qt.WindowMinimizeButtonHint
         flags ^= QtCore.Qt.WindowMaximizeButtonHint
         self.setWindowFlags(flags)
+
+        # Minimize to the Windows taskbar instead of a title-bar stub inside
+        # Maya (ATK toolbar helper; absent when installed standalone).
+        try:
+            from atk_toolbar.atk_window import watch_window
+            watch_window(self)
+        except Exception:
+            pass
         self._saved_geometry = None
         self._active_prefix  = None    # set by combobox or auto-detected
 
