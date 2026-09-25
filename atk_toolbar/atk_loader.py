@@ -414,9 +414,9 @@ def launch_tool_fn(tool_id, fn_name=None):
             )
             return
 
-        # Watch the windows the launcher opens so they minimize to the
-        # Windows taskbar instead of collapsing into a title-bar stub inside
-        # Maya (see atk_window.py).
+        # Watch the windows the launcher opens so their minimized title bars
+        # line up at the bottom of the screen instead of floating over Maya
+        # (see atk_window.py).
         with _watch_launch():
             fn()
 

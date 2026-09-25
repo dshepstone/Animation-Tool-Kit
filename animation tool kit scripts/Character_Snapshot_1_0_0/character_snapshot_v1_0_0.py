@@ -2427,8 +2427,8 @@ class CharacterSnapshotManager(QtWidgets.QDialog):
         flags ^= QtCore.Qt.WindowMaximizeButtonHint
         self.setWindowFlags(flags)
 
-        # Minimize to the Windows taskbar instead of a title-bar stub inside
-        # Maya (ATK toolbar helper; absent when installed standalone).
+        # Keep the minimized title bar at the bottom of the screen instead of
+        # floating over Maya (ATK toolbar helper; absent when standalone).
         try:
             from atk_toolbar.atk_window import watch_window
             watch_window(self)
