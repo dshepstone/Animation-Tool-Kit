@@ -15,38 +15,65 @@ import savePlus_core
 
 VERSION = savePlus_core.VERSION
 
+class _TeeStream:
+    """Stream that writes to the SavePlus log and to the original stream."""
+
+    def __init__(self, redirector, original):
+        self._redirector = redirector
+        self._original = original
+
+    def write(self, message):
+        self._redirector.write(message)
+        if self._original is not None:
+            self._original.write(message)
+
+    def flush(self):
+        if self._original is not None:
+            self._original.flush()
+
+
 class LogRedirector:
-    """A class to redirect Maya's script output to a QTextEdit widget"""
-    
+    """Mirror Maya's script output into a QTextEdit widget.
+
+    Output still reaches the Script Editor as well, so errors and prints
+    from other tools are not hidden while SavePlus is open.
+    """
+
     def __init__(self, text_widget):
         self.text_widget = text_widget
         self.orig_stdout = None
         self.orig_stderr = None
-    
+
     def write(self, message):
         # Write to the text widget
-        if self.text_widget:
-            self.text_widget.append(message.rstrip())
-            # Make sure to scroll to the bottom
-            self.text_widget.verticalScrollBar().setValue(
-                self.text_widget.verticalScrollBar().maximum()
-            )
-    
+        if self.text_widget and message.strip():
+            try:
+                self.text_widget.append(message.rstrip())
+                # Make sure to scroll to the bottom
+                self.text_widget.verticalScrollBar().setValue(
+                    self.text_widget.verticalScrollBar().maximum()
+                )
+            except RuntimeError:
+                # Widget was deleted (window closed) - stop mirroring
+                self.stop_redirect()
+
     def flush(self):
         pass
-    
+
     def start_redirect(self):
-        """Start redirecting stdout and stderr"""
+        """Start mirroring stdout and stderr"""
         self.orig_stdout = sys.stdout
         self.orig_stderr = sys.stderr
-        sys.stdout = self
-        sys.stderr = self
-    
+        sys.stdout = _TeeStream(self, self.orig_stdout)
+        sys.stderr = _TeeStream(self, self.orig_stderr)
+
     def stop_redirect(self):
-        """Stop redirecting stdout and stderr"""
+        """Stop mirroring stdout and stderr"""
         if self.orig_stdout and self.orig_stderr:
             sys.stdout = self.orig_stdout
             sys.stderr = self.orig_stderr
+            self.orig_stdout = None
+            self.orig_stderr = None
 
 
 class AboutDialog(QDialog):

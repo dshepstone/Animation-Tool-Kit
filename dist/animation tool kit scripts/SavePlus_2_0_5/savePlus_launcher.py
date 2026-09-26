@@ -18,7 +18,7 @@ import shutil
 from savePlus_maya import cmds, mel
 
 # Version for this launcher
-VERSION = "2.0.5"
+VERSION = "2.0.6"
 
 def setup_import_paths():
     """Setup import paths for SavePlus modules"""
@@ -35,7 +35,16 @@ def import_modules():
         # Ensure the script directory is in the Python path
         setup_import_paths()
         
-        # Try to import modules
+        # Reload any cached SavePlus modules (dependency order) so a reinstall
+        # or toolbar reload picks up updated files without restarting Maya.
+        # The toolbar reload only purges this launcher module, so without this
+        # an older savePlus_main would stay loaded.
+        import importlib
+        for mod_name in ('savePlus_maya', 'savePlus_core',
+                         'savePlus_ui_components', 'savePlus_main'):
+            if mod_name in sys.modules:
+                importlib.reload(sys.modules[mod_name])
+
         import savePlus_core
         import savePlus_ui_components
         import savePlus_main
@@ -78,6 +87,7 @@ def launch_save_plus():
         
         # Import the modules
         core, ui, main = import_modules()
+        print(f"SavePlus UI loaded from: {main.__file__}")
         
         # Check for existing UI window or workspace control
         for obj in cmds.lsUI(windows=True):
@@ -285,6 +295,153 @@ savePlus_launcher.launch_save_plus()
         print(f"Error installing shelf button: {e}")
         traceback.print_exc()
         return False
+
+# Identifier stored in the quick-save shelf button's annotation so it can be
+# found and updated instead of duplicated.
+QUICK_SAVE_IDENTIFIER = "SavePlus_QuickSave_ShelfButton"
+
+
+def quick_save_plus():
+    """Run Save Plus on the current scene without opening the SavePlus window.
+
+    Uses the same core versioning as the Save Plus button in the UI and
+    records the new version in the SavePlus history.
+    """
+    try:
+        setup_import_paths()
+        import savePlus_core
+
+        current_file = cmds.file(query=True, sceneName=True)
+        if not current_file:
+            # First save needs a name - hand over to the full UI.
+            cmds.warning("SavePlus: scene has never been saved. Opening SavePlus to name it.")
+            return launch_save_plus()
+
+        respect_project = savePlus_core.load_option_var("SavePlusRespectProject", True)
+        result, message, new_file_path = savePlus_core.save_plus_proc(current_file, respect_project)
+        print(message)
+
+        if not result:
+            cmds.warning(f"SavePlus: {message}")
+            return False
+
+        try:
+            savePlus_core.VersionHistoryModel().add_version(new_file_path, "")
+        except Exception as e:
+            print(f"SavePlus: could not record version history: {e}")
+
+        # Refresh an open SavePlus window so it shows the new filename/history.
+        savePlus_main = sys.modules.get('savePlus_main')
+        if savePlus_main is not None:
+            try:
+                from PySide6.QtWidgets import QApplication
+                for widget in QApplication.topLevelWidgets():
+                    if isinstance(widget, savePlus_main.SavePlusUI):
+                        ui = widget
+                    else:
+                        ui = widget.findChild(savePlus_main.SavePlusUI)
+                    if ui is not None:
+                        ui.filename_input.setText(os.path.basename(new_file_path))
+                        ui.version_history.versions = ui.version_history.load_history()
+                        ui.populate_recent_files()
+                        break
+            except Exception as e:
+                print(f"SavePlus: could not refresh open window: {e}")
+
+        cmds.inViewMessage(
+            amg=f"SavePlus: <hl>{os.path.basename(new_file_path)}</hl>",
+            pos="topCenter", fade=True, fadeStayTime=1500)
+        return True
+    except Exception as e:
+        print(f"SavePlus quick save failed: {e}")
+        traceback.print_exc()
+        cmds.warning(f"SavePlus quick save failed: {e}")
+        return False
+
+
+def install_quick_save_shelf_button():
+    """Add a shelf button that runs Save Plus directly (no window).
+
+    The button goes on the 'Custom' shelf when it exists, otherwise on the
+    active shelf. An existing SavePlus quick-save button is updated rather
+    than duplicated.
+
+    Returns:
+        tuple: (success, message)
+    """
+    try:
+        top_shelf = mel.eval('$gShelfTopLevel=$gShelfTopLevel')
+        shelves = cmds.tabLayout(top_shelf, query=True, childArray=True) or []
+        if "Custom" in shelves:
+            shelf = "Custom"
+        else:
+            shelf = cmds.tabLayout(top_shelf, query=True, selectTab=True)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
+        button_command = f"""
+import importlib
+import os
+import sys
+import maya.cmds as cmds
+
+for _dir in [{script_dir!r}, cmds.internalVar(userScriptDir=True)]:
+    if os.path.isdir(_dir) and _dir not in sys.path:
+        sys.path.insert(0, _dir)
+
+for _mod in ['savePlus_maya', 'savePlus_core', 'savePlus_launcher']:
+    if _mod in sys.modules:
+        try:
+            importlib.reload(sys.modules[_mod])
+        except Exception as _e:
+            print(f"SavePlus: warning reloading {{_mod}}: {{_e}}")
+
+import savePlus_launcher
+savePlus_launcher.quick_save_plus()
+"""
+
+        # Package icon (standalone layout), then the user's icons folder
+        # (ATK installer layout), then Maya's built-in incremental-save icon.
+        icon_path = "incrementalSave.png"
+        for candidate in (os.path.join(script_dir, "icons", "saveplus.png"),
+                          os.path.join(cmds.internalVar(userBitmapsDir=True), "saveplus.png")):
+            if os.path.exists(candidate):
+                icon_path = candidate.replace("\\", "/")
+                break
+
+        annotation = f"SavePlus - Save Plus (increment version and save) [{QUICK_SAVE_IDENTIFIER}]"
+
+        existing_button = None
+        for btn in cmds.shelfLayout(shelf, query=True, childArray=True) or []:
+            try:
+                if (cmds.shelfButton(btn, exists=True) and
+                        QUICK_SAVE_IDENTIFIER in (cmds.shelfButton(btn, query=True, annotation=True) or "")):
+                    existing_button = btn
+                    break
+            except Exception:
+                pass
+
+        if existing_button:
+            cmds.shelfButton(existing_button, edit=True, command=button_command,
+                             image=icon_path, image1=icon_path,
+                             annotation=annotation, sourceType='python')
+            message = f"Updated Save Plus button on the '{shelf}' shelf."
+        else:
+            cmds.shelfButton(parent=shelf, label='Save+', imageOverlayLabel='Save+',
+                             annotation=annotation, image=icon_path, image1=icon_path,
+                             command=button_command, sourceType='python')
+            message = f"Added Save Plus button to the '{shelf}' shelf."
+
+        # Persist the shelf so the button survives a Maya restart.
+        try:
+            mel.eval('saveAllShelves $gShelfTopLevel;')
+        except Exception as e:
+            print(f"SavePlus: could not save shelves: {e}")
+
+        print(message)
+        return True, message
+    except Exception as e:
+        traceback.print_exc()
+        return False, f"Error adding shelf button: {e}"
 
 # Only create the UI if this script is run directly
 if __name__ == "__main__":
