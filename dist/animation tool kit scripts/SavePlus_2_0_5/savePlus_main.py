@@ -513,6 +513,17 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             # Add top save buttons to container layout
             self.container_layout.addLayout(buttons_layout)
 
+            # Shelf shortcut - one-click Save Plus without opening this window
+            shelf_layout = QHBoxLayout()
+            shelf_layout.setContentsMargins(0, 0, 0, 0)
+            shelf_button = QPushButton("Add Save Plus to Shelf")
+            shelf_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowDown))
+            shelf_button.clicked.connect(self.add_save_plus_shelf_button)
+            shelf_button.setToolTip("Add a Save Plus button to your Custom shelf (or the active shelf).\n\nClicking it runs Save Plus on the current scene without opening this window.")
+            shelf_layout.addWidget(shelf_button)
+            shelf_layout.addStretch()
+            self.container_layout.addLayout(shelf_layout)
+
             # Button help text — concise one-liner per button
             button_help = QLabel(
                 "<table style='border-spacing:0; color:#999999; font-size:10px;'>"
@@ -2641,6 +2652,16 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
                 if is_first_save and self.enable_timed_warning.isChecked():
                     self.show_first_time_warning()
     
+    def add_save_plus_shelf_button(self):
+        """Add a shelf button that runs Save Plus without opening the UI"""
+        import savePlus_launcher
+        success, message = savePlus_launcher.install_quick_save_shelf_button()
+        self.status_bar.showMessage(message, 5000)
+        if success:
+            QMessageBox.information(self, "SavePlus", message)
+        else:
+            QMessageBox.warning(self, "SavePlus", message)
+
     def save_as_new(self):
         """Save the file with the specified name without incrementing"""
         print("Starting Save As New operation...")
