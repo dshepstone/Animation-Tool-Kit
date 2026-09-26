@@ -389,9 +389,14 @@ import savePlus_launcher
 savePlus_launcher.quick_save_plus()
 """
 
-        icon_path = os.path.join(script_dir, "icons", "saveplus.png").replace("\\", "/")
-        if not os.path.exists(icon_path):
-            icon_path = "incrementalSave.png"
+        # Package icon (standalone layout), then the user's icons folder
+        # (ATK installer layout), then Maya's built-in incremental-save icon.
+        icon_path = "incrementalSave.png"
+        for candidate in (os.path.join(script_dir, "icons", "saveplus.png"),
+                          os.path.join(cmds.internalVar(userBitmapsDir=True), "saveplus.png")):
+            if os.path.exists(candidate):
+                icon_path = candidate.replace("\\", "/")
+                break
 
         annotation = f"SavePlus - Save Plus (increment version and save) [{QUICK_SAVE_IDENTIFIER}]"
 
