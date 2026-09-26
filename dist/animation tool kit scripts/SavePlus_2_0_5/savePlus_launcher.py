@@ -18,7 +18,7 @@ import shutil
 from savePlus_maya import cmds, mel
 
 # Version for this launcher
-VERSION = "2.0.5"
+VERSION = "2.0.6"
 
 def setup_import_paths():
     """Setup import paths for SavePlus modules"""
@@ -35,7 +35,16 @@ def import_modules():
         # Ensure the script directory is in the Python path
         setup_import_paths()
         
-        # Try to import modules
+        # Reload any cached SavePlus modules (dependency order) so a reinstall
+        # or toolbar reload picks up updated files without restarting Maya.
+        # The toolbar reload only purges this launcher module, so without this
+        # an older savePlus_main would stay loaded.
+        import importlib
+        for mod_name in ('savePlus_maya', 'savePlus_core',
+                         'savePlus_ui_components', 'savePlus_main'):
+            if mod_name in sys.modules:
+                importlib.reload(sys.modules[mod_name])
+
         import savePlus_core
         import savePlus_ui_components
         import savePlus_main
@@ -78,6 +87,7 @@ def launch_save_plus():
         
         # Import the modules
         core, ui, main = import_modules()
+        print(f"SavePlus UI loaded from: {main.__file__}")
         
         # Check for existing UI window or workspace control
         for obj in cmds.lsUI(windows=True):

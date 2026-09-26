@@ -355,7 +355,7 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             savePlus_core.debug_print("Initializing SavePlus UI")
             
             # Set window properties
-            self.setWindowTitle("SavePlus")
+            self.setWindowTitle(f"SavePlus v{VERSION}")
             self.setMinimumWidth(550)
             self.setMinimumHeight(200)
             
@@ -1683,7 +1683,7 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             about_group.setToolTip("Information about SavePlus")
             about_layout = QVBoxLayout(about_group)
 
-            version_label = QLabel("Version: 2.0.4")
+            version_label = QLabel(f"Version: {VERSION}")
             version_label.setStyleSheet("color: #AAAAAA; font-size: 11px;")
             about_layout.addWidget(version_label)
 

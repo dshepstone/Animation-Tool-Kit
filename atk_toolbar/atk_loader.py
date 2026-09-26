@@ -252,7 +252,7 @@ TOOL_REGISTRY = [
         "icon_file": "saveplus.png",
         "icon_key":  "save",
         "group":     "pipeline",
-        "version":   "2.0.5",
+        "version":   "2.0.6",
     },
     {
         "id":        "studio_library",
