@@ -642,7 +642,7 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         and rebuilds the toolbar so inline widgets use the new code too.
         """
         try:
-            purged = atk_loader.reload_tool_modules()
+            purged, plugin_notes = atk_loader.reload_tool_modules()
         except Exception as exc:
             cmds.warning("ATK Toolbar: script reload failed: {}".format(exc))
             return
@@ -661,6 +661,10 @@ class ATKSettingsDialog(QtWidgets.QDialog):
                 len(purged), "" if len(purged) == 1 else "s")
         else:
             summary = "Scripts refreshed. Tools will import the latest installed files on next launch."
+        if plugin_notes:
+            for note in plugin_notes:
+                cmds.warning("ATK Toolbar: {}".format(note))
+            summary += "\n\n" + "\n".join(plugin_notes)
         cmds.inViewMessage(amg="<hl>ATK Toolbar</hl>: {}".format(summary),
                            pos="midCenter", fade=True)
         QtWidgets.QMessageBox.information(self, "Reload Scripts", summary)

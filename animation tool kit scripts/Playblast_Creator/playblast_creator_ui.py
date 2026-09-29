@@ -3950,7 +3950,19 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
             self.tool_temp_dir_le.setText(temp_dir)
             os.makedirs(temp_dir, exist_ok=True)
             PBCPlayblastUtils.set_temp_output_dir_path(temp_dir)
-            PBCPlayblastUtils.set_temp_file_format(self.tool_temp_format_cmb.currentText())
+            requested_format = self.tool_temp_format_cmb.currentText()
+            PBCPlayblastUtils.set_temp_file_format(requested_format)
+            saved_format = PBCPlayblastUtils.get_temp_file_format()
+            if saved_format != requested_format:
+                # An older copy of the plug-in (still loaded in this Maya
+                # session) rejected the format - show what is really used.
+                self.tool_temp_format_cmb.setCurrentText(saved_format)
+                self.on_log_output(
+                    "[Warning] Temp format '{0}' is not supported by the loaded "
+                    "plug-in; using '{1}'. Use ATK Settings > Reload Scripts "
+                    "or restart Maya to load the updated plug-in.".format(
+                        requested_format, saved_format)
+                )
             # Re-probe ffmpeg so the codec list reflects the new binary.
             PBCPlayblastUtils.invalidate_encoder_cache()
             self.refresh_encoding_codecs()
@@ -4626,7 +4638,8 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
             "One-time tool setup. Point FFmpeg at your ffmpeg.exe so the "
             "tool can transcode to H.264/ProRes. The temp folder is used "
             "for the Preview button and for image sequences before "
-            "encoding. Click Apply Tool Settings to save."
+            "encoding. Click Apply Tool Settings to save. The final "
+            ".mp4 / .mov is chosen on the Encoding tab (Container)."
         ))
         tab_layout.addWidget(paths_card)
         tab_layout.addLayout(apply_row)
@@ -4933,7 +4946,8 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         self.tool_temp_dir_browse_btn.setToolTip("Browse for the temp folder.")
         self.tool_temp_format_cmb.setToolTip(
             "Image format used for intermediate frames before ffmpeg "
-            "encodes them into the final video."
+            "encodes them into the final video. This is not the output "
+            "format - pick .mp4 / .mov on the Encoding tab."
         )
         self.tool_apply_btn.setToolTip(
             "Save the paths above so the tool remembers them next time."
