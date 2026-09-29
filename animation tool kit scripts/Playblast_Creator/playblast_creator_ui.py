@@ -10,6 +10,7 @@
 
 import copy
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -173,6 +174,50 @@ class PBCPlayblastUtils(object):
         return cmds.PlayblastCreator(q=True, fp=True)[0]  # pylint: disable=E1101
 
     @classmethod
+    def resolve_ffmpeg_executable(cls, path):
+        """Turn whatever the user entered into a runnable ffmpeg path.
+
+        Accepts paths pasted with surrounding quotes (Windows "Copy as
+        path"), ~ / environment variables, the ffmpeg folder (or its
+        bin folder) instead of the executable, and a bare "ffmpeg"
+        that lives on PATH. Returns "" when nothing usable is found.
+        """
+        if not path:
+            return ""
+
+        path = path.strip().strip('"').strip("'").strip()
+        if not path:
+            return ""
+        path = os.path.expandvars(os.path.expanduser(path))
+
+        exe_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+        if os.path.isdir(path):
+            for candidate in (os.path.join(path, exe_name), os.path.join(path, "bin", exe_name)):
+                if os.path.isfile(candidate):
+                    return os.path.normpath(candidate)
+            return ""
+
+        if os.path.isfile(path):
+            return os.path.normpath(path)
+        if sys.platform == "win32" and os.path.isfile(path + ".exe"):
+            return os.path.normpath(path + ".exe")
+
+        which = getattr(shutil, "which", None)
+        if which is not None:
+            found = which(path)
+            if found:
+                return os.path.normpath(found)
+
+        return ""
+
+    @classmethod
+    def get_resolved_ffmpeg_path(cls):
+        try:
+            return cls.resolve_ffmpeg_executable(cls.get_ffmpeg_path())
+        except Exception:
+            return ""
+
+    @classmethod
     def set_ffmpeg_path(cls, path):
         cmds.PlayblastCreator(e=True, fp=path)  # pylint: disable=E1101
 
@@ -280,13 +325,12 @@ class PBCPlayblastUtils(object):
             return cls._available_video_encoders_cache
 
         if ffmpeg_path is None:
-            try:
-                ffmpeg_path = cls.get_ffmpeg_path()
-            except Exception:
-                ffmpeg_path = ""
+            ffmpeg_path = cls.get_resolved_ffmpeg_path()
+        else:
+            ffmpeg_path = cls.resolve_ffmpeg_executable(ffmpeg_path)
 
         found = set()
-        if ffmpeg_path and os.path.isfile(ffmpeg_path):
+        if ffmpeg_path:
             try:
                 popen_kwargs = {
                     "stdout": subprocess.PIPE,
@@ -313,7 +357,12 @@ class PBCPlayblastUtils(object):
             except Exception:
                 found = set()
 
-        cls._available_video_encoders_cache = found
+        # Only cache a successful probe. Caching an empty result (e.g.
+        # probed before the ffmpeg path was set or the plug-in loaded)
+        # kept mov/mp4 codecs locked as "unavailable" for the rest of
+        # the Maya session even after ffmpeg was configured.
+        if found:
+            cls._available_video_encoders_cache = found
         return found
 
     @classmethod
@@ -1191,6 +1240,7 @@ class PBCPlayblast(QtCore.QObject):
         if self.requires_ffmpeg() and not self.validate_ffmpeg(ffmpeg_path):
             self.log_error("ffmpeg executable is not configured. See script editor for details.")
             return
+        ffmpeg_path = PBCPlayblastUtils.resolve_ffmpeg_executable(ffmpeg_path) or ffmpeg_path
 
         temp_file_format = PBCPlayblastUtils.get_temp_file_format()
         temp_file_is_movie = temp_file_format == "movie"
@@ -1431,14 +1481,11 @@ class PBCPlayblast(QtCore.QObject):
         return self._container_format != "Image"
 
     def validate_ffmpeg(self, ffmpeg_path):
-        if not ffmpeg_path:
+        if not ffmpeg_path or not ffmpeg_path.strip():
             self.log_error("ffmpeg executable path not set")
             return False
-        elif not os.path.exists(ffmpeg_path):
-            self.log_error("ffmpeg executable path does not exist: {0}".format(ffmpeg_path))
-            return False
-        elif os.path.isdir(ffmpeg_path):
-            self.log_error("Invalid ffmpeg path: {0}".format(ffmpeg_path))
+        if not PBCPlayblastUtils.resolve_ffmpeg_executable(ffmpeg_path):
+            self.log_error("ffmpeg executable not found at: {0}".format(ffmpeg_path))
             return False
 
         return True
@@ -3017,6 +3064,44 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select ffmpeg executable")
         if path:
             self.tool_ffmpeg_path_le.setText(path)
+            self.apply_ffmpeg_path()
+
+    def apply_ffmpeg_path(self):
+        """Save the ffmpeg path and re-probe encoders straight away, so
+        mov/mp4 become selectable without needing "Apply Tool Settings".
+        """
+        entered = self.tool_ffmpeg_path_le.text().strip()
+        resolved = PBCPlayblastUtils.resolve_ffmpeg_executable(entered)
+        try:
+            PBCPlayblastUtils.set_ffmpeg_path(resolved or entered)
+        except Exception:
+            traceback.print_exc()
+            self.on_log_output("[Error] Failed to save the ffmpeg path.")
+            return
+
+        if resolved and resolved != entered:
+            self.tool_ffmpeg_path_le.blockSignals(True)
+            self.tool_ffmpeg_path_le.setText(resolved)
+            self.tool_ffmpeg_path_le.blockSignals(False)
+
+        PBCPlayblastUtils.invalidate_encoder_cache()
+        self.refresh_encoding_codecs()
+
+        try:
+            env_override = PBCPlayblastUtils.is_ffmpeg_env_var_set()
+        except Exception:
+            env_override = False
+        if env_override:
+            self.on_log_output(
+                "[Warning] The PLAYBLAST_CREATOR_FFMPEG environment "
+                "variable is set and overrides the path entered here."
+            )
+        elif entered and not resolved:
+            self.on_log_output("[Warning] ffmpeg executable not found at: {0}".format(entered))
+        elif resolved and not PBCPlayblastUtils.detect_available_video_encoders():
+            self.on_log_output(
+                "[Warning] Could not list encoders from ffmpeg at: {0}".format(resolved)
+            )
 
     def browse_temp_output_dir(self):
         start_dir = self.tool_temp_dir_le.text().strip() or self.default_temp_output_dir()
@@ -3419,13 +3504,16 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
             if self._playblast.requires_ffmpeg():
                 ffmpeg_path = PBCPlayblastUtils.get_ffmpeg_path()
                 if not self._playblast.validate_ffmpeg(ffmpeg_path):
+                    if ffmpeg_path and ffmpeg_path.strip():
+                        problem = "ffmpeg was not found at:\n{0}".format(ffmpeg_path)
+                    else:
+                        problem = "ffmpeg is not configured on the Settings tab."
                     choice = QtWidgets.QMessageBox.warning(
                         self,
                         "ffmpeg not configured",
                         "This playblast is set to '{0}', which needs ffmpeg "
-                        "to encode.\n\nffmpeg is not configured on the "
-                        "Settings tab.\n\nFall back to a PNG image "
-                        "sequence for this playblast?".format(container),
+                        "to encode.\n\n{1}\n\nFall back to a PNG image "
+                        "sequence for this playblast?".format(container, problem),
                         QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
                         QtWidgets.QMessageBox.Yes,
                     )
@@ -3854,7 +3942,10 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
 
     def apply_tool_tab_settings(self):
         try:
-            PBCPlayblastUtils.set_ffmpeg_path(self.tool_ffmpeg_path_le.text().strip())
+            entered_ffmpeg = self.tool_ffmpeg_path_le.text().strip()
+            PBCPlayblastUtils.set_ffmpeg_path(
+                PBCPlayblastUtils.resolve_ffmpeg_executable(entered_ffmpeg) or entered_ffmpeg
+            )
             temp_dir = self.tool_temp_dir_le.text().strip() or self.default_temp_output_dir()
             self.tool_temp_dir_le.setText(temp_dir)
             os.makedirs(temp_dir, exist_ok=True)
@@ -3932,6 +4023,7 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
             )
         )
         self.tool_ffmpeg_browse_btn.clicked.connect(self.browse_ffmpeg_path)
+        self.tool_ffmpeg_path_le.editingFinished.connect(self.apply_ffmpeg_path)
         self.tool_temp_dir_browse_btn.clicked.connect(self.browse_temp_output_dir)
         self.tool_apply_btn.clicked.connect(self.apply_tool_tab_settings)
         self._playblast.output_logged.connect(self.on_log_output)
@@ -3964,6 +4056,10 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
             self.output_dir_path_le.setText(saved_output_dir)
 
         self.refresh_cameras()
+        # Re-probe ffmpeg every time the window opens; the encoder cache
+        # is shared across the Maya session and may predate the current
+        # ffmpeg path.
+        PBCPlayblastUtils.invalidate_encoder_cache()
         self.refresh_encoding_codecs()
         self.update_filename_preview()
         self.refresh_sound_status()
