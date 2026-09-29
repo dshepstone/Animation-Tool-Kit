@@ -1233,6 +1233,13 @@ class PBCPlayblast(QtCore.QObject):
         output_dir = self.resolve_output_directory_path(output_dir)
         filename = self.resolve_output_filename(filename, camera)
 
+        try:
+            if not os.path.isdir(output_dir):
+                os.makedirs(output_dir)
+        except OSError as exc:
+            self.log_error("Could not create output directory '{0}': {1}".format(output_dir, exc))
+            return None
+
         if padding <= 0:
             padding = PBCPlayblast.DEFAULT_PADDING
 
@@ -1384,10 +1391,17 @@ class PBCPlayblast(QtCore.QObject):
 
             self.remove_temp_dir(playblast_output_dir, temp_file_extension)
 
+            if not os.path.isfile(output_path):
+                self.log_error("Encoding failed. No file was written to: {0}".format(output_path))
+                return None
+
             if show_in_viewer:
                 self.open_in_viewer(output_path)
+        else:
+            output_path = playblast_output
 
         self.log_output("Playblast complete\n")
+        return output_path
 
 
     def remove_temp_dir(self, temp_dir_path, temp_file_extension):
@@ -1648,6 +1662,13 @@ class PBCPlayblast(QtCore.QObject):
         return (start_frame - audio_frame_offset) / frame_rate
 
     def resolve_output_directory_path(self, dir_path):
+        """Expand tokens in an output folder and return an absolute path.
+
+        Relative paths are anchored to the Maya project root rather than
+        the process working directory, which Maya changes as scenes and
+        file dialogs are used - otherwise the same relative path would
+        land in a different folder from one playblast to the next.
+        """
         dir_path = PlayblastCreatorCustomPresets.parse_playblast_output_dir_path(dir_path)
 
         if "{project}" in dir_path:
@@ -1658,9 +1679,17 @@ class PBCPlayblast(QtCore.QObject):
             if not temp_dir_path:
                 self.log_warning("The {temp} directory path is not set")
 
-            dir_path = dir_path.replace("{temp}", temp_dir_path)
+            dir_path = dir_path.replace("{temp}", temp_dir_path or "")
+        if "{scene}" in dir_path:
+            dir_path = dir_path.replace("{scene}", self.get_scene_name())
+        if "{timestamp}" in dir_path:
+            dir_path = dir_path.replace("{timestamp}", self.get_timestamp())
 
-        return dir_path
+        dir_path = os.path.expandvars(os.path.expanduser(dir_path))
+        if not os.path.isabs(dir_path):
+            dir_path = os.path.join(self.get_project_dir_path() or os.getcwd(), dir_path)
+
+        return os.path.normpath(dir_path)
 
     def resolve_output_filename(self, filename, camera):
         filename = PlayblastCreatorCustomPresets.parse_playblast_output_filename(filename)
@@ -2878,13 +2907,16 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         self.update_filename_preview()
 
     def select_output_dir(self):
-        start_dir = self.output_dir_path_le.text() or cmds.workspace(q=True, rootDirectory=True)
+        start_dir = self.output_dir_path_le.text().strip()
+        start_dir = self._playblast.resolve_output_directory_path(start_dir) if start_dir else cmds.workspace(q=True, rootDirectory=True)
         path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Output Directory", start_dir)
         if path:
             self.output_dir_path_le.setText(path)
 
     def open_output_dir(self):
-        output_dir = self.output_dir_path_le.text()
+        output_dir = self.output_dir_path_le.text().strip()
+        if output_dir:
+            output_dir = self._playblast.resolve_output_directory_path(output_dir)
         if output_dir and os.path.isdir(output_dir):
             QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(output_dir))
 
@@ -3343,6 +3375,10 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
                     "the Output tab before creating a playblast."
                 )
                 return
+            # Expand {project}/{scene}/... tokens and anchor relative
+            # paths before touching the disk, so the folder we create
+            # is the one the playblast is actually written to.
+            output_dir = self._playblast.resolve_output_directory_path(output_dir)
             try:
                 os.makedirs(output_dir, exist_ok=True)
             except OSError as exc:
@@ -3408,16 +3444,20 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
             self.apply_visibility_preset()
             self.apply_quick_viewport_toggles()
 
-            self._run_playblast(
+            saved_path = self._run_playblast(
                 output_dir=output_dir,
                 filename=filename,
                 show_in_viewer=self.viewer_cb.isChecked(),
                 overwrite=self.force_overwrite_cb.isChecked(),
                 single_frame=False,
             )
-            self.on_log_output(
-                "Playblast saved to: {0}".format(os.path.join(output_dir, filename))
-            )
+            if saved_path:
+                self.on_log_output("Playblast saved to: {0}".format(saved_path))
+            else:
+                self.on_log_output(
+                    "[Error] Playblast was NOT saved. See the messages "
+                    "above for the reason."
+                )
         except Exception:
             traceback.print_exc()
             self.on_log_output("[Error] Playblast failed. See Script Editor for details.")
@@ -3519,7 +3559,7 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
                 # transcodes through ffmpeg.
                 self._playblast.set_encoding("Image", "png")
 
-            self._playblast.execute(
+            return self._playblast.execute(
                 output_dir=output_dir,
                 filename=filename,
                 padding=self.frame_padding_sb.value(),
@@ -3830,6 +3870,7 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
 
     def create_connections(self):
         self.output_dir_path_browse_btn.clicked.connect(self.select_output_dir)
+        self.output_dir_path_le.textChanged.connect(self._save_output_dir)
         self.clear_btn.clicked.connect(self.clear_output_log)
 
         self.camera_select_hide_defaults_cb.toggled.connect(self.refresh_cameras)
@@ -3911,7 +3952,17 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         # the frame hugs the content of the active tab.
         self.tabs.currentChanged.connect(self._adjust_height_to_current_tab)
 
+    def _save_output_dir(self, text):
+        cmds.optionVar(sv=(self.OPT_VAR_OUTPUT_DIR, text.strip()))
+
     def load_settings(self):
+        # Restore the last output folder so a reopened window (or a new
+        # Maya session) keeps writing where the user last pointed it,
+        # instead of silently falling back to {project}/movies.
+        saved_output_dir = PBCPlayblastUtils.get_opt_var_str(self.OPT_VAR_OUTPUT_DIR)
+        if saved_output_dir and not self.output_dir_path_le.text().strip():
+            self.output_dir_path_le.setText(saved_output_dir)
+
         self.refresh_cameras()
         self.refresh_encoding_codecs()
         self.update_filename_preview()
