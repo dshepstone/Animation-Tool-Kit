@@ -29,6 +29,10 @@ except Exception:                       # never let the window fix block a launc
 #   icon_key    – key passed to atk_icons for the generated fallback icon
 #   group       – logical category; separators are inserted between groups
 #   version     – version string shown in the About tab of settings
+#   extra_modules – (optional) helper modules the tool imports that live
+#                   outside its main module/package; purged by Reload Scripts
+#   maya_plugin – (optional) Maya plug-in file the tool loads; unloaded and
+#                   reloaded by Reload Scripts so plug-in changes take effect
 
 TOOL_REGISTRY = [
     {
@@ -249,6 +253,8 @@ TOOL_REGISTRY = [
         "tooltip":   "Intelligent file versioning and backup for Maya scenes",
         "module":    "savePlus_launcher",
         "launch_fn": "launch_save_plus",
+        "extra_modules": ["savePlus_core", "savePlus_main", "savePlus_maya",
+                          "savePlus_ui_components"],
         "icon_file": "saveplus.png",
         "icon_key":  "save",
         "group":     "pipeline",
@@ -260,6 +266,7 @@ TOOL_REGISTRY = [
         "tooltip":   "Manage poses and animation clips in a visual library",
         "module":    "studiolibrary",
         "launch_fn": "main",
+        "extra_modules": ["studiolibrarymaya", "studioqt", "studiovendor", "mutils"],
         "icon_file": "studioLibrary.png",
         "icon_key":  "library",
         "group":     "pipeline",
@@ -271,6 +278,8 @@ TOOL_REGISTRY = [
         "tooltip":   "Render preview playblasts with shot masks and presets",
         "module":    "playblast_creator_ui",
         "launch_fn": "show_ui",
+        "extra_modules": ["playblast_creator_presets"],
+        "maya_plugin": "playblast_creator.py",
         "icon_file": "playblast_creator_icon.png",
         "icon_key":  "snap",
         "group":     "pipeline",
@@ -459,21 +468,29 @@ def is_tool_installed(tool_id):
 # ---------------------------------------------------------------------------
 
 def reload_tool_modules():
-    """Purge every registered tool module from ``sys.modules`` so the next
-    launch re-imports the latest installed scripts — no Maya restart needed
-    after updating or reinstalling tools.
+    """Purge every tool module from ``sys.modules`` so the next launch
+    re-imports the latest installed scripts, and reload tool Maya plug-ins —
+    no Maya restart needed after updating or reinstalling tools.
 
     Already-open tool windows keep running on the old code; relaunch a tool
     from the toolbar to get the reloaded version.
 
-    Returns the sorted list of top-level module names that were purged.
+    Returns ``(purged, plugin_notes)``: the sorted top-level module names that
+    were purged, and one message per plug-in that could not be reloaded.
     """
     # Pick up any directories created by a fresh install and make sure
     # cached import metadata doesn't shadow newly copied files.
     setup_paths()
     importlib.invalidate_caches()
 
-    roots = set(tool["module"].split(".")[0] for tool in TOOL_REGISTRY)
+    roots = set()
+    for tool in TOOL_REGISTRY:
+        roots.add(tool["module"].split(".")[0])
+        # Helper modules (e.g. playblast_creator_presets, savePlus_core,
+        # Studio Library's mutils/studioqt) must be purged too, otherwise
+        # the fresh tool module re-imports the stale cached helpers.
+        for extra in tool.get("extra_modules", ()):
+            roots.add(extra.split(".")[0])
 
     purged = set()
     for root in roots:
@@ -482,4 +499,62 @@ def reload_tool_modules():
             if name == root or name.startswith(prefix):
                 del sys.modules[name]
                 purged.add(root)
-    return sorted(purged)
+
+    plugin_notes = []
+    for tool in TOOL_REGISTRY:
+        plugin = tool.get("maya_plugin")
+        if plugin:
+            note = _reload_maya_plugin(plugin)
+            if note:
+                plugin_notes.append("{}: {}".format(tool["label"], note))
+
+    return sorted(purged), plugin_notes
+
+
+def _is_plugin_loaded(plugin):
+    for name in (plugin, os.path.splitext(plugin)[0]):
+        try:
+            if cmds.pluginInfo(name, q=True, loaded=True):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _reload_maya_plugin(plugin):
+    """Unload and reload a Python Maya plug-in so edits to it take effect.
+
+    Maya keeps a loaded plug-in's code in memory, so purging ``sys.modules``
+    alone never picks up plug-in changes. A plug-in whose node types exist
+    in the open scene cannot be unloaded without losing those nodes, so it
+    is left alone. Returns a message when the plug-in was not reloaded,
+    otherwise None.
+    """
+    if not _is_plugin_loaded(plugin):
+        return None  # Loads fresh from disk the next time the tool starts.
+
+    try:
+        path = cmds.pluginInfo(plugin, q=True, path=True)
+    except Exception:
+        path = plugin
+
+    try:
+        node_types = cmds.pluginInfo(plugin, q=True, dependNode=True) or []
+    except Exception:
+        node_types = []
+    in_scene = [t for t in node_types if cmds.ls(type=t)]
+    if in_scene:
+        return ("plug-in not reloaded because the scene contains {} node(s). "
+                "Delete them or restart Maya to load the new plug-in.".format(
+                    ", ".join(in_scene)))
+
+    try:
+        cmds.unloadPlugin(os.path.basename(path))
+    except Exception as exc:
+        return "could not unload plug-in ({}). Restart Maya to reload it.".format(exc)
+
+    try:
+        cmds.loadPlugin(path, quiet=True)
+    except Exception as exc:
+        return "unloaded but failed to reload plug-in ({}). It will reload when the tool is next launched.".format(exc)
+    return None

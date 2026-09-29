@@ -63,6 +63,7 @@ class PlayblastCreatorCmd(om.MPxCommand):
     TEMP_FILE_FORMATS = [
         "movie",
         "png",
+        "jpg",
         "tga",
         "tif"
     ]
