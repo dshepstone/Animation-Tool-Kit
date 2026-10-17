@@ -162,6 +162,7 @@ def _draw_symbol(painter, icon_key, accent, size):
         "tween":   _draw_tween,
         "frames":  _draw_frames,
         "noise":   _draw_noise,
+        "overlap": _draw_overlap,
         "pivot":   _draw_pivot,
         "onion":   _draw_onion,
         "snap":    _draw_snap,
@@ -180,6 +181,22 @@ def _draw_symbol(painter, icon_key, accent, size):
 
 
 # ── Individual symbol painters ──────────────────────────────────────────────
+
+
+def _draw_overlap(painter, accent, s, m):
+    """Three pendulum poses; visible even when the installed PNG is missing."""
+    pivot = QtCore.QPointF(s * .5, s * .2)
+    for x, y, color in ((.23, .68, accent.darker(190)),
+                        (.5, .79, accent.darker(135)),
+                        (.79, .66, accent)):
+        point = QtCore.QPointF(s * x, s * y)
+        painter.setPen(_pen(color, s * .055))
+        painter.drawLine(pivot, point)
+        painter.setBrush(color)
+        painter.drawEllipse(point, s * .09, s * .09)
+    painter.setBrush(_FG_COLOR)
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.drawEllipse(pivot, s * .055, s * .055)
 
 def _draw_gear(painter, accent, s, m):
     """8-tooth gear."""

@@ -462,6 +462,24 @@ global proc atk__install()
     else
         warning("ATK Installer: Blue Pencil Flipbook Manager package not found (skipped): " + $bluePencilSrc);
 
+    // Overlap ships as an isolated ATK package, including offline HTML help,
+    // assets and its separate licence. It does not require a standalone install.
+    string $overlapSrc = $toolsBase + "Overlap/atk_overlap";
+    if (`filetest -d $overlapSrc`)
+    {
+        string $copyOverlapPy = "";
+        $copyOverlapPy += "import os, shutil\n";
+        $copyOverlapPy += "src = r\"" + $overlapSrc + "\"\n";
+        $copyOverlapPy += "dst = os.path.join(r\"" + $scriptsDir + "\", 'atk_overlap')\n";
+        $copyOverlapPy += "if os.path.exists(dst):\n";
+        $copyOverlapPy += "    shutil.rmtree(dst)\n";
+        $copyOverlapPy += "shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo'))\n";
+        $copyOverlapPy += "print('  Copied package: atk_overlap')\n";
+        python($copyOverlapPy);
+    }
+    else
+        warning("ATK Installer: Overlap package not found (skipped): " + $overlapSrc);
+
     // Playblast Creator v2.0.4 - matches the standalone installer layout so
     // the plug-in file and UI resolve the same way whether the toolbar or
     // the drag-and-drop installer copied them in.
@@ -505,6 +523,7 @@ global proc atk__install()
         "inbetweener_2_0_2/defaultPose.png",
         "Add-Remove-Inbetweens_1_0_1/add_Remove.png",
         "noise_generator_1_0_0/noise_generator_icon.png",
+        "Overlap/atk_overlap/assets/overlap_32.png",
         "onion-skin-tool_2_2_0/onionSkinIcon.png",
         "WireShape_Tool_1_0_0/Shape_Icon.png",
         "Reset_Tool_2_0_1/reset_icon.png",

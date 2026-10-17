@@ -16,3 +16,10 @@ Example included license types in this repository may include:
 
 Where required, original copyright notices, attribution statements, and license
 texts must be retained with the relevant component.
+
+## Overlap — separately licensed bundled component
+
+Overlap 0.4.0 is authored by David Shepstone and included with its original
+copyright and proprietary licence in
+`animation tool kit scripts/Overlap/atk_overlap/LICENSE`. Inclusion in ATK
+does not replace that component's separate terms with the root MIT licence.
