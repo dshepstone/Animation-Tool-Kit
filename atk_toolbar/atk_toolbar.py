@@ -959,6 +959,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
     # ── Construction ────────────────────────────────────────────────────────
 
     def _build(self):
+        atk_loader.start_tool_services()
         # Clear any previous children
         old_layout = self.layout()
         if old_layout is not None:
@@ -1145,7 +1146,55 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         else:
             layout.addWidget(slider)
 
+    def _make_tick_palette(self, tool, icon_sz, show_tips):
+        """Three direct colour strips and a menu arrow in one icon-sized slot."""
+        palette = QtWidgets.QWidget(self)
+        palette.setObjectName("timeline_ticks_palette")
+        palette.setFixedSize(icon_sz + 8, icon_sz + 8)
+        row = QtWidgets.QHBoxLayout(palette)
+        row.setContentsMargins(2, 3, 2, 3)
+        row.setSpacing(2)
+        colors = QtWidgets.QVBoxLayout()
+        colors.setSpacing(2)
+        row.addLayout(colors, 1)
+        installed = atk_loader.is_tool_installed(tool["id"])
+        for label, color, fn_name in tool["palette_colors"]:
+            btn = QtWidgets.QToolButton(palette)
+            btn.setObjectName(tool["id"] + "_" + label.lower())
+            btn.setAccessibleName(tool["label"] + " " + label)
+            btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+            btn.setMinimumSize(0, 0)
+            btn.setStyleSheet("QToolButton {background:%s; border:1px solid #555; border-radius:2px;}"
+                             "QToolButton:hover {border:1px solid white;}" % color)
+            btn.setEnabled(installed)
+            if show_tips:
+                btn.setToolTip("<b>Timeline Ticks: {}</b><br>Colour existing keys in the highlighted "
+                               "Time Slider range, or at the current frame.<br>"
+                               "Right-click for colours, classifications and the full tool.".format(label))
+            btn.clicked.connect(
+                lambda checked=False, tid=tool["id"], fn=fn_name:
+                    atk_loader.launch_tool_fn(tid, fn))
+            btn.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            btn.customContextMenuRequested.connect(
+                lambda pos, t=tool, b=btn, ok=installed:
+                    self._tool_context_menu(t, b, pos, ok))
+            colors.addWidget(btn, 1)
+        arrow = QtWidgets.QToolButton(palette)
+        arrow.setObjectName("timeline_ticks_menu")
+        arrow.setAccessibleName("Timeline Ticks menu")
+        arrow.setArrowType(QtCore.Qt.DownArrow)
+        arrow.setFixedWidth(10)
+        arrow.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
+        arrow.setStyleSheet(_BTN_STYLE_NORMAL + "QToolButton::menu-indicator {image:none;}")
+        arrow.setToolTip("Timeline Ticks: colours, key classifications and full window")
+        arrow.setMenu(self._tool_menu(tool, installed))
+        arrow.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        row.addWidget(arrow)
+        return palette
+
     def _make_tool_btn(self, tool, icon_sz, show_tips):
+        if tool.get("palette_colors"):
+            return self._make_tick_palette(tool, icon_sz, show_tips)
         btn = QtWidgets.QToolButton()
         btn.setFixedSize(icon_sz + 8, icon_sz + 8)
 
@@ -1288,6 +1337,11 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         menu.exec(btn.mapToGlobal(pos))
 
     def _tool_context_menu(self, tool, btn, pos, installed):
+        menu = self._tool_menu(tool, installed)
+        menu.exec(btn.mapToGlobal(pos))
+        menu.deleteLater()
+
+    def _tool_menu(self, tool, installed):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(
             "QMenu { background:#3c3c3c; color:#cccccc; border:1px solid #555; }"
@@ -1316,7 +1370,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         menu.addSeparator()
         about_act = menu.addAction("About This Tool")
         about_act.triggered.connect(lambda: self._show_tool_about(tool))
-        menu.exec(btn.mapToGlobal(pos))
+        return menu
 
     @staticmethod
     def _show_about():
