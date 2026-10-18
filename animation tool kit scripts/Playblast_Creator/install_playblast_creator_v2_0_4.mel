@@ -1,4 +1,4 @@
-// Playblast Creator Tool v2.0.4 - Drag & Drop Installer
+// Playblast Creator Tool v2.0.5 - Drag & Drop Installer
 // Drag this MEL file into a Maya viewport or source it manually.
 
 global proc string cstg_cleanWhatIsPath(string $whatIsValue)

@@ -1,4 +1,4 @@
-"""Playblast Creator v2.0.4 installer.
+"""Playblast Creator v2.0.5 installer.
 
 Executed by install_playblast_creator_v2_0_4.mel when dragged into Maya.
 """
@@ -141,7 +141,7 @@ def install(source_dir=None):
 
     message = "Installation complete.\nInstalled to:\n{0}".format(install_root)
     cmds.confirmDialog(title="Playblast Creator", message=message, button=["OK"])
-    print("[Playblast Creator] Installed v2.0.4 to: {0}".format(install_root))
+    print("[Playblast Creator] Installed v2.0.5 to: {0}".format(install_root))
 
 
 if __name__ == "__main__":

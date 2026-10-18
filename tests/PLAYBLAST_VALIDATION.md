@@ -34,6 +34,7 @@ Qt-specific tests use real PySide6/QProcess; Maya capture calls are mocked.
   at, and after capture start (including decoded silence verification).
 - Real movie transcode with optional absent audio and missing-input failure.
 - Real Qt Output tab: overwrite checkbox visible below filename and initially off.
+- Shot-mask missing texture/renderer diagnostics and release on drawing errors.
 - ZIP CRC and every packaged file compared to canonical source; portable paths.
 
 ## Workstation smoke tests still required
