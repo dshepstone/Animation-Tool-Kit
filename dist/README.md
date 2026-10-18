@@ -2,10 +2,11 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.8** includes **Playblast Creator 2.0.5** with automatic software
-fallback for failed hardware H.264 encoding, protected video replacement,
-clear overwrite controls, portable capture paths, and regression tests.
-See [release notes](Animation_Tool_Kit_v1.1.8_Release_Notes.md).
+Version **1.1.9** uses the new **ATK logo** for the website button beside the
+settings gear. The button opens **https://shepstone.ca/**. This release includes
+all Playblast Creator 2.0.5 reliability fixes from 1.1.8: hardware H.264 software
+fallback, protected video replacement, clear overwrite controls, and portable
+capture paths. See [release notes](Animation_Tool_Kit_v1.1.9_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.
