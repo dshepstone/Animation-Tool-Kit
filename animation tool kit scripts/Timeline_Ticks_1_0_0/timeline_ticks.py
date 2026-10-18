@@ -1,8 +1,8 @@
 """Compact, scene-persistent coloured timeline annotations for Maya 2022+.
 
 Run ``import timeline_ticks; timeline_ticks.show()`` inside Maya.
-Annotations identify an animation curve UUID and a time in seconds. They are
-frame annotations: retiming/copying keys does not move/copy the annotations.
+Annotations identify an animation curve UUID and a time in seconds. The runtime
+tracker follows exact key edits, removes deleted labels and supports Undo/Redo.
 """
 import json
 from functools import partial
@@ -17,6 +17,7 @@ PALETTE = (("Yellow", "#f5cf58"), ("Red", "#ef6464"),
            ("Blue", "#60a5fa"), ("Green", "#78cc95"))
 ATTR = "atkTimelineTicks"
 _window = None
+_tracker = None
 
 
 def time_token(seconds):
@@ -109,6 +110,8 @@ class Controller:
                 (cmds.keyframe(c, q=True, timeChange=True, time=(now, now)) or [])]
 
     def apply(self, scope, kind=None, color=None, clear=False):
+        if _tracker is not None:
+            _tracker.flush()
         targets = self.targets(scope)
         if not targets:
             return 0
@@ -131,6 +134,8 @@ class Controller:
             self.store.write(marks)
         finally:
             cmds.undoInfo(closeChunk=True)
+        if _tracker is not None:
+            _tracker.capture()
         return len(targets)
 
     def visible_marks(self):
@@ -240,7 +245,7 @@ def _ui_classes():
             layout.addLayout(row)
             self.status = QtWidgets.QLabel("Select controls, choose scope, then a type or colour.")
             self.status.setStyleSheet("color: #aaa; font-size: 10px;")
-            self.status.setToolTip("Labels save with the scene. Retimed or copied keys need relabelling.\n"
+            self.status.setToolTip("Labels follow moved keys and disappear with deleted keys.\n"
                                    "Breakdown sets Maya's native breakdown state; other types clear it.\n"
                                    "Closing this bar hides its coloured tick overlay.")
             layout.addWidget(self.status)
@@ -341,6 +346,30 @@ def clear_ticks():
     return _quick_apply(clear=True)
 
 
+def start_tracking():
+    """Track even hidden/unselected curves, independently of the floating UI."""
+    global _tracker
+    if _tracker is None:
+        import maya.cmds as cmds
+        from timeline_ticks_tracking import KeyTracker
+        tracker = KeyTracker(SceneStore(cmds), cmds)
+        tracker.start()
+        _tracker = tracker
+    return _tracker
+
+
+def shutdown():
+    """Release every callback and window before reloading the tool module."""
+    global _window, _tracker
+    if _tracker is not None:
+        _tracker.stop()
+        _tracker = None
+    if _window is not None:
+        _window.close()
+        _window.deleteLater()
+        _window = None
+
+
 def show():
     """Open one compact bar, parented to Maya; no scene scripts installed."""
     global _window
@@ -351,6 +380,7 @@ def show():
 
     if cmds.about(batch=True):
         raise RuntimeError("Timeline Ticks requires interactive Maya")
+    start_tracking()
     if _window is not None:
         _window.close()
         _window.deleteLater()

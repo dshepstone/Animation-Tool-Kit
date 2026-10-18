@@ -10,6 +10,9 @@ SOURCE = Path(__file__).resolve().parents[1] / "animation tool kit scripts/Timel
 spec = importlib.util.spec_from_file_location("timeline_ticks", SOURCE)
 ticks = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ticks)
+tracking_spec = importlib.util.spec_from_file_location("timeline_ticks_tracking", SOURCE.with_name("timeline_ticks_tracking.py"))
+tracking = importlib.util.module_from_spec(tracking_spec)
+tracking_spec.loader.exec_module(tracking)
 
 
 class TickTests(unittest.TestCase):
@@ -158,9 +161,54 @@ class TickTests(unittest.TestCase):
         with patch.dict(sys.modules, {"timeline_ticks": old_module, "maya.cmds": cmds,
                                       "maya": Mock(cmds=cmds)}), patch.object(sys, "path", list(sys.path)):
             exec(prelude, {})
+            old_module.shutdown.assert_called_once()
             window.close.assert_called_once()
             window.deleteLater.assert_called_once()
             self.assertNotIn("timeline_ticks", sys.modules)
+
+
+class TrackingTests(unittest.TestCase):
+    def test_overlapping_group_moves_keep_distinct_labels(self):
+        marks = {"c@5": "red", "c@10": "blue"}
+        times = {"c": {"5", "10"}}
+        result = tracking.follow_edits(marks, [("move", "c", "5", "10"),
+                                              ("move", "c", "10", "15")], {}, times)
+        self.assertEqual(result, {"c@10": "red", "c@15": "blue"})
+        self.assertEqual(times, {"c": {"10", "15"}})
+
+    def test_negative_scale_swaps_positions_without_losing_labels(self):
+        result = tracking.follow_edits({"c@5": "red", "c@10": "blue"},
+            [("move", "c", "5", "10"), ("move", "c", "10", "5")], {}, {"c": {"5", "10"}})
+        self.assertEqual(result, {"c@10": "red", "c@5": "blue"})
+
+    def test_chained_edits_before_idle_follow_same_key(self):
+        result = tracking.follow_edits({"c@5": "red"},
+            [("move", "c", "5", "6"), ("move", "c", "6", "7")], {}, {"c": {"5"}})
+        self.assertEqual(result, {"c@7": "red"})
+
+    def test_delete_undo_restore_and_new_key_stays_unlabelled(self):
+        deleted = {}
+        times = {"c": {"5"}}
+        result = tracking.follow_edits({"c@5": "red"}, [("remove", "c", "5", "5")], deleted, times)
+        self.assertEqual(result, {})
+        restored = tracking.follow_edits(result, [("add", "c", "5", "5")], deleted, times, True)
+        self.assertEqual(restored, {"c@5": "red"})
+        result = tracking.follow_edits(restored, [("remove", "c", "5", "5")], deleted, times)
+        result = tracking.follow_edits(result, [("add", "c", "5", "5")], deleted, times)
+        self.assertEqual(result, {})
+        result = tracking.follow_edits(result, [("remove", "c", "5", "5")], deleted, times)
+        result = tracking.follow_edits(result, [("add", "c", "5", "5")], deleted, times, True)
+        self.assertEqual(result, {})
+
+    def test_unmarked_overlapping_keys_do_not_steal_neighbours_label(self):
+        result = tracking.follow_edits({"c@5": "red"},
+            [("move", "c", "5", "6"), ("move", "c", "6", "7")], {}, {"c": {"5", "6"}})
+        self.assertEqual(result, {"c@6": "red"})
+
+    def test_undo_curve_recreation_preserves_restored_curve_labels(self):
+        result = tracking.follow_edits({"c@5": "red"}, [("add", "c", "5", "5")],
+                                      {}, {"c": {"5"}}, restoring=True)
+        self.assertEqual(result, {"c@5": "red"})
 
 
 if __name__ == "__main__":

@@ -199,7 +199,6 @@ def _count_layout_items():
     show_sep = bool(atk_settings._get_pref_int(_OPT_SHOW_SEPARATORS, 1))
     visible  = atk_loader.get_visible_tools()
     n_buttons = len(visible) + 2   # +2 for the settings gear and the logo button
-    n_buttons += sum(len(tool.get("inline_colors", [])) for tool in visible)
 
     n_seps = 0
     if show_sep:
@@ -960,6 +959,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
     # ── Construction ────────────────────────────────────────────────────────
 
     def _build(self):
+        atk_loader.start_tool_services()
         # Clear any previous children
         old_layout = self.layout()
         if old_layout is not None:
@@ -1016,8 +1016,6 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 btn = self._make_tool_btn(tool, icon_sz, show_tips)
                 self._button_map[tool["id"]] = btn
                 layout.addWidget(btn, 0, QtCore.Qt.AlignHCenter)
-                for color_btn in self._make_inline_color_buttons(tool, icon_sz, show_tips):
-                    layout.addWidget(color_btn, 0, QtCore.Qt.AlignHCenter)
                 if tool["id"] == "tangent_tools":
                     for tangent_btn in self._make_tangent_quick_buttons(icon_sz, show_tips):
                         layout.addWidget(tangent_btn, 0, QtCore.Qt.AlignHCenter)
@@ -1065,7 +1063,6 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 btn = self._make_tool_btn(tool, icon_sz, show_tips)
                 self._button_map[tool["id"]] = btn
                 tool_widgets.append(btn)
-                tool_widgets.extend(self._make_inline_color_buttons(tool, icon_sz, show_tips))
                 if tool["id"] == "tangent_tools":
                     tool_widgets.extend(self._make_tangent_quick_buttons(icon_sz, show_tips))
                 prev_group = tool["group"]
@@ -1149,24 +1146,26 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         else:
             layout.addWidget(slider)
 
-    def _make_inline_color_buttons(self, tool, icon_sz, show_tips):
-        buttons = []
+    def _make_tick_palette(self, tool, icon_sz, show_tips):
+        """Three direct colour strips and a menu arrow in one icon-sized slot."""
+        palette = QtWidgets.QWidget(self)
+        palette.setObjectName("timeline_ticks_palette")
+        palette.setFixedSize(icon_sz + 8, icon_sz + 8)
+        row = QtWidgets.QHBoxLayout(palette)
+        row.setContentsMargins(2, 3, 2, 3)
+        row.setSpacing(2)
+        colors = QtWidgets.QVBoxLayout()
+        colors.setSpacing(2)
+        row.addLayout(colors, 1)
         installed = atk_loader.is_tool_installed(tool["id"])
-        for label, color, fn_name in tool.get("inline_colors", []):
-            btn = QtWidgets.QToolButton(self)
+        for label, color, fn_name in tool["palette_colors"]:
+            btn = QtWidgets.QToolButton(palette)
             btn.setObjectName(tool["id"] + "_" + label.lower())
             btn.setAccessibleName(tool["label"] + " " + label)
-            btn.setFixedSize(icon_sz + 8, icon_sz + 8)
-            pixmap = QtGui.QPixmap(icon_sz, icon_sz)
-            pixmap.fill(QtCore.Qt.transparent)
-            painter = QtGui.QPainter(pixmap)
-            painter.setPen(QtGui.QColor(color).darker(125))
-            painter.setBrush(QtGui.QColor(color))
-            painter.drawRoundedRect(3, 3, icon_sz - 6, icon_sz - 6, 3, 3)
-            painter.end()
-            btn.setIcon(QtGui.QIcon(pixmap))
-            btn.setIconSize(QtCore.QSize(icon_sz, icon_sz))
-            btn.setStyleSheet(_BTN_STYLE_NORMAL)
+            btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+            btn.setMinimumSize(0, 0)
+            btn.setStyleSheet("QToolButton {background:%s; border:1px solid #555; border-radius:2px;}"
+                             "QToolButton:hover {border:1px solid white;}" % color)
             btn.setEnabled(installed)
             if show_tips:
                 btn.setToolTip("<b>Timeline Ticks: {}</b><br>Colour existing keys in the highlighted "
@@ -1179,10 +1178,23 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             btn.customContextMenuRequested.connect(
                 lambda pos, t=tool, b=btn, ok=installed:
                     self._tool_context_menu(t, b, pos, ok))
-            buttons.append(btn)
-        return buttons
+            colors.addWidget(btn, 1)
+        arrow = QtWidgets.QToolButton(palette)
+        arrow.setObjectName("timeline_ticks_menu")
+        arrow.setAccessibleName("Timeline Ticks menu")
+        arrow.setArrowType(QtCore.Qt.DownArrow)
+        arrow.setFixedWidth(10)
+        arrow.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
+        arrow.setStyleSheet(_BTN_STYLE_NORMAL + "QToolButton::menu-indicator {image:none;}")
+        arrow.setToolTip("Timeline Ticks: colours, key classifications and full window")
+        arrow.setMenu(self._tool_menu(tool, installed))
+        arrow.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        row.addWidget(arrow)
+        return palette
 
     def _make_tool_btn(self, tool, icon_sz, show_tips):
+        if tool.get("palette_colors"):
+            return self._make_tick_palette(tool, icon_sz, show_tips)
         btn = QtWidgets.QToolButton()
         btn.setFixedSize(icon_sz + 8, icon_sz + 8)
 
@@ -1325,6 +1337,11 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         menu.exec(btn.mapToGlobal(pos))
 
     def _tool_context_menu(self, tool, btn, pos, installed):
+        menu = self._tool_menu(tool, installed)
+        menu.exec(btn.mapToGlobal(pos))
+        menu.deleteLater()
+
+    def _tool_menu(self, tool, installed):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet(
             "QMenu { background:#3c3c3c; color:#cccccc; border:1px solid #555; }"
@@ -1353,7 +1370,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         menu.addSeparator()
         about_act = menu.addAction("About This Tool")
         about_act.triggered.connect(lambda: self._show_tool_about(tool))
-        menu.exec(btn.mapToGlobal(pos))
+        return menu
 
     @staticmethod
     def _show_about():

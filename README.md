@@ -51,8 +51,9 @@ If that file is missing, it falls back to:
 ## Notes
 
 - **Timeline Ticks** provides a compact Key / Extreme / Breakdown / Inbetween
-  window, plus yellow, red and blue buttons directly on the main ATK toolbar
-  and in its right-click menu. The window also includes green. Install using
+  window, plus a single-slot yellow/red/blue palette and menu on the main ATK
+  toolbar. Labels follow key moves and deletions, including Add/Remove Frames
+  and Undo/Redo while tracking is active. The window also includes green. Install using
   the usual ATK installer, then launch it from the timing group. See its
   [usage and limitations](animation%20tool%20kit%20scripts/Timeline_Ticks_1_0_0/README.md).
 

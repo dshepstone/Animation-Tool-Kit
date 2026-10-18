@@ -5,9 +5,10 @@ labels directly on the Time Slider. Supports PySide2 and PySide6 (Maya 2022+).
 
 ## Install and launch
 
-Run the repository's `install_atk_toolbar.mel` installer, then click **Timeline
-Ticks** in ATK's timing tools. For standalone use, copy `timeline_ticks.py` to
-your Maya user scripts directory and run this Python shelf command:
+Run the repository's `install_atk_toolbar.mel` installer. The three-strip colour
+palette appears in ATK's timing tools. Click its arrow and choose **Open Timeline
+Ticks** for the full window. For standalone use, copy `timeline_ticks.py` and
+`timeline_ticks_tracking.py` to your Maya user scripts directory and run:
 
 ```python
 import timeline_ticks
@@ -16,11 +17,12 @@ timeline_ticks.show()
 
 ## Use
 
-The main ATK toolbar has **three colour buttons: yellow, red and blue**, beside
-the Timeline Ticks launcher. Click one to colour existing keys in the highlighted
+The main ATK toolbar uses **one standard icon slot** with three stacked colour
+strips: yellow, red and blue, plus a narrow menu arrow. Click a strip to colour
+existing keys in the highlighted
 Time Slider range, or at the current frame when there is no highlighted range.
-The floating window does not need to be open. Right-click the launcher or any
-colour button for the same three colours, all four classifications, Clear, and
+The floating window does not need to be open. Click the arrow or right-click any
+colour strip for the same three colours, all four classifications, Clear, and
 the option to open the full tool. These quick actions always use the highlighted
 range/current frame; use the full tool for Graph Editor selected-key scope.
 
@@ -45,12 +47,29 @@ state. Extreme and Inbetween are annotations rather than additional Maya key typ
 - Colours use a transparent, mouse-pass-through overlay.
   Quick toolbar actions also activate the overlay without opening the floating
   bar. Scrubbing and selecting remain available. Maya's global tick preferences are
-  unchanged. Closing the bar removes the overlay and stops its refresh timer.
-- Annotations attach to a curve UUID and an absolute time, stored in seconds so
-  changing the scene frame rate keeps the same key identity. They **do not follow
-  retimed keys or copy/paste**. Relabel after retiming. Annotations only display
-  when a key exists at their stored time; a replacement key at that time inherits
-  the old label until cleared.
+  unchanged. Closing the window removes the overlay and stops its drawing timer;
+  key tracking continues until the tool service is shut down or Maya closes.
+- The tracking service starts when ATK builds its toolbar or when the standalone
+  tool opens. It follows exact Maya keyframe edit callbacks on all annotated
+  curves, including unselected controls and animation layers. Dragging keys,
+  relative shifts, scaling, subframe moves and ATK Add/Remove Frames move labels
+  with those keys. Value/tangent edits leave their labels unchanged.
+- Deleting a key removes its stored annotation; deleting its animation curve
+  removes all of that curve's annotations. Undo/Redo restores/removes labels
+  alongside the keys, without adding an extra undo step. A new key created at
+  a deleted key's old time does not inherit the deleted label. Copies/pastes
+  create unlabelled new keys rather than copying classifications.
+- Keep tracking active when editing annotated scenes. Editing while ATK/the
+  standalone service has never been started, or with a custom tool that bypasses
+  Maya's key edit callbacks, cannot be tracked. Old labels already stranded by
+  earlier versions cannot be reassociated automatically. Run
+  `timeline_ticks.start_tracking()` to enable tracking without a window, or
+  `timeline_ticks.shutdown()` to remove all callbacks and the window.
+- Annotation times are stored in seconds, independent of displayed frame rate.
+  Pending key edits are synchronized before scene save. Callback registration
+  and deleted-key undo history are session-only; no executable scene scripts are
+  saved. Reloading scripts or reinstalling stops old callbacks before starting
+  a new service.
 - Colours align with the native key tick at the start of its frame cell, with
   the standard Time Slider's end gutters accounted for. If channels at one
   time have different annotations, vertical colour segments on that same tick
@@ -71,3 +90,6 @@ classification and curve isolation using a simulated Maya command surface.
 scene save/reopen, undo/redo and Qt rendering under mayapy with only the missing
 interactive Time Slider query substituted. Live Time Slider alignment still
 needs an interactive Maya session.
+`tests/check_timeline_ticks_tracking_maya.py` checks real move, delete, Undo/Redo,
+group shifts, reverse scaling, subframes, whole-curve deletion, actual ATK
+Add/Remove Frames shifts, saving before idle and continued tracking after load.

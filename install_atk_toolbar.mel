@@ -334,6 +334,7 @@ global proc atk__install()
     // Single-file tools: copy the main .py to scriptsDir
     string $toolScripts[] = {
         "Timeline_Ticks_1_0_0/timeline_ticks.py",
+        "Timeline_Ticks_1_0_0/timeline_ticks_tracking.py",
         "Temp_Pivot_Tool_1_0_5/temp_pivot_tool.py",
         "micro_manipulator_v1_0_0/Micro_Manipulator_v1_0_0.py",
         "inbetweener_2_0_2/vertex_tweener.py",
@@ -602,6 +603,9 @@ global proc atk__install()
     $launchPy += "cmds.optionVar(sv=('atk_toolbar_orientation', 'horizontal'))\n";
     // Stop the old overlay and release its module before loading an update.
     $launchPy += "_ticks_old = sys.modules.pop('timeline_ticks', None)\n";
+    $launchPy += "if callable(getattr(_ticks_old, 'shutdown', None)):\n";
+    $launchPy += "    _ticks_old.shutdown()\n";
+    $launchPy += "sys.modules.pop('timeline_ticks_tracking', None)\n";
     $launchPy += "_ticks_window = getattr(_ticks_old, '_window', None)\n";
     $launchPy += "if _ticks_window is not None:\n";
     $launchPy += "    try:\n";

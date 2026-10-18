@@ -33,6 +33,8 @@ except Exception:                       # never let the window fix block a launc
 #                   outside its main module/package; purged by Reload Scripts
 #   maya_plugin – (optional) Maya plug-in file the tool loads; unloaded and
 #                   reloaded by Reload Scripts so plug-in changes take effect
+#   startup_fn  – (optional) idempotent service started on toolbar builds
+#   palette_colors – (optional) three (label, hex, function) colour strips
 
 TOOL_REGISTRY = [
     {
@@ -45,7 +47,9 @@ TOOL_REGISTRY = [
         "icon_key":  "bookmark",
         "group":     "timing",
         "version":   "1.0.0",
-        "inline_colors": [
+        "startup_fn": "start_tracking",
+        "extra_modules": ["timeline_ticks_tracking"],
+        "palette_colors": [
             ("Yellow", "#f5cf58", "apply_yellow"),
             ("Red", "#ef6464", "apply_red"),
             ("Blue", "#60a5fa", "apply_blue"),
@@ -388,6 +392,13 @@ def setup_paths():
             )
 
 
+def start_tool_services():
+    """Start idempotent runtime services required by installed toolbar tools."""
+    for tool in TOOL_REGISTRY:
+        if tool.get("startup_fn") and is_tool_installed(tool["id"]):
+            launch_tool_fn(tool["id"], tool["startup_fn"])
+
+
 # ---------------------------------------------------------------------------
 # Tool visibility
 # ---------------------------------------------------------------------------
@@ -533,6 +544,10 @@ def reload_tool_modules():
 
     purged = set()
     for root in roots:
+        module = sys.modules.get(root)
+        shutdown = getattr(module, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
         prefix = root + "."
         for name in list(sys.modules):
             if name == root or name.startswith(prefix):
