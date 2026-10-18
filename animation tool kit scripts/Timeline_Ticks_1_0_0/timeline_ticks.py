@@ -280,6 +280,56 @@ def _ui_classes():
     return TickBar, QtWidgets, shiboken
 
 
+def _quick_apply(**options):
+    """Toolbar/menu action without opening the floating settings bar."""
+    global _window
+    if _window is None or not _window.timer.isActive():
+        window = show()
+        window.hide()  # Keep the transparent overlay and refresh active.
+    else:
+        window = _window
+    controller = window.controller
+    scope = ("Highlighted range" if controller.cmds.timeControl(
+        controller.slider, q=True, rangeVisible=True) else "Current frame")
+    count = controller.apply(scope, **options)
+    window.refresh()
+    if not count:
+        controller.cmds.warning("Timeline Ticks: no existing keys on visible curves in " + scope.lower())
+    return count
+
+
+def apply_yellow():
+    return _quick_apply(color="#f5cf58")
+
+
+def apply_red():
+    return _quick_apply(color="#ef6464")
+
+
+def apply_blue():
+    return _quick_apply(color="#60a5fa")
+
+
+def mark_key():
+    return _quick_apply(kind="Key")
+
+
+def mark_extreme():
+    return _quick_apply(kind="Extreme")
+
+
+def mark_breakdown():
+    return _quick_apply(kind="Breakdown")
+
+
+def mark_inbetween():
+    return _quick_apply(kind="Inbetween")
+
+
+def clear_ticks():
+    return _quick_apply(clear=True)
+
+
 def show():
     """Open one compact bar, parented to Maya; no scene scripts installed."""
     global _window

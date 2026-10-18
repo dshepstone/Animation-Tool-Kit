@@ -45,6 +45,23 @@ TOOL_REGISTRY = [
         "icon_key":  "bookmark",
         "group":     "timing",
         "version":   "1.0.0",
+        "inline_colors": [
+            ("Yellow", "#f5cf58", "apply_yellow"),
+            ("Red", "#ef6464", "apply_red"),
+            ("Blue", "#60a5fa", "apply_blue"),
+        ],
+        "context_actions": [
+            ("Colour Yellow", "apply_yellow"),
+            ("Colour Red", "apply_red"),
+            ("Colour Blue", "apply_blue"),
+            None,
+            ("Mark as Key", "mark_key"),
+            ("Mark as Extreme", "mark_extreme"),
+            ("Mark as Breakdown", "mark_breakdown"),
+            ("Mark as Inbetween", "mark_inbetween"),
+            None,
+            ("Clear Tick Annotations", "clear_ticks"),
+        ],
     },
     {
         "id":        "inbetweener",

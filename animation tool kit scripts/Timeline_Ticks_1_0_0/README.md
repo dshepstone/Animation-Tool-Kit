@@ -16,6 +16,14 @@ timeline_ticks.show()
 
 ## Use
 
+The main ATK toolbar has **three colour buttons: yellow, red and blue**, beside
+the Timeline Ticks launcher. Click one to colour existing keys in the highlighted
+Time Slider range, or at the current frame when there is no highlighted range.
+The floating window does not need to be open. Right-click the launcher or any
+colour button for the same three colours, all four classifications, Clear, and
+the option to open the full tool. These quick actions always use the highlighted
+range/current frame; use the full tool for Graph Editor selected-key scope.
+
 1. Select animated controls so their keys appear on the Time Slider.
 2. Choose **Current frame**, **Highlighted range** (Shift-drag the Time Slider),
    or **Selected keys** (Graph Editor selections on curves shown in the Time Slider).
@@ -34,8 +42,9 @@ state. Extreme and Inbetween are annotations rather than additional Maya key typ
 
 - Annotations save in a plain network node in the scene. Save the scene after
   editing. Reopen the bar after loading a scene to display its annotations.
-- Colours use a transparent, mouse-pass-through overlay while the bar is open.
-  Scrubbing and selecting remain available. Maya's global tick preferences are
+- Colours use a transparent, mouse-pass-through overlay.
+  Quick toolbar actions also activate the overlay without opening the floating
+  bar. Scrubbing and selecting remain available. Maya's global tick preferences are
   unchanged. Closing the bar removes the overlay and stops its refresh timer.
 - Annotations attach to a curve UUID and an absolute time, stored in seconds so
   changing the scene frame rate keeps the same key identity. They **do not follow

@@ -119,9 +119,51 @@ def main():
     app.processEvents()
     print("PASS: real Qt click, overlay paint, resize, close and timer cleanup")
 
+    from unittest.mock import patch
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from atk_toolbar import atk_toolbar as toolbar
+    tool = next(t for t in toolbar.atk_loader.TOOL_REGISTRY if t["id"] == "timeline_ticks")
+    widget = toolbar.ATKToolbarWidget.__new__(toolbar.ATKToolbarWidget)
+    QtWidgets.QWidget.__init__(widget)
+    with patch.object(toolbar.atk_loader, "is_tool_installed", return_value=True), \
+            patch.object(toolbar.atk_loader, "launch_tool_fn") as launch:
+        buttons = widget._make_inline_color_buttons(tool, 28, True)
+        assert len(buttons) == 3
+        for button, (_, _, function) in zip(buttons, tool["inline_colors"]):
+            button.click()
+            launch.assert_called_with("timeline_ticks", function)
+        layout = QtWidgets.QHBoxLayout(widget)
+        for button in buttons:
+            layout.addWidget(button)
+        widget.show()
+        app.processEvents()
+        if len(sys.argv) > 1:
+            assert widget.grab().save(str(Path(sys.argv[1]).with_name("timeline_ticks_main_bar.png")))
+        captured = []
+        class CapturingMenu(QtWidgets.QMenu):
+            def exec(self, pos):
+                captured.append(self)
+
+        with patch.object(toolbar.QtWidgets, "QMenu", CapturingMenu):
+            widget._tool_context_menu(tool, buttons[0], buttons[0].rect().center(), True)
+        actions = {a.text(): a for a in captured[0].actions()}
+        for label in ("Colour Yellow", "Colour Red", "Colour Blue", "Mark as Key", "Mark as Extreme",
+                      "Mark as Breakdown", "Mark as Inbetween", "Clear Tick Annotations"):
+            assert label in actions
+        actions["Colour Blue"].trigger()
+        launch.assert_called_with("timeline_ticks", "apply_blue")
+    with patch.object(toolbar.atk_loader, "get_visible_tools", return_value=[tool]):
+        assert toolbar._count_layout_items()[0] == 6  # launcher, 3 colours, gear, logo
+    widget.close()
+    print("PASS: three main-bar colour buttons, click dispatch, menu actions and layout count")
+
 
 if __name__ == "__main__":
     try:
         main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        raise
     finally:
         maya.standalone.uninitialize()

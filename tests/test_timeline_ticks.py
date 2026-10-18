@@ -2,7 +2,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 SOURCE = Path(__file__).resolve().parents[1] / "animation tool kit scripts/Timeline_Ticks_1_0_0/timeline_ticks.py"
 spec = importlib.util.spec_from_file_location("timeline_ticks", SOURCE)
@@ -99,6 +99,32 @@ class TickTests(unittest.TestCase):
     def test_frame_cell_mapping(self):
         self.assertEqual(ticks.frame_x(1, 1, 10, 100), 5)
         self.assertEqual(ticks.frame_x(10, 1, 10, 100), 95)
+
+    def test_toolbar_quick_actions_use_range_without_opening_dialog(self):
+        window = Mock()
+        window.timer.isActive.return_value = True
+        window.controller.cmds.timeControl.return_value = True
+        window.controller.apply.return_value = 2
+        with patch.object(ticks, "_window", window), patch.object(ticks, "show") as show:
+            self.assertEqual(ticks.apply_yellow(), 2)
+            window.controller.apply.assert_called_with("Highlighted range", color="#f5cf58")
+            window.controller.cmds.timeControl.return_value = False
+            ticks.apply_red()
+            window.controller.apply.assert_called_with("Current frame", color="#ef6464")
+            ticks.apply_blue()
+            window.controller.apply.assert_called_with("Current frame", color="#60a5fa")
+            ticks.mark_breakdown()
+            window.controller.apply.assert_called_with("Current frame", kind="Breakdown")
+            ticks.clear_ticks()
+            window.controller.apply.assert_called_with("Current frame", clear=True)
+            show.assert_not_called()
+
+    def test_first_quick_action_starts_hidden_overlay(self):
+        window = Mock()
+        with patch.object(ticks, "_window", None), patch.object(ticks, "show", return_value=window):
+            ticks.apply_blue()
+            window.hide.assert_called_once()
+            window.refresh.assert_called_once()
 
     def test_decode_rejects_future_and_corrupt_data(self):
         for raw in ('{}', '{"version":2,"marks":{}}', '{"version":1,"marks":[]}'):

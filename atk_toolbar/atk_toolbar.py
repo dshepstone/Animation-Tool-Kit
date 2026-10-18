@@ -199,6 +199,7 @@ def _count_layout_items():
     show_sep = bool(atk_settings._get_pref_int(_OPT_SHOW_SEPARATORS, 1))
     visible  = atk_loader.get_visible_tools()
     n_buttons = len(visible) + 2   # +2 for the settings gear and the logo button
+    n_buttons += sum(len(tool.get("inline_colors", [])) for tool in visible)
 
     n_seps = 0
     if show_sep:
@@ -1015,6 +1016,8 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 btn = self._make_tool_btn(tool, icon_sz, show_tips)
                 self._button_map[tool["id"]] = btn
                 layout.addWidget(btn, 0, QtCore.Qt.AlignHCenter)
+                for color_btn in self._make_inline_color_buttons(tool, icon_sz, show_tips):
+                    layout.addWidget(color_btn, 0, QtCore.Qt.AlignHCenter)
                 if tool["id"] == "tangent_tools":
                     for tangent_btn in self._make_tangent_quick_buttons(icon_sz, show_tips):
                         layout.addWidget(tangent_btn, 0, QtCore.Qt.AlignHCenter)
@@ -1062,6 +1065,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 btn = self._make_tool_btn(tool, icon_sz, show_tips)
                 self._button_map[tool["id"]] = btn
                 tool_widgets.append(btn)
+                tool_widgets.extend(self._make_inline_color_buttons(tool, icon_sz, show_tips))
                 if tool["id"] == "tangent_tools":
                     tool_widgets.extend(self._make_tangent_quick_buttons(icon_sz, show_tips))
                 prev_group = tool["group"]
@@ -1144,6 +1148,39 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             layout.addWidget(slider, 0, QtCore.Qt.AlignHCenter)
         else:
             layout.addWidget(slider)
+
+    def _make_inline_color_buttons(self, tool, icon_sz, show_tips):
+        buttons = []
+        installed = atk_loader.is_tool_installed(tool["id"])
+        for label, color, fn_name in tool.get("inline_colors", []):
+            btn = QtWidgets.QToolButton(self)
+            btn.setObjectName(tool["id"] + "_" + label.lower())
+            btn.setAccessibleName(tool["label"] + " " + label)
+            btn.setFixedSize(icon_sz + 8, icon_sz + 8)
+            pixmap = QtGui.QPixmap(icon_sz, icon_sz)
+            pixmap.fill(QtCore.Qt.transparent)
+            painter = QtGui.QPainter(pixmap)
+            painter.setPen(QtGui.QColor(color).darker(125))
+            painter.setBrush(QtGui.QColor(color))
+            painter.drawRoundedRect(3, 3, icon_sz - 6, icon_sz - 6, 3, 3)
+            painter.end()
+            btn.setIcon(QtGui.QIcon(pixmap))
+            btn.setIconSize(QtCore.QSize(icon_sz, icon_sz))
+            btn.setStyleSheet(_BTN_STYLE_NORMAL)
+            btn.setEnabled(installed)
+            if show_tips:
+                btn.setToolTip("<b>Timeline Ticks: {}</b><br>Colour existing keys in the highlighted "
+                               "Time Slider range, or at the current frame.<br>"
+                               "Right-click for colours, classifications and the full tool.".format(label))
+            btn.clicked.connect(
+                lambda checked=False, tid=tool["id"], fn=fn_name:
+                    atk_loader.launch_tool_fn(tid, fn))
+            btn.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            btn.customContextMenuRequested.connect(
+                lambda pos, t=tool, b=btn, ok=installed:
+                    self._tool_context_menu(t, b, pos, ok))
+            buttons.append(btn)
+        return buttons
 
     def _make_tool_btn(self, tool, icon_sz, show_tips):
         btn = QtWidgets.QToolButton()
