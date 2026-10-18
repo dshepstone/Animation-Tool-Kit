@@ -333,6 +333,7 @@ global proc atk__install()
 
     // Single-file tools: copy the main .py to scriptsDir
     string $toolScripts[] = {
+        "Timeline_Ticks_1_0_0/timeline_ticks.py",
         "Temp_Pivot_Tool_1_0_5/temp_pivot_tool.py",
         "micro_manipulator_v1_0_0/Micro_Manipulator_v1_0_0.py",
         "inbetweener_2_0_2/vertex_tweener.py",

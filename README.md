@@ -50,5 +50,10 @@ If that file is missing, it falls back to:
 
 ## Notes
 
+- **Timeline Ticks** provides a compact Key / Extreme / Breakdown / Inbetween
+  bar and yellow, red, blue and green swatches for existing keys. Install using
+  the usual ATK installer, then launch it from the timing group. See its
+  [usage and limitations](animation%20tool%20kit%20scripts/Timeline_Ticks_1_0_0/README.md).
+
 - The installer copies files into Maya user preference/script locations (per-user install).
 - If a tool file or icon is missing, Maya will show a warning and continue installing the rest.

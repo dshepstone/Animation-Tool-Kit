@@ -1,0 +1,62 @@
+# Timeline Ticks 1.0.0
+
+A compact two-row Maya tool with coloured tick overlays and K / E / B / I
+labels directly on the Time Slider. Supports PySide2 and PySide6 (Maya 2022+).
+
+## Install and launch
+
+Run the repository's `install_atk_toolbar.mel` installer, then click **Timeline
+Ticks** in ATK's timing tools. For standalone use, copy `timeline_ticks.py` to
+your Maya user scripts directory and run this Python shelf command:
+
+```python
+import timeline_ticks
+timeline_ticks.show()
+```
+
+## Use
+
+1. Select animated controls so their keys appear on the Time Slider.
+2. Choose **Current frame**, **Highlighted range** (Shift-drag the Time Slider),
+   or **Selected keys** (Graph Editor selections on curves shown in the Time Slider).
+3. Click a type: **Key** (red), **Extreme** (yellow), **Breakdown** (blue),
+   or **Inbetween** (green).
+4. Click a yellow, red, blue or green swatch to override the colour while keeping
+   the label. Unlabelled keys receive the Key label.
+5. **Clear** removes annotations in that scope. Ctrl+Z undoes an edit.
+
+Only existing keys on the Time Slider's displayed curves are affected. No
+keys or poses are created. Breakdown sets Maya's actual native breakdown flag;
+the other type buttons clear it. Swatches and Clear preserve native breakdown
+state. Extreme and Inbetween are annotations rather than additional Maya key types.
+
+## Persistence and limits
+
+- Annotations save in a plain network node in the scene. Save the scene after
+  editing. Reopen the bar after loading a scene to display its annotations.
+- Colours use a transparent, mouse-pass-through overlay while the bar is open.
+  Scrubbing and selecting remain available. Maya's global tick preferences are
+  unchanged. Closing the bar removes the overlay and stops its refresh timer.
+- Annotations attach to a curve UUID and an absolute time, stored in seconds so
+  changing the scene frame rate keeps the same key identity. They **do not follow
+  retimed keys or copy/paste**. Relabel after retiming. Annotations only display
+  when a key exists at their stored time; a replacement key at that time inherits
+  the old label until cleared.
+- If channels at one time have different annotations, adjacent coloured ticks
+  and a **+** indicate the mixed classification.
+- Referenced/locked curves may reject native breakdown changes. Maya reports
+  the error in the Script Editor; Undo can reverse any partial edit.
+- Importing multiple scenes with annotation stores requires manually resolving
+  duplicate stores; the tool refuses to guess which store to overwrite.
+- Overlay alignment and coexistence with custom Maya Time Slider replacements
+  require visual checking in your Maya version. The default full-width Maya
+  Time Slider frame-cell mapping matches the existing ATK Bookmarks overlay.
+
+## Validation
+
+`tests/test_timeline_ticks.py` covers scope, scene persistence, undo chunks,
+classification and curve isolation using a simulated Maya command surface.
+`tests/check_timeline_ticks_maya.py` exercises actual Maya animation curves,
+scene save/reopen, undo/redo and Qt rendering under mayapy with only the missing
+interactive Time Slider query substituted. Live Time Slider alignment still
+needs an interactive Maya session.

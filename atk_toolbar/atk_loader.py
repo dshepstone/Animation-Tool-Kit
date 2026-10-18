@@ -36,6 +36,17 @@ except Exception:                       # never let the window fix block a launc
 
 TOOL_REGISTRY = [
     {
+        "id":        "timeline_ticks",
+        "label":     "Timeline Ticks",
+        "tooltip":   "Colour timeline ticks and label keys, extremes, breakdowns and inbetweens",
+        "module":    "timeline_ticks",
+        "launch_fn": "show",
+        "icon_file": "timeline_ticks.png",
+        "icon_key":  "bookmark",
+        "group":     "timing",
+        "version":   "1.0.0",
+    },
+    {
         "id":        "inbetweener",
         "label":     "Inbetweener",
         "tooltip":   "Blend poses between keyframes with multiple easing modes",
