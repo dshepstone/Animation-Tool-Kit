@@ -1405,10 +1405,13 @@ class PBCPlayblast(QtCore.QObject):
             "offScreen": offscreen
         }
 
+        if compression is None:
+            options.pop("compression")
+
         # Only forward sound to Maya when the user opted in AND the
         # temp format can actually carry audio (i.e. movie, not an
         # image sequence).
-        if temp_file_is_movie and include_sound:
+        if format_ == "movie" and include_sound:
             if self.use_trax_sounds():
                 options["useTraxSounds"] = True
             else:

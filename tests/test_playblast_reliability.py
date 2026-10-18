@@ -265,6 +265,16 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(args['compression'], 'png')
         self.assertNotIn('sound', args)
 
+    def test_native_movie_omits_none_compression_and_uses_returned_path(self):
+        native = str(Path(self.temp.name)/'actual-maya-name.mov')
+        NS['cmds'].playblast.side_effect = None
+        NS['cmds'].playblast.return_value = native
+        self.p.transcode_video = Mock(return_value=False)
+        with patch.object(sys, 'platform', 'darwin'), patch.object(UTIL, 'get_temp_file_format', return_value='movie'):
+            self.assertIsNone(self.run_capture())
+        self.assertNotIn('compression', NS['cmds'].playblast.call_args.kwargs)
+        self.assertEqual(self.p.transcode_video.call_args.args[2],native)
+
     def test_image_output_returns_actual_result(self):
         self.p._container_format = 'Image'
         self.p._encoder = 'png'
