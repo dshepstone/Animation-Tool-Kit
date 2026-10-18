@@ -15,6 +15,8 @@ import subprocess
 import sys
 import time
 import traceback
+import tempfile
+import re
 
 from functools import partial
 
@@ -193,12 +195,12 @@ class PBCPlayblastUtils(object):
         exe_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
         if os.path.isdir(path):
             for candidate in (os.path.join(path, exe_name), os.path.join(path, "bin", exe_name)):
-                if os.path.isfile(candidate):
+                if os.path.isfile(candidate) and (sys.platform == "win32" or os.access(candidate, os.X_OK)):
                     return os.path.normpath(candidate)
             return ""
 
         if os.path.isfile(path):
-            return os.path.normpath(path)
+            return os.path.abspath(path) if sys.platform == "win32" or os.access(path, os.X_OK) else ""
         if sys.platform == "win32" and os.path.isfile(path + ".exe"):
             return os.path.normpath(path + ".exe")
 
@@ -321,14 +323,14 @@ class PBCPlayblastUtils(object):
         failure (no binary, timeout, permission error) returns an empty
         set so the caller can fall back to Maya-native image sequences.
         """
-        if use_cache and cls._available_video_encoders_cache is not None:
-            return cls._available_video_encoders_cache
-
         if ffmpeg_path is None:
             ffmpeg_path = cls.get_resolved_ffmpeg_path()
         else:
             ffmpeg_path = cls.resolve_ffmpeg_executable(ffmpeg_path)
 
+        if (use_cache and cls._available_video_encoders_cache is not None
+                and getattr(cls, "_encoder_cache_path", None) == ffmpeg_path):
+            return set(cls._available_video_encoders_cache)
         found = set()
         if ffmpeg_path:
             try:
@@ -347,6 +349,7 @@ class PBCPlayblastUtils(object):
                     out, _ = proc.communicate(timeout=5)
                 except Exception:
                     proc.kill()
+                    proc.communicate()
                     out = b""
                 text = (out or b"").decode("utf-8", errors="ignore").lower()
                 for name in cls.FFMPEG_TARGET_ENCODERS:
@@ -363,6 +366,7 @@ class PBCPlayblastUtils(object):
         # the Maya session even after ffmpeg was configured.
         if found:
             cls._available_video_encoders_cache = found
+            cls._encoder_cache_path = ffmpeg_path
         return found
 
     @classmethod
@@ -859,7 +863,7 @@ class PBCPlayblast(QtCore.QObject):
     # Display labels for the encoder combo box. Keeps internal ids
     # ("h264", "mpeg4", ...) stable while showing something clearer.
     ENCODER_DISPLAY_LABEL = {
-        "h264": "H.264 (libx264)",
+        "h264": "H.264 (automatic / software fallback)",
         "mpeg4": "MPEG-4",
         "prores": "Apple ProRes",
         "png": "PNG (sequence)",
@@ -1157,8 +1161,8 @@ class PBCPlayblast(QtCore.QObject):
 
         return visibility_data
 
-    def get_viewport_visibility(self):
-        model_panel = self.get_viewport_panel()
+    def get_viewport_visibility(self, model_panel=None):
+        model_panel = model_panel or self.get_viewport_panel()
         if not model_panel:
             return None
 
@@ -1242,7 +1246,20 @@ class PBCPlayblast(QtCore.QObject):
             return
         ffmpeg_path = PBCPlayblastUtils.resolve_ffmpeg_executable(ffmpeg_path) or ffmpeg_path
 
+        self._overwrite_output = bool(overwrite)
+        self._encoding_ffmpeg_path = ffmpeg_path
+        if self.requires_ffmpeg() and self._encoder == "h264":
+            try:
+                self.get_platform_h264_video_codec()
+            except RuntimeError as exc:
+                self.log_error(str(exc))
+                return None
         temp_file_format = PBCPlayblastUtils.get_temp_file_format()
+        # Native movie codecs differ by Maya/OS installation. PNG intermediates
+        # are the portable route on Linux, including older saved movie settings.
+        if self.requires_ffmpeg() and sys.platform.startswith("linux") and temp_file_format == "movie":
+            self.log_warning("Using PNG intermediate frames on Linux for portable video export.")
+            temp_file_format = "png"
         temp_file_is_movie = temp_file_format == "movie"
 
         if temp_file_is_movie:
@@ -1282,6 +1299,13 @@ class PBCPlayblast(QtCore.QObject):
 
         output_dir = self.resolve_output_directory_path(output_dir)
         filename = self.resolve_output_filename(filename, camera)
+        if (not filename or filename in (".", "..") or
+                re.search(r'[<>:"/\\|?*\x00-\x1f]', filename) or
+                filename.endswith((" ", ".")) or
+                filename.split(".")[0].upper() in
+                {"CON", "PRN", "AUX", "NUL"} | {"COM%d" % i for i in range(1, 10)} | {"LPT%d" % i for i in range(1, 10)}):
+            self.log_error("Use a filename without folders or characters reserved by Windows, macOS or Linux.")
+            return None
 
         try:
             if not os.path.isdir(output_dir):
@@ -1296,11 +1320,11 @@ class PBCPlayblast(QtCore.QObject):
         if self.requires_ffmpeg():
             output_path = os.path.normpath(os.path.join(output_dir, "{0}.{1}".format(filename, self._container_format)))
             if not overwrite and os.path.exists(output_path):
-                self.log_error("Output file already exists. Enable overwrite to ignore.")
+                self.log_error("Output already exists: {0}. On the Output tab, under Destination, enable 'Force overwrite existing output' to replace it, or choose a new filename.".format(output_path))
                 return
 
-            playblast_output_dir = "{0}/playblast_temp".format(output_dir)
-            playblast_output = os.path.normpath(os.path.join(playblast_output_dir, filename))
+            playblast_output_dir = None
+            playblast_output = None
             force_overwrite = True
             viewer = False
             # Maya's 'quality' flag in the temp pass only affects the
@@ -1357,6 +1381,10 @@ class PBCPlayblast(QtCore.QObject):
         elif scale_percent_int > 100:
             scale_percent_int = 100
 
+        if self.requires_ffmpeg():
+            playblast_output_dir = tempfile.mkdtemp(prefix=".atk_playblast_", dir=output_dir)
+            playblast_output = os.path.join(playblast_output_dir, filename)
+
         options = {
             "filename": playblast_output,
             "widthHeight": widthHeight,
@@ -1372,6 +1400,8 @@ class PBCPlayblast(QtCore.QObject):
             "framePadding": padding,
             "showOrnaments": show_ornaments,
             "viewer": viewer,
+            "editorPanelName": viewport_model_panel,
+            "throwOnError": True,
             "offScreen": offscreen
         }
 
@@ -1390,55 +1420,72 @@ class PBCPlayblast(QtCore.QObject):
         self.log_output("Playblast options: {0}\n".format(options))
         QtCore.QCoreApplication.processEvents()
 
-        self.set_active_camera(camera, viewport_model_panel)
-
-        orig_visibility_flags = self.create_viewport_visibility_flags(self.get_viewport_visibility())
-        playblast_visibility_flags = self.create_viewport_visibility_flags(self.get_visibility())
-
         model_editor = cmds.modelPanel(viewport_model_panel, q=True, modelEditor=True)
-        self.set_viewport_visibility(model_editor, playblast_visibility_flags)
-
-        # Store original camera settings
-        if not overscan:
-            overscan_attr = "{0}.overscan".format(camera)
-            orig_overscan = cmds.getAttr(overscan_attr)
-            cmds.setAttr(overscan_attr, 1.0)
-
-        playblast_failed = False
+        orig_visibility_flags = self.create_viewport_visibility_flags(self.get_viewport_visibility(viewport_model_panel))
+        playblast_visibility_flags = (self.create_viewport_visibility_flags(self._visibility)
+                                     if self._visibility else orig_visibility_flags)
+        overscan_attr = "{0}.overscan".format(camera)
+        orig_overscan = cmds.getAttr(overscan_attr) if not overscan else None
+        orig_time = cmds.currentTime(q=True)
+        playblast_result = None
         try:
-            cmds.playblast(**options)
-        except:
-            traceback.print_exc()
-            self.log_error("Failed to create playblast. See script editor for details.")
-            playblast_failed = True
-        finally:
-            # Restore original camera settings
+            self.set_active_camera(camera, viewport_model_panel)
+            self.set_viewport_visibility(model_editor, playblast_visibility_flags)
             if not overscan:
-                cmds.setAttr(overscan_attr, orig_overscan)
+                cmds.setAttr(overscan_attr, 1.0)
+            playblast_result = cmds.playblast(**options)
+            if not playblast_result:
+                self.log_error("Maya did not produce a playblast (capture may have been cancelled).")
+        except Exception as exc:
+            traceback.print_exc()
+            self.log_error("Failed to capture playblast: {0}".format(exc))
+        finally:
+            # Restore each item independently, even if a camera/panel was deleted.
+            restorations = [
+                lambda: self.set_active_camera(orig_camera, viewport_model_panel),
+                lambda: self.set_viewport_visibility(model_editor, orig_visibility_flags),
+                lambda: cmds.currentTime(orig_time, edit=True),
+            ]
+            if not overscan:
+                restorations.append(lambda: cmds.setAttr(overscan_attr, orig_overscan))
+            for restore in restorations:
+                try:
+                    restore()
+                except Exception as exc:
+                    self.log_warning("Could not restore viewport state: {0}".format(exc))
 
-            # Restore original viewport settings
-            self.set_active_camera(orig_camera, viewport_model_panel)
-            self.set_viewport_visibility(model_editor, orig_visibility_flags)
-
-        if playblast_failed:
-            return
+        if not playblast_result:
+            if self.requires_ffmpeg():
+                self.log_warning("Capture files retained for recovery: {0}".format(playblast_output_dir))
+            return None
 
         if self.requires_ffmpeg():
             if temp_file_is_movie:
-                source_path = "{0}/{1}.{2}".format(playblast_output_dir, filename, temp_file_extension)
+                source_path = playblast_result
             else:
-                source_path = "{0}/{1}.%0{2}d.{3}".format(playblast_output_dir, filename, padding, temp_file_extension)
+                # Escape literal percent signs in directory/filename for image2.
+                prefix = playblast_output.replace("%", "%%")
+                source_path = "{0}.%0{1}d.{2}".format(prefix, padding, temp_file_extension)
+                expected_count = int(end_frame - start_frame) + 1
+                for index in range(expected_count):
+                    frame_path = "{0}.{1:0{2}d}.{3}".format(playblast_output, index, padding, temp_file_extension)
+                    if not os.path.isfile(frame_path) or os.path.getsize(frame_path) == 0:
+                        self.log_error("Incomplete capture: missing or empty frame {0}. Capture files retained at: {1}".format(frame_path, playblast_output_dir))
+                        return None
 
             if self._encoder in ("h264", "mpeg4", "prores"):
                 if temp_file_is_movie:
-                    self.transcode_video(self._encoder, ffmpeg_path, source_path, output_path, include_audio=include_sound)
+                    encoded = self.transcode_video(self._encoder, ffmpeg_path, source_path, output_path, include_audio=include_sound)
                 else:
-                    self.encode_video(self._encoder, ffmpeg_path, source_path, output_path, start_frame, include_audio=include_sound)
+                    encoded = self.encode_video(self._encoder, ffmpeg_path, source_path, output_path, start_frame, include_audio=include_sound)
             else:
                 self.log_error("Encoding failed. Unsupported encoder ({0}) for container ({1}).".format(self._encoder, self._container_format))
                 self.remove_temp_dir(playblast_output_dir, temp_file_extension)
                 return
 
+            if not encoded:
+                self.log_error("Encoding failed. Existing output was preserved. Capture files retained at: {0}".format(playblast_output_dir))
+                return None
             self.remove_temp_dir(playblast_output_dir, temp_file_extension)
 
             if not os.path.isfile(output_path):
@@ -1448,21 +1495,18 @@ class PBCPlayblast(QtCore.QObject):
             if show_in_viewer:
                 self.open_in_viewer(output_path)
         else:
-            output_path = playblast_output
+            output_path = playblast_result
 
         self.log_output("Playblast complete\n")
         return output_path
 
 
     def remove_temp_dir(self, temp_dir_path, temp_file_extension):
-        playblast_dir = QtCore.QDir(temp_dir_path)
-        playblast_dir.setNameFilters(["*.{0}".format(temp_file_extension)])
-        playblast_dir.setFilter(QtCore.QDir.Files)
-        for f in playblast_dir.entryList():
-            playblast_dir.remove(f)
-
-        if not playblast_dir.rmdir(temp_dir_path):
-            self.log_warning("Failed to remove temporary directory: {0}".format(temp_dir_path))
+        # Only called with the unique directory owned by this export.
+        try:
+            shutil.rmtree(temp_dir_path)
+        except OSError as exc:
+            self.log_warning("Could not remove temporary directory {0}: {1}".format(temp_dir_path, exc))
 
     def open_in_viewer(self, path):
         if not os.path.exists(path):
@@ -1500,14 +1544,14 @@ class PBCPlayblast(QtCore.QObject):
         Prefers the hardware accelerator if it was detected, otherwise
         falls back to libx264 (software).
         """
-        available = PBCPlayblastUtils.detect_available_video_encoders()
+        available = PBCPlayblastUtils.detect_available_video_encoders(getattr(self, "_encoding_ffmpeg_path", None))
         preferred = PBCPlayblast.PLATFORM_H264_CODEC_LOOKUP.get(sys.platform, "libx264")
         if preferred in available:
             codec = preferred
         elif "libx264" in available:
             codec = "libx264"
         else:
-            codec = preferred
+            raise RuntimeError("No compatible H.264 encoder. Configure an FFmpeg build with libx264 in Settings.")
         self.log_output("Selected H.264 codec for platform '{0}': {1}".format(sys.platform, codec))
         return codec
 
@@ -1547,28 +1591,73 @@ class PBCPlayblast(QtCore.QObject):
             return self.get_mpeg4_video_codec_arguments(crf)
         if encoder == "prores":
             return self.get_prores_video_codec_arguments()
-        # Unknown encoder - fall back to a lossless copy to avoid silent
-        # data loss. The caller will still have logged the mismatch.
-        self.log_warning("Unknown encoder '{0}', falling back to copy.".format(encoder))
-        return ["-c:v", "copy"]
+        raise ValueError("Unsupported video encoder: {0}".format(encoder))
 
     def execute_ffmpeg_command(self, program, arguments):
-        self._ffmpeg_process.start(program, arguments)
-        if self._ffmpeg_process.waitForStarted():
-            while self._ffmpeg_process.state() != QtCore.QProcess.NotRunning:
-                QtCore.QCoreApplication.processEvents()
-                QtCore.QThread.usleep(10)
+        """Return success only for a normally completed, zero-exit process."""
+        self._ffmpeg_process.start(program, ["-nostdin", "-hide_banner"] + arguments)
+        if not self._ffmpeg_process.waitForStarted(10000):
+            self.log_error("FFmpeg could not start: {0}".format(self._ffmpeg_process.errorString()))
+            return False
+        while not self._ffmpeg_process.waitForFinished(50):
+            QtCore.QCoreApplication.processEvents()
+            if self._ffmpeg_process.state() == QtCore.QProcess.NotRunning:
+                break
+        self.process_ffmpeg_output()
+        success = (self._ffmpeg_process.exitStatus() == QtCore.QProcess.NormalExit
+                   and self._ffmpeg_process.exitCode() == 0)
+        if not success:
+            self.log_warning("FFmpeg failed (exit {0}). See encoder diagnostics above.".format(self._ffmpeg_process.exitCode()))
+        return success
 
     def process_ffmpeg_output(self):
-        byte_array_output = self._ffmpeg_process.readAllStandardError()
+        output = bytes(self._ffmpeg_process.readAllStandardError()).decode("utf-8", errors="replace")
+        if output:
+            self.log_output(output)
 
-        if sys.version_info.major < 3:
-            output = str(byte_array_output)
-        else:
-            output = str(byte_array_output, "utf-8")
+    def _encode_and_publish(self, ffmpeg_path, arguments, output_path, encoder):
+        """Encode beside the destination; publish only after successful completion.
 
-        self.log_output(output)
-
+        The previous movie survives encoder errors. Non-overwrite publication uses
+        an exclusive hard link so an output created during capture is not replaced.
+        """
+        fd, staged = tempfile.mkstemp(prefix=".atk_encode_", suffix=os.path.splitext(output_path)[1],
+                                      dir=os.path.dirname(os.path.abspath(output_path)))
+        os.close(fd)
+        arguments = list(arguments) + [staged]
+        try:
+            success = self.execute_ffmpeg_command(ffmpeg_path, arguments)
+            codec_index = arguments.index("-c:v") + 1
+            if not success and encoder == "h264" and arguments[codec_index] != "libx264":
+                available = PBCPlayblastUtils.detect_available_video_encoders(ffmpeg_path)
+                if "libx264" in available:
+                    self.log_warning("Hardware H.264 encoding failed (GPU/driver may be incompatible). Retrying with CPU libx264; no driver update is needed for software export.")
+                    # Replace only encoder-specific options, preserving inputs/audio.
+                    stop = arguments.index("-pix_fmt", codec_index) + 2
+                    arguments[codec_index - 1:stop] = [
+                        "-c:v", "libx264", "-crf:v", str(self.H264_QUALITIES[self._h264_quality]),
+                        "-preset:v", self._h264_preset, "-pix_fmt", "yuv420p"]
+                    success = self.execute_ffmpeg_command(ffmpeg_path, arguments)
+                else:
+                    self.log_error("Hardware encoder unavailable and this FFmpeg build has no libx264 software fallback. Configure a build with libx264 in Settings.")
+            if not success or not os.path.isfile(staged) or os.path.getsize(staged) == 0:
+                return False
+            if getattr(self, "_overwrite_output", False):
+                os.replace(staged, output_path)
+            else:
+                # Fail safely on filesystems without hard-link support rather than
+                # risking overwriting another application's newly-created output.
+                os.link(staged, output_path)
+            return True
+        except (OSError, ValueError) as exc:
+            self.log_error("Could not encode/publish video: {0}. Check permissions, free space, and whether the destination is open in another app. To replace a file, enable Output > Destination > Force overwrite existing output.".format(exc))
+            return False
+        finally:
+            if os.path.exists(staged):
+                try:
+                    os.remove(staged)
+                except OSError:
+                    pass
 
     def encode_video(self, encoder, ffmpeg_path, source_path, output_path, start_frame, include_audio=True):
         """Encode an image sequence into a video using the given encoder.
@@ -1597,23 +1686,27 @@ class PBCPlayblast(QtCore.QObject):
 
         arguments = []
         arguments.append("-y")
-        arguments.extend(["-framerate", "{0}".format(framerate), "-i", source_path])
+        arguments.extend(["-framerate", "{0}".format(framerate), "-start_number", "0", "-i", source_path])
 
         if audio_file_path:
-            arguments.extend(["-ss", "{0}".format(audio_offset), "-i", audio_file_path])
+            if audio_offset > 0:
+                arguments.extend(["-ss", str(audio_offset)])
+            arguments.extend(["-i", audio_file_path])
 
         arguments.extend(video_codec_args)
 
         if audio_file_path:
-            arguments.extend(["-filter_complex", "[1:0] apad", "-shortest"])
+            audio_filter = "apad"
+            if audio_offset < 0:
+                audio_filter = "adelay={0}:all=1,apad".format(int(round(-audio_offset * 1000)))
+            arguments.extend(["-map", "0:v:0", "-map", "1:a:0", "-af", audio_filter,
+                              "-c:a", "aac", "-b:a", "192k", "-shortest"])
         elif not include_audio:
             arguments.append("-an")
 
-        arguments.append(output_path)
-
+        arguments.extend(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-movflags", "+faststart"])
         self.log_output("ffmpeg arguments: {0}\n".format(arguments))
-
-        self.execute_ffmpeg_command(ffmpeg_path, arguments)
+        return self._encode_and_publish(ffmpeg_path, arguments, output_path, encoder)
 
     def transcode_video(self, encoder, ffmpeg_path, source_path, output_path, include_audio=True):
         """Transcode a video temp file into the final container/codec.
@@ -1645,11 +1738,9 @@ class PBCPlayblast(QtCore.QObject):
         else:
             arguments.append("-an")
 
-        arguments.append(output_path)
-
+        arguments.extend(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-movflags", "+faststart"])
         self.log_output("ffmpeg arguments: {0}\n".format(arguments))
-
-        self.execute_ffmpeg_command(ffmpeg_path, arguments)
+        return self._encode_and_publish(ffmpeg_path, arguments, output_path, encoder)
 
     # Backwards-compatible wrappers so any external script referencing
     # the older names keeps working.
@@ -1822,7 +1913,7 @@ class PBCPlayblast(QtCore.QObject):
     def set_active_camera(self, camera, model_panel=None):
         model_panel = model_panel or self.get_viewport_panel(camera)
         if model_panel:
-            mel.eval("lookThroughModelPanel {0} {1}".format(camera, model_panel))
+            cmds.modelPanel(model_panel, edit=True, camera=camera)
         else:
             self.log_error("Failed to set active camera. A viewport is not active.")
 
@@ -2387,7 +2478,7 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         self.output_filename_le = PBCLineEdit(PBCLineEdit.TYPE_PLAYBLAST_OUTPUT_FILENAME)
         self.output_filename_le.setPlaceholderText("{scene}_{timestamp}")
         self.output_filename_le.setMaximumWidth(int(200 * scale_value))
-        self.force_overwrite_cb = QtWidgets.QCheckBox("Force overwrite")
+        self.force_overwrite_cb = QtWidgets.QCheckBox("Force overwrite existing output")
 
         # Name Generator widgets
         self.namegen_assignment_cb = QtWidgets.QCheckBox()
@@ -2758,7 +2849,7 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
 
         if ffmpeg_encoders:
             text = (
-                "Detected video encoders: {0}.  Image sequences: {1}."
+                "Encoders in this FFmpeg build: {0}. Hardware availability depends on the GPU/driver; failed hardware H.264 exports retry with libx264 when available. Image sequences: {1}."
             ).format(
                 ", ".join(names) if names else "none",
                 ", ".join(image_names) if image_names else "none",
@@ -3440,6 +3531,12 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         """Build the final playblast and save it to the output folder
         chosen on the Output tab.
         """
+        if getattr(self, "_export_running", False):
+            return
+        self._export_running = True
+        self.tabs.setEnabled(False)
+        self.execute_btn.setEnabled(False)
+        self.preview_btn.setEnabled(False)
         # Open the Output Log so the user actually sees any errors /
         # status messages we emit during the blast.
         if hasattr(self, "log_group"):
@@ -3479,7 +3576,8 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
             # itself, so strip any extension the user (or the Name
             # Generator) baked into the field - otherwise the saved
             # file ends up as "name.mov.mov".
-            filename = os.path.splitext(filename)[0]
+            if os.path.splitext(filename)[1].lower() in (".mp4", ".mov", ".png", ".jpg", ".jpeg", ".tif", ".tiff"):
+                filename = os.path.splitext(filename)[0]
             if not filename:
                 self.on_log_output(
                     "[Error] Filename is empty. Fill in the Name "
@@ -3549,6 +3647,11 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         except Exception:
             traceback.print_exc()
             self.on_log_output("[Error] Playblast failed. See Script Editor for details.")
+        finally:
+            self._export_running = False
+            self.tabs.setEnabled(True)
+            self.execute_btn.setEnabled(True)
+            self.preview_btn.setEnabled(True)
 
     def on_preview(self):
         """Render a single-frame preview (current time) that shows
@@ -3556,6 +3659,12 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         settings will look like. The output goes to the temp folder
         so the Output tab's destination is not touched.
         """
+        if getattr(self, "_export_running", False):
+            return
+        self._export_running = True
+        self.tabs.setEnabled(False)
+        self.execute_btn.setEnabled(False)
+        self.preview_btn.setEnabled(False)
         # Open the Output Log so preview status / errors are visible.
         if hasattr(self, "log_group"):
             try:
@@ -3592,19 +3701,22 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
             codec = self.encoding_video_codec_cmb.currentData() or self.encoding_video_codec_cmb.currentText()
             self._playblast.set_encoding(container, codec)
 
-            self._run_playblast(
+            saved_path = self._run_playblast(
                 output_dir=preview_dir,
                 filename=preview_name,
                 show_in_viewer=True,
                 overwrite=True,
                 single_frame=True,
             )
-            self.on_log_output(
-                "Preview frame created in temp folder: {0}".format(preview_dir)
-            )
+            self.on_log_output("Preview created: {0}".format(saved_path) if saved_path else "[Error] Preview was not created. See the messages above.")
         except Exception:
             traceback.print_exc()
             self.on_log_output("[Error] Preview frame failed. See Script Editor for details.")
+        finally:
+            self._export_running = False
+            self.tabs.setEnabled(True)
+            self.execute_btn.setEnabled(True)
+            self.preview_btn.setEnabled(True)
 
     def _run_playblast(self, output_dir, filename, show_in_viewer, overwrite, single_frame):
         """Shared runner for Preview and Create Playblast.
@@ -4241,7 +4353,6 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         output_file_row = QtWidgets.QHBoxLayout()
         output_file_row.setSpacing(4)
         output_file_row.addWidget(self.output_filename_le)
-        output_file_row.addWidget(self.force_overwrite_cb)
 
         destination_card, destination_body = self._card("Destination")
         destination_form = PBCFormLayout()
@@ -4249,6 +4360,10 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         destination_form.addLayoutRow(0, "Output Dir:", output_path_row)
         destination_form.addLayoutRow(1, "Filename:", output_file_row)
         destination_body.addLayout(destination_form)
+        destination_body.addWidget(self.force_overwrite_cb)
+        destination_body.addWidget(self._help_caption(
+            "If a video already exists, select Force overwrite existing output above, "
+            "or change the filename. Existing videos are replaced only after encoding succeeds."))
 
         # Name generator
         name_gen_card, name_gen_body = self._card("Name Generator")
@@ -4635,7 +4750,7 @@ class PBCPlayblastWidget(QtWidgets.QWidget):
         tab_layout.setContentsMargins(10, 10, 10, 10)
         tab_layout.setSpacing(10)
         tab_layout.addWidget(self._help_caption(
-            "One-time tool setup. Point FFmpeg at your ffmpeg.exe so the "
+            "One-time tool setup. Select ffmpeg.exe (Windows) or ffmpeg (macOS/Linux) so the "
             "tool can transcode to H.264/ProRes. The temp folder is used "
             "for the Preview button and for image sequences before "
             "encoding. Click Apply Tool Settings to save. The final "

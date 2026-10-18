@@ -11,6 +11,9 @@
 # Copyright (C) 2025 Playblast Creator. All rights reserved.
 ###############################################################################
 
+import os
+
+
 class PlayblastCreatorCustomPresets(object):
 
 
@@ -74,7 +77,7 @@ class PlayblastCreatorCustomPresets(object):
         """
         if "{playblast_creator_projects}" in dir_path:
             # Replace with your desired path or environment variable
-            playblast_creator_projects_path = "C:/Playblast CreatorProjects"
+            playblast_creator_projects_path = os.path.join(os.path.expanduser("~"), "Playblast CreatorProjects")
             dir_path = dir_path.replace("{playblast_creator_projects}", playblast_creator_projects_path)
 
         return dir_path

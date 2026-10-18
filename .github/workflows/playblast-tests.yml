@@ -1,0 +1,59 @@
+name: Playblast cross-platform verification
+on:
+  push:
+    branches: [main, 'fix/playblast-*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libegl1 libopengl0
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --no-progress -y
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - run: python -m pip install PySide6==6.8.3
+      - name: Verify tools are available (do not silently skip integration)
+        run: python -c "import shutil; from PySide6 import QtCore; assert shutil.which('ffmpeg') and shutil.which('ffprobe')"
+      - run: python -m unittest discover -s tests -p "test_playblast*.py" -v
+      - run: python -m compileall -q "animation tool kit scripts/Playblast_Creator" atk_toolbar
+      - run: python package_atk_release.py --version 1.1.8
+  release:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python package_atk_release.py --version 1.1.8
+      - name: Publish verified ATK 1.1.8 release once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view ATK_1.1.8 >/dev/null 2>&1; then
+            echo 'Release already exists; preserving published assets.'
+          else
+            gh release create ATK_1.1.8 dist/AnimationToolKit_v1_1_8.zip dist/AnimationToolKit_v1_1_8.zip.sha256 --target "$GITHUB_SHA" --title 'Animation Tool Kit v1.1.8' --notes-file Animation_Tool_Kit_v1.1.8_Release_Notes.md --latest
+          fi

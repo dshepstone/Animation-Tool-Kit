@@ -2,10 +2,17 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.7** includes **Overlap 0.4.0** in the animation/timing group, next
-to Noise Generator. Its full package, pendulum icon, offline HTML help, and
-separate licence ship with ATK; no standalone install is required. The tool
-supports per-axis overlap, offset pivots, optimized baking, and bake deletion.
+Version **1.1.8** includes **Playblast Creator 2.0.5** with automatic software
+fallback for failed hardware H.264 encoding, protected video replacement,
+clear overwrite controls, portable capture paths, and regression tests.
+See [release notes](Animation_Tool_Kit_v1.1.8_Release_Notes.md).
+
+For an existing video, use **Output → Destination → Force overwrite existing
+output**, or choose a different filename. Failed encoding preserves the old video.
+
+Video export requires an FFmpeg build with the chosen codec; **libx264** is the
+recommended H.264 software fallback on Windows, macOS, and Linux. Choose the
+executable in Settings. Maya itself and a working viewport are required to capture.
 
 ## What the installer does
 
