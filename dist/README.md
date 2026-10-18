@@ -2,6 +2,11 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
+Version **1.1.7** includes **Overlap 0.4.0** in the animation/timing group, next
+to Noise Generator. Its full package, pendulum icon, offline HTML help, and
+separate licence ship with ATK; no standalone install is required. The tool
+supports per-axis overlap, offset pivots, optimized baking, and bake deletion.
+
 ## What the installer does
 
 When you drag-and-drop `install_atk_toolbar.mel` into Maya, the installer:

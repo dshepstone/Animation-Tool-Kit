@@ -91,6 +91,17 @@ TOOL_REGISTRY = [
         "version":   "1.1.0",
     },
     {
+        "id":        "overlap",
+        "label":     "Overlap",
+        "tooltip":   "Add spring overlap to control animation with axis masks and optimized baking",
+        "module":    "atk_overlap",
+        "launch_fn": "show",
+        "icon_file": "overlap_32.png",
+        "icon_key":  "overlap",
+        "group":     "timing",
+        "version":   "0.4.0",
+    },
+    {
         "id":        "xform_copy_paste",
         "label":     "Xform Copy Paste",
         "tooltip":   "Copy and paste world-space transforms between objects",
