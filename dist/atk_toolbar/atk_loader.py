@@ -33,8 +33,44 @@ except Exception:                       # never let the window fix block a launc
 #                   outside its main module/package; purged by Reload Scripts
 #   maya_plugin – (optional) Maya plug-in file the tool loads; unloaded and
 #                   reloaded by Reload Scripts so plug-in changes take effect
+#   startup_fn  – (optional) idempotent service started on toolbar builds
+#   palette_colors – (optional) three (label, hex, function) colour strips
 
 TOOL_REGISTRY = [
+    {
+        "id":        "timeline_ticks",
+        "label":     "Timeline Ticks",
+        "tooltip":   "Colour timeline ticks and label keys, extremes, breakdowns and inbetweens",
+        "module":    "timeline_ticks",
+        "launch_fn": "show",
+        "icon_file": "timeline_ticks.png",
+        "icon_key":  "bookmark",
+        "group":     "timing",
+        "version":   "1.0.0",
+        "startup_fn": "start_tracking",
+        "extra_modules": ["timeline_ticks_tracking"],
+        "palette_colors": [
+            ("Yellow", "#f5cf58", "apply_yellow"),
+            ("Red", "#ef6464", "apply_red"),
+            ("Blue", "#60a5fa", "apply_blue"),
+        ],
+        "context_actions": [
+            ("Colour Yellow", "apply_yellow"),
+            ("Colour Red", "apply_red"),
+            ("Colour Blue", "apply_blue"),
+            None,
+            ("Mark as Key", "mark_key"),
+            ("Mark as Extreme", "mark_extreme"),
+            ("Mark as Breakdown", "mark_breakdown"),
+            ("Mark as Inbetween", "mark_inbetween"),
+            None,
+            ("Clear Tick Annotations", "clear_ticks"),
+            ("Clear All Marks", "clear_all_marks"),
+            None,
+            ("Hide Coloured Marks", "hide_marks"),
+            ("Show Coloured Marks", "show_marks"),
+        ],
+    },
     {
         "id":        "inbetweener",
         "label":     "Inbetweener",
@@ -360,6 +396,13 @@ def setup_paths():
             )
 
 
+def start_tool_services():
+    """Start idempotent runtime services required by installed toolbar tools."""
+    for tool in TOOL_REGISTRY:
+        if tool.get("startup_fn") and is_tool_installed(tool["id"]):
+            launch_tool_fn(tool["id"], tool["startup_fn"])
+
+
 # ---------------------------------------------------------------------------
 # Tool visibility
 # ---------------------------------------------------------------------------
@@ -505,6 +548,10 @@ def reload_tool_modules():
 
     purged = set()
     for root in roots:
+        module = sys.modules.get(root)
+        shutdown = getattr(module, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
         prefix = root + "."
         for name in list(sys.modules):
             if name == root or name.startswith(prefix):

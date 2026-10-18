@@ -2,11 +2,12 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.9** uses the new **ATK logo** for the website button beside the
-settings gear. The button opens **https://shepstone.ca/**. This release includes
-all Playblast Creator 2.0.5 reliability fixes from 1.1.8: hardware H.264 software
-fallback, protected video replacement, clear overwrite controls, and portable
-capture paths. See [release notes](Animation_Tool_Kit_v1.1.9_Release_Notes.md).
+Version **1.1.10** adds **Timeline Ticks**: a compact yellow/red/blue palette
+for classifying existing keys as Key, Extreme, Breakdown or Inbetween. Marks
+persist with the scene and follow supported key edits, including ATK Add/Remove
+Frames and Undo/Redo. Clear All Marks works across the scene; Hide/Show keeps
+tracking active. This release retains the updated ATK website logo and Playblast
+Creator reliability fixes. See [release notes](Animation_Tool_Kit_v1.1.10_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.
@@ -49,6 +50,13 @@ If that file is missing, it falls back to:
 4. Use the new **ATK** shelf button to open the toolbar.
 
 ## Notes
+
+- **Timeline Ticks** provides a compact Key / Extreme / Breakdown / Inbetween
+  window, plus a single-slot yellow/red/blue palette and menu on the main ATK
+  toolbar. Labels follow key moves and deletions, including Add/Remove Frames
+  and Undo/Redo while tracking is active. The window also includes green. Install using
+  the usual ATK installer, then launch it from the timing group. See its
+  [usage and limitations](animation%20tool%20kit%20scripts/Timeline_Ticks_1_0_0/README.md).
 
 - The installer copies files into Maya user preference/script locations (per-user install).
 - If a tool file or icon is missing, Maya will show a warning and continue installing the rest.
