@@ -89,8 +89,8 @@ def make_settings_icon(size=32):
 
 
 def make_logo_icon(size=32):
-    """Return the Animation Tool Kit 'A•T' logo icon for the website button."""
-    icon_name = "ATK_Bar_Logo.png"
+    """Return the Animation Tool Kit logo icon for the website button."""
+    icon_name = "ATK_Logo.png"
     pref_dir = cmds.internalVar(userPrefDir=True)
     search_paths = [
         os.path.join(pref_dir, "icons", icon_name),

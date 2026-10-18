@@ -17,7 +17,7 @@
 //       atk_settings.py
 //       icons/ATK_icon.png
 //       icons/gearIcon.png
-//       icons/ATK_Bar_Logo.png
+//       icons/ATK_Logo.png
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -284,16 +284,16 @@ global proc atk__install()
         print ("// Icon    -> " + $iconsDir + "gearIcon.png\n");
     }
 
-    // Copy ATK_Bar_Logo.png (website button logo) to icons dir
-    string $logoIcon = $srcPkgDir + "/icons/ATK_Bar_Logo.png";
+    // Copy ATK_Logo.png (website button logo) to icons dir
+    string $logoIcon = $srcPkgDir + "/icons/ATK_Logo.png";
     if (!atk__fileExists($logoIcon))
     {
-        $logoIcon = $installDir + "icon/ATK_Bar_Logo.png";
+        $logoIcon = $installDir + "icon/ATK_Logo.png";
     }
     if (atk__fileExists($logoIcon))
     {
         atk__copyFile($logoIcon, $iconsDir);
-        print ("// Icon    -> " + $iconsDir + "ATK_Bar_Logo.png\n");
+        print ("// Icon    -> " + $iconsDir + "ATK_Logo.png\n");
     }
 
     // Copy Blue Pencil Flipbook Manager icon (lives in the repo icon/ folder,
