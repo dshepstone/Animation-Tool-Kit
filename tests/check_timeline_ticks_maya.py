@@ -108,7 +108,16 @@ def main():
     assert c.store.read()[identity]["kind"] == "Key"
     assert bar.overlay.marks
     image = bar.overlay.grab().toImage()
-    assert any(image.pixelColor(x, 20).alpha() for x in range(image.width()))
+    tick_x = round(ticks.frame_x(5, 1, 24, bar.overlay.width()))
+    assert image.pixelColor(tick_x, 20).name() == "#ef6464"
+    old_centre_x = round(4.5 * bar.overlay.width() / 24)
+    assert image.pixelColor(old_centre_x, 20).name() != "#ef6464"
+    # Mixed classifications share the same x coordinate on the native tick.
+    bar.overlay.marks = {5: {("Key", "#ef6464"), ("Extreme", "#f5cf58")}}
+    mixed = bar.overlay.grab().toImage()
+    assert mixed.pixelColor(tick_x, 10).name() == "#f5cf58"
+    assert mixed.pixelColor(tick_x, bar.overlay.height() - 10).name() == "#ef6464"
+    bar.refresh()
     timeline.resize(900, 60)
     app.processEvents()
     assert bar.overlay.size() == timeline.size()

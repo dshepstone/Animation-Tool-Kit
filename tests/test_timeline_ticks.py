@@ -1,6 +1,8 @@
 """Controller checks without requiring Maya or Qt."""
 import importlib.util
+import json
 from pathlib import Path
+import re
 import unittest
 from unittest.mock import Mock, patch
 
@@ -97,8 +99,17 @@ class TickTests(unittest.TestCase):
         self.assertEqual(self.controller.visible_marks(), {10: {("Key", "#ef6464"), ("Extreme", "#f5cf58")}})
 
     def test_frame_cell_mapping(self):
-        self.assertEqual(ticks.frame_x(1, 1, 10, 100), 5)
-        self.assertEqual(ticks.frame_x(10, 1, 10, 100), 95)
+        self.assertEqual(ticks.frame_x(1, 1, 10, 116), 8)
+        self.assertEqual(ticks.frame_x(10, 1, 10, 116), 98)
+        self.assertEqual(ticks.frame_x(5.5, 1, 10, 116), 53)
+        self.assertEqual(ticks.frame_x(-5, -5, 4, 116), 8)
+        self.assertEqual(ticks.frame_x(1, 1, 1, 116), 8)
+        self.assertEqual(ticks.frame_x(1, 1, 10, 0), 0)
+
+    def test_alignment_with_reported_24_frame_timeline(self):
+        # Screenshot: widget starts at x17, frame 8 native tick is at x482.
+        self.assertAlmostEqual(17 + ticks.frame_x(8, 1, 24, 1582), 482, delta=1)
+        self.assertAlmostEqual(17 + ticks.frame_x(10, 1, 24, 1582), 613, delta=1)
 
     def test_toolbar_quick_actions_use_range_without_opening_dialog(self):
         window = Mock()
@@ -131,6 +142,25 @@ class TickTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ticks.decode(raw)
         self.assertEqual(ticks.decode('{"version":1,"marks":{}}'), {})
+
+    def test_installer_reload_script_compiles_and_closes_previous_overlay(self):
+        installer = SOURCE.parents[2] / "install_atk_toolbar.mel"
+        fragments = re.findall(r'\$launchPy \+= (".*");', installer.read_text(encoding="utf-8"))
+        script = "".join(json.loads(fragment) for fragment in fragments)
+        compile(script, "installer-launch", "exec")
+        cmds = Mock()
+        cmds.internalVar.return_value = "test-scripts"
+        window = Mock()
+        old_module = Mock(_window=window)
+        # Run just the installer prelude, before it imports Maya's toolbar.
+        prelude = script.split("for name in list(sys.modules):")[0]
+        import sys
+        with patch.dict(sys.modules, {"timeline_ticks": old_module, "maya.cmds": cmds,
+                                      "maya": Mock(cmds=cmds)}), patch.object(sys, "path", list(sys.path)):
+            exec(prelude, {})
+            window.close.assert_called_once()
+            window.deleteLater.assert_called_once()
+            self.assertNotIn("timeline_ticks", sys.modules)
 
 
 if __name__ == "__main__":

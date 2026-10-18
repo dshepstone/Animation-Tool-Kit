@@ -600,6 +600,15 @@ global proc atk__install()
     $launchPy += "if scripts_dir not in sys.path:\n";
     $launchPy += "    sys.path.insert(0, scripts_dir)\n";
     $launchPy += "cmds.optionVar(sv=('atk_toolbar_orientation', 'horizontal'))\n";
+    // Stop the old overlay and release its module before loading an update.
+    $launchPy += "_ticks_old = sys.modules.pop('timeline_ticks', None)\n";
+    $launchPy += "_ticks_window = getattr(_ticks_old, '_window', None)\n";
+    $launchPy += "if _ticks_window is not None:\n";
+    $launchPy += "    try:\n";
+    $launchPy += "        _ticks_window.close()\n";
+    $launchPy += "        _ticks_window.deleteLater()\n";
+    $launchPy += "    except RuntimeError:\n";
+    $launchPy += "        pass\n";
     $launchPy += "for name in list(sys.modules):\n";
     $launchPy += "    if name == 'atk_toolbar' or name.startswith('atk_toolbar.'):\n";
     $launchPy += "        sys.modules.pop(name, None)\n";

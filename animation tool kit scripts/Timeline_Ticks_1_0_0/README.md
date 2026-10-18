@@ -51,15 +51,17 @@ state. Extreme and Inbetween are annotations rather than additional Maya key typ
   retimed keys or copy/paste**. Relabel after retiming. Annotations only display
   when a key exists at their stored time; a replacement key at that time inherits
   the old label until cleared.
-- If channels at one time have different annotations, adjacent coloured ticks
+- Colours align with the native key tick at the start of its frame cell, with
+  the standard Time Slider's end gutters accounted for. If channels at one
+  time have different annotations, vertical colour segments on that same tick
   and a **+** indicate the mixed classification.
 - Referenced/locked curves may reject native breakdown changes. Maya reports
   the error in the Script Editor; Undo can reverse any partial edit.
 - Importing multiple scenes with annotation stores requires manually resolving
   duplicate stores; the tool refuses to guess which store to overwrite.
 - Overlay alignment and coexistence with custom Maya Time Slider replacements
-  require visual checking in your Maya version. The default full-width Maya
-  Time Slider frame-cell mapping matches the existing ATK Bookmarks overlay.
+  require visual checking in your Maya version. Custom slider replacements
+  may use different end gutters.
 
 ## Validation
 

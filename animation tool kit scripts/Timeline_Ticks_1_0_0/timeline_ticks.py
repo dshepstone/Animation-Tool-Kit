@@ -40,8 +40,15 @@ def decode(raw):
 
 
 def frame_x(frame, start, end, width):
-    """Time Slider frame-cell centre; includes the final visible frame."""
-    return (frame - start + 0.5) * width / max(end - start + 1.0, 1.0)
+    """Native tick position: frame-cell start inside Maya's 8px end gutters.
+
+    The current-time highlight occupies a whole cell, but its key tick is at
+    the leading edge. Using the cell centre puts annotations half a frame late.
+    Qt widget coordinates are logical pixels, including on high-DPI displays.
+    """
+    gutter = min(8.0, width / 2.0)
+    span = max(end - start + 1.0, 1.0)
+    return gutter + (frame - start) * max(width - 2 * gutter, 0.0) / span
 
 
 class SceneStore:
@@ -175,15 +182,19 @@ def _ui_classes():
                     if not start <= frame < end + 1:
                         continue
                     x = round(frame_x(frame, start, end, self.width()))
-                    # Split conflicting channel styles into adjacent ticks.
+                    # Keep every colour on the tick; mixed channel styles
+                    # share vertical segments rather than shifting sideways.
+                    top = 8
+                    tick_height = max(1, self.height() - 16)
                     for index, (kind, color) in enumerate(sorted(styles)):
-                        dx = x + index * 4 - (len(styles) - 1) * 2
-                        painter.fillRect(int(dx) - 1, 14, 3, max(5, self.height() - 17),
+                        y1 = top + round(index * tick_height / len(styles))
+                        y2 = top + round((index + 1) * tick_height / len(styles))
+                        painter.fillRect(x - 1, y1, 3, max(1, y2 - y1),
                                          QtGui.QColor(color))
                     # One readable letter; mixed channel classifications use '+'.
                     label = TYPES[next(iter(styles))[0]][0] if len(styles) == 1 else "+"
                     painter.setPen(QtGui.QColor(sorted(styles)[0][1]))
-                    painter.drawText(int(x) - 5, 10, label)
+                    painter.drawText(int(x) - 3, 8, label)
             finally:
                 painter.end()
 
