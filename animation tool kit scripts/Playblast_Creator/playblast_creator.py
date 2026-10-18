@@ -34,7 +34,7 @@ class PlayblastCreatorCmd(om.MPxCommand):
 
     COMMAND_NAME = "PlayblastCreator"
 
-    PLUG_IN_VERSION = "1.0.1"
+    PLUG_IN_VERSION = "2.0.5"
 
     FFMPEG_PATH_ENV_VAR = "PLAYBLAST_CREATOR_FFMPEG"
     TEMP_OUTPUT_DIR_ENV_VAR = "PLAYBLAST_CREATOR_TEMP_OUTPUT_DIR"
@@ -350,7 +350,7 @@ class PlayblastCreatorShotMaskLocator(omui.MPxLocatorNode):
         PlayblastCreatorShotMaskLocator.addAttribute(camera_name)
 
         for i in range(0, len(cls.TEXT_ATTRS), 2):
-            obj = stringData.create("Position {0}".format(str(i / 2 + 1).zfill(2)))
+            obj = stringData.create("Position {0}".format(str(i // 2 + 1).zfill(2)))
             position = typed_attr.create(cls.TEXT_ATTRS[i], cls.TEXT_ATTRS[i + 1], om.MFnData.kString, obj)
             cls.update_attr_properties(typed_attr)
             PlayblastCreatorShotMaskLocator.addAttribute(position)
@@ -683,29 +683,34 @@ class PlayblastCreatorShotMaskDrawOverride(omr.MPxDrawOverride):
         """
         """
         texture_manager = omr.MRenderer.getTextureManager()
+        if texture_manager is None:
+            return
         texture = texture_manager.acquireTexture(data.parsed_fields[data_index]["image_path"])
         if not texture:
-            om.MGlobal.displayError("[PlayblastCreatorShotMask] Unsupported image file: {0}".format(data.image_paths[data_index]))
+            om.MGlobal.displayError("[PlayblastCreatorShotMask] Unsupported image file: {0}".format(data.parsed_fields[data_index]["image_path"]))
             return
 
-        draw_manager.setTexture(texture)
-        draw_manager.setTextureSampler(omr.MSamplerState.kMinMagMipLinear, omr.MSamplerState.kTexClamp)
-        draw_manager.setTextureMask(omr.MBlendState.kRGBAChannels)
-        draw_manager.setColor(om.MColor((1.0, 1.0, 1.0, data.font_color.a)))
+        try:
+            draw_manager.setTexture(texture)
+            draw_manager.setTextureSampler(omr.MSamplerState.kMinMagMipLinear, omr.MSamplerState.kTexClamp)
+            draw_manager.setTextureMask(omr.MBlendState.kRGBAChannels)
+            draw_manager.setColor(om.MColor((1.0, 1.0, 1.0, data.font_color.a)))
 
-        # Scale the image based on the border height
-        texture_desc = texture.textureDescription()
-        scale_y = (0.5 * background_size[1]) - 4
-        scale_x = scale_y / texture_desc.fHeight * texture_desc.fWidth
+            # Scale the image based on the border height
+            texture_desc = texture.textureDescription()
+            scale_y = (0.5 * background_size[1]) - 4
+            scale_x = scale_y / texture_desc.fHeight * texture_desc.fWidth
 
-        if alignment == omr.MUIDrawManager.kLeft:
-            position = om.MPoint(position.x + scale_x, position.y + int(0.5 * background_size[1]))
-        elif alignment == omr.MUIDrawManager.kRight:
-            position = om.MPoint(position.x - scale_x, position.y + int(0.5 * background_size[1]))
-        else:
-            position = om.MPoint(position.x, position.y + int(0.5 * background_size[1]))
+            if alignment == omr.MUIDrawManager.kLeft:
+                position = om.MPoint(position.x + scale_x, position.y + int(0.5 * background_size[1]))
+            elif alignment == omr.MUIDrawManager.kRight:
+                position = om.MPoint(position.x - scale_x, position.y + int(0.5 * background_size[1]))
+            else:
+                position = om.MPoint(position.x, position.y + int(0.5 * background_size[1]))
 
-        draw_manager.rect2d(position, om.MVector(0.0, 1.0, 0.0), scale_x, scale_y, True)
+            draw_manager.rect2d(position, om.MVector(0.0, 1.0, 0.0), scale_x, scale_y, True)
+        finally:
+            texture_manager.releaseTexture(texture)
 
     def camera_exists(self, name):
         """
@@ -770,7 +775,7 @@ class PlayblastCreatorShotMaskDrawOverride(omr.MPxDrawOverride):
     def get_image(self, image_path):
         """
         """
-        image_path = image_path.strip()
+        image_path = os.path.expandvars(os.path.expanduser(image_path or "")).strip()
         if os.path.exists(image_path):
             return image_path, ""
 

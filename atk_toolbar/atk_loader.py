@@ -294,7 +294,7 @@ TOOL_REGISTRY = [
         "icon_file": "playblast_creator_icon.png",
         "icon_key":  "snap",
         "group":     "pipeline",
-        "version":   "2.0.4",
+        "version":   "2.0.5",
     },
     {
         "id":        "user_directory_check",
