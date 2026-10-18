@@ -18,6 +18,7 @@ PALETTE = (("Yellow", "#f5cf58"), ("Red", "#ef6464"),
 ATTR = "atkTimelineTicks"
 _window = None
 _tracker = None
+_marks_visible = True
 
 
 def time_token(seconds):
@@ -74,6 +75,18 @@ class SceneStore:
         self.cmds.setAttr(node + "." + ATTR,
                           json.dumps({"version": 1, "marks": marks}, sort_keys=True),
                           type="string")
+
+    def clear_all(self):
+        """Remove every saved annotation, regardless of selection or range."""
+        count = len(self.read())
+        if not count:
+            return 0
+        self.cmds.undoInfo(openChunk=True, chunkName="Clear All Timeline Marks")
+        try:
+            self.write({})
+        finally:
+            self.cmds.undoInfo(closeChunk=True)
+        return count
 
 
 class Controller:
@@ -243,6 +256,17 @@ def _ui_classes():
             clear.clicked.connect(partial(self.apply, clear=True))
             row.addWidget(clear)
             layout.addLayout(row)
+            controls = QtWidgets.QHBoxLayout()
+            self.show_marks_checkbox = QtWidgets.QCheckBox("Show coloured marks")
+            self.show_marks_checkbox.setChecked(_marks_visible)
+            self.show_marks_checkbox.toggled.connect(self.set_marks_visible)
+            self.show_marks_checkbox.setToolTip("Hide/show the overlay; saved labels and key tracking stay active")
+            controls.addWidget(self.show_marks_checkbox)
+            clear_all = QtWidgets.QPushButton("Clear All Marks")
+            clear_all.setToolTip("Remove every tick annotation in the scene, including unselected controls. Undo supported.")
+            clear_all.clicked.connect(self.clear_all_marks)
+            controls.addWidget(clear_all)
+            layout.addLayout(controls)
             self.status = QtWidgets.QLabel("Select controls, choose scope, then a type or colour.")
             self.status.setStyleSheet("color: #aaa; font-size: 10px;")
             self.status.setToolTip("Labels follow moved keys and disappear with deleted keys.\n"
@@ -266,8 +290,28 @@ def _ui_classes():
                 self.controller.cmds.warning("Timeline Ticks: " + str(exc))
                 self.refresh()
 
+        def clear_all_marks(self, checked=False):
+            try:
+                if _tracker is not None:
+                    _tracker.flush()
+                count = self.controller.store.clear_all()
+                self.status.setText("Cleared %d annotations across the scene. Undo supported." % count)
+                self.refresh()
+            except Exception as exc:
+                self.controller.cmds.warning("Timeline Ticks: " + str(exc))
+
+        def set_marks_visible(self, visible):
+            _set_marks_visible(visible, create_overlay=False)
+            self.refresh()
+
         def refresh(self):
             try:
+                self.overlay.setVisible(_marks_visible)
+                previous = self.show_marks_checkbox.blockSignals(True)
+                self.show_marks_checkbox.setChecked(_marks_visible)
+                self.show_marks_checkbox.blockSignals(previous)
+                if not _marks_visible:
+                    return
                 cmds = self.controller.cmds
                 # No scene writes or undo changes in this refresh path.
                 marks = self.controller.visible_marks()
@@ -299,11 +343,10 @@ def _ui_classes():
 def _quick_apply(**options):
     """Toolbar/menu action without opening the floating settings bar."""
     global _window
-    if _window is None or not _window.timer.isActive():
+    window = _active_window()
+    if window is None:
         window = show()
         window.hide()  # Keep the transparent overlay and refresh active.
-    else:
-        window = _window
     controller = window.controller
     scope = ("Highlighted range" if controller.cmds.timeControl(
         controller.slider, q=True, rangeVisible=True) else "Current frame")
@@ -346,6 +389,63 @@ def clear_ticks():
     return _quick_apply(clear=True)
 
 
+def clear_all_marks():
+    """Clear all scene annotations; preserve keyframes and breakdown flags."""
+    import maya.cmds as cmds
+    if _tracker is not None:
+        _tracker.flush()
+    count = SceneStore(cmds).clear_all()
+    window = _active_window()
+    if window is not None:
+        window.refresh()
+    return count
+
+
+def _set_marks_visible(visible, create_overlay=True):
+    global _marks_visible
+    _marks_visible = bool(visible)
+    window = _active_window()
+    if _marks_visible and create_overlay and window is None:
+        window = show()
+        window.hide()  # Show marks without opening the settings window.
+    elif window is not None:
+        window.refresh()
+    return _marks_visible
+
+
+def hide_marks():
+    return _set_marks_visible(False)
+
+
+def show_marks():
+    return _set_marks_visible(True)
+
+
+def toggle_marks():
+    return _set_marks_visible(not _marks_visible)
+
+
+def _active_window():
+    global _window
+    if _window is not None:
+        try:
+            return _window if _window.timer.isActive() else None
+        except RuntimeError:
+            _window = None  # Maya may have destroyed its parent workspace.
+    return None
+
+
+def _close_window():
+    global _window
+    window, _window = _window, None
+    if window is not None:
+        try:
+            window.close()
+            window.deleteLater()
+        except RuntimeError:
+            pass  # The Maya workspace already destroyed the Qt object.
+
+
 def start_tracking():
     """Track even hidden/unselected curves, independently of the floating UI."""
     global _tracker
@@ -364,10 +464,7 @@ def shutdown():
     if _tracker is not None:
         _tracker.stop()
         _tracker = None
-    if _window is not None:
-        _window.close()
-        _window.deleteLater()
-        _window = None
+    _close_window()
 
 
 def show():
@@ -381,10 +478,7 @@ def show():
     if cmds.about(batch=True):
         raise RuntimeError("Timeline Ticks requires interactive Maya")
     start_tracking()
-    if _window is not None:
-        _window.close()
-        _window.deleteLater()
-        _window = None
+    _close_window()
     TickBar, QtWidgets, shiboken = _ui_classes()
     slider = mel.eval("$atkTicksSlider = $gPlayBackSlider")
     ptr = MQtUtil.findControl(slider)

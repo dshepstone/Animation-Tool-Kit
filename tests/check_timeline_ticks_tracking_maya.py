@@ -167,6 +167,28 @@ def main():
         assert labels(c) == {8: "Key", 10: "Extreme"}
     print("PASS: immediate save, reopen and continued key tracking", flush=True)
 
+    c, curve = setup()
+    cmds.createNode("transform", name="unselectedControl")
+    cmds.setKeyframe("unselectedControl", attribute="translateX", time=40, value=1, breakdown=True)
+    second_curve = cmds.keyframe("unselectedControl.translateX", q=True, name=True)[0]
+    tracker.flush()  # The test writes metadata directly, outside Controller.apply.
+    marks = c.store.read()
+    marks[c.identity(second_curve, 40)] = {"kind": "Breakdown", "color": "#60a5fa"}
+    c.store.write(marks)
+    tracker.capture()
+    tracker.flush()
+    cmds.select(clear=True)
+    assert ticks.clear_all_marks() == 3
+    assert c.store.read() == {}
+    assert cmds.keyframe(curve, q=True, keyframeCount=True) == 4
+    assert cmds.keyframe(second_curve, q=True, time=(40, 40), breakdown=True) == [40.0]
+    cmds.undo()
+    assert c.store.read() == marks
+    cmds.redo()
+    assert c.store.read() == {}
+    assert ticks.clear_all_marks() == 0
+    print("PASS: scene-wide clear across unselected controls, Undo/Redo and unchanged keys", flush=True)
+
     callbacks = len(tracker.callbacks)
     assert callbacks > 0
     ticks.shutdown()

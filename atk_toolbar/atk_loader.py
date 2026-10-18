@@ -65,6 +65,10 @@ TOOL_REGISTRY = [
             ("Mark as Inbetween", "mark_inbetween"),
             None,
             ("Clear Tick Annotations", "clear_ticks"),
+            ("Clear All Marks", "clear_all_marks"),
+            None,
+            ("Hide Coloured Marks", "hide_marks"),
+            ("Show Coloured Marks", "show_marks"),
         ],
     },
     {

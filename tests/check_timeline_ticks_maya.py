@@ -123,6 +123,27 @@ def main():
     assert bar.overlay.size() == timeline.size()
     if len(sys.argv) > 1:
         assert bar.grab().save(sys.argv[1])
+    ticks._window = bar
+    tracker = ticks.start_tracking()
+    before_marks = c.store.read()
+    ticks.hide_marks()
+    assert bar.overlay.isHidden() and not bar.show_marks_checkbox.isChecked()
+    assert bar.timer.isActive() and tracker.callbacks
+    assert c.store.read() == before_marks
+    cmds.keyframe(curve, edit=True, time=(5, 5), timeChange=6)
+    tracker.flush()
+    ticks.show_marks()
+    assert not bar.overlay.isHidden() and bar.show_marks_checkbox.isChecked()
+    assert 6 in bar.overlay.marks and 5 not in bar.overlay.marks
+    bar.show_marks_checkbox.setChecked(False)
+    assert bar.overlay.isHidden()
+    bar.show_marks_checkbox.setChecked(True)
+    assert not bar.overlay.isHidden()
+    next(b for b in bar.findChildren(QtWidgets.QPushButton) if b.text() == "Clear All Marks").click()
+    assert c.store.read() == {} and bar.overlay.marks == {}
+    cmds.undo()
+    bar.refresh()
+    assert 6 in bar.overlay.marks
     bar.close()
     assert not bar.timer.isActive()
     app.processEvents()
@@ -154,7 +175,8 @@ def main():
         assert arrow.popupMode() == QtWidgets.QToolButton.InstantPopup
         actions = {a.text(): a for a in arrow.menu().actions()}
         for label in ("Colour Yellow", "Colour Red", "Colour Blue", "Mark as Key", "Mark as Extreme",
-                      "Mark as Breakdown", "Mark as Inbetween", "Clear Tick Annotations"):
+                      "Mark as Breakdown", "Mark as Inbetween", "Clear Tick Annotations",
+                      "Clear All Marks", "Hide Coloured Marks", "Show Coloured Marks"):
             assert label in actions
         actions["Colour Blue"].trigger()
         launch.assert_called_with("timeline_ticks", "apply_blue")
@@ -176,4 +198,5 @@ if __name__ == "__main__":
         traceback.print_exc()
         raise
     finally:
+        ticks.shutdown()
         maya.standalone.uninitialize()

@@ -166,6 +166,61 @@ class TickTests(unittest.TestCase):
             window.deleteLater.assert_called_once()
             self.assertNotIn("timeline_ticks", sys.modules)
 
+    def test_clear_all_ignores_selection_and_uses_one_undo_chunk(self):
+        store = ticks.SceneStore(self.cmds)
+        with patch.object(store, "read", return_value={"hidden@1": {}, "visible@2": {}}), \
+                patch.object(store, "write") as write:
+            self.assertEqual(store.clear_all(), 2)
+            write.assert_called_once_with({})
+        self.assertEqual(self.cmds.undoInfo.call_count, 2)
+        self.cmds.keyframe.assert_not_called()
+
+    def test_clear_all_empty_scene_does_not_create_metadata_or_undo(self):
+        store = ticks.SceneStore(self.cmds)
+        with patch.object(store, "read", return_value={}), patch.object(store, "write") as write:
+            self.assertEqual(store.clear_all(), 0)
+            write.assert_not_called()
+        self.cmds.undoInfo.assert_not_called()
+
+    def test_clear_all_failure_closes_undo_chunk(self):
+        store = ticks.SceneStore(self.cmds)
+        with patch.object(store, "read", return_value={"c@1": {}}), \
+                patch.object(store, "write", side_effect=RuntimeError("locked")):
+            with self.assertRaises(RuntimeError):
+                store.clear_all()
+        self.cmds.undoInfo.assert_called_with(closeChunk=True)
+
+    def test_hide_show_only_changes_display_and_keeps_tracker(self):
+        window, tracker = Mock(), Mock()
+        window.timer.isActive.return_value = True
+        with patch.object(ticks, "_window", window), patch.object(ticks, "_tracker", tracker), \
+                patch.object(ticks, "_marks_visible", True):
+            self.assertFalse(ticks.hide_marks())
+            self.assertTrue(ticks.show_marks())
+            self.assertFalse(ticks.toggle_marks())
+            self.assertEqual(window.refresh.call_count, 3)
+            tracker.stop.assert_not_called()
+            window.controller.store.write.assert_not_called()
+
+    def test_show_marks_recreates_overlay_without_opening_settings(self):
+        window = Mock()
+        with patch.object(ticks, "_window", None), patch.object(ticks, "_marks_visible", False), \
+                patch.object(ticks, "show", return_value=window) as show:
+            ticks.show_marks()
+            show.assert_called_once()
+            window.hide.assert_called_once()
+
+    def test_deleted_workspace_does_not_break_show_or_shutdown(self):
+        window = Mock()
+        window.timer.isActive.side_effect = RuntimeError("C++ object already deleted")
+        with patch.object(ticks, "_window", window):
+            self.assertIsNone(ticks._active_window())
+            self.assertIsNone(ticks._window)
+        window.close.side_effect = RuntimeError("C++ object already deleted")
+        with patch.object(ticks, "_window", window):
+            ticks._close_window()
+            self.assertIsNone(ticks._window)
+
 
 class TrackingTests(unittest.TestCase):
     def test_overlapping_group_moves_keep_distinct_labels(self):

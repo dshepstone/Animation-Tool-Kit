@@ -1,6 +1,6 @@
 # Timeline Ticks 1.0.0
 
-A compact two-row Maya tool with coloured tick overlays and K / E / B / I
+A compact Maya tool with coloured tick overlays and K / E / B / I
 labels directly on the Time Slider. Supports PySide2 and PySide6 (Maya 2022+).
 
 ## Install and launch
@@ -34,6 +34,13 @@ range/current frame; use the full tool for Graph Editor selected-key scope.
 4. Click a yellow, red, blue or green swatch to override the colour while keeping
    the label. Unlabelled keys receive the Key label.
 5. **Clear** removes annotations in that scope. Ctrl+Z undoes an edit.
+6. **Clear All Marks** removes every annotation in the scene, including marks on
+   unselected controls and outside the visible range. Keyframes and native
+   breakdown flags stay unchanged. Ctrl+Z restores the removed annotations.
+7. Uncheck **Show coloured marks** to hide the overlay without removing data or
+   stopping key tracking. Recheck it to show the latest key positions. The palette
+   menu also provides **Hide Coloured Marks**, **Show Coloured Marks** and
+   **Clear All Marks**. Visibility is a session display setting.
 
 Only existing keys on the Time Slider's displayed curves are affected. No
 keys or poses are created. Breakdown sets Maya's actual native breakdown flag;
