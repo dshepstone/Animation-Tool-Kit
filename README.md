@@ -58,5 +58,11 @@ If that file is missing, it falls back to:
   the usual ATK installer, then launch it from the timing group. See its
   [usage and limitations](animation%20tool%20kit%20scripts/Timeline_Ticks_1_0_0/README.md).
 
+- **Walk Off Node** turns a treadmill walk cycle into a walk that travels. It keys
+  the IK feet, hands and waist where they really are in world space, removes the
+  base / layout node's slide and the cycle, so the character walks off the node.
+  It's in the timing group, and also opens from **Xform Copy Paste**. See its
+  [usage notes](animation%20tool%20kit%20scripts/Walk_Off_Node_1_0_0/README.md).
+
 - The installer copies files into Maya user preference/script locations (per-user install).
 - If a tool file or icon is missing, Maya will show a warning and continue installing the rest.
