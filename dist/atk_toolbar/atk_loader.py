@@ -149,6 +149,17 @@ TOOL_REGISTRY = [
         "version":   "2.0.0",
     },
     {
+        "id":        "walk_off_node",
+        "label":     "Walk Off Node",
+        "tooltip":   "Turn a treadmill walk cycle into a walk that travels off the base node",
+        "module":    "walk_off_node",
+        "launch_fn": "show",
+        "icon_file": "walk_off_node.png",
+        "icon_key":  "xform",
+        "group":     "timing",
+        "version":   "1.0.0",
+    },
+    {
         "id":        "bookmarks",
         "label":     "Bookmarks",
         "tooltip":   "Create and navigate time bookmarks on the Maya timeline",

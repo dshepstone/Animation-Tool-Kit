@@ -927,6 +927,35 @@ Paste Xform WS Keys Playback Range
 
 -------------------------------------------------------------------------
 
+WALK CYCLE -> WALK OFF THE NODE
+-------------------------------
+Goal: a treadmill walk cycle where the base / layout node slides forward
+and the IK feet, hands and waist loop in place (cycle infinity).  You
+want the feet and hands keyed where they really are in world space, the
+base node's slide removed, and the character walking off the node.
+
+Use the "Walk Off Node..." button below (or the Walk Off Node tool on the
+ATK toolbar).  It does the whole job in one undoable step:
+  1. Load the controls (IK feet, IK hands, waist / COG, pole vectors).
+  2. Set the base / layout node that is sliding.
+  3. Pick the range (playback range or a shift-dragged Time Slider range;
+     it can be longer than one cycle, e.g. four cycles).
+  4. Click Walk Off Node.  Every control is sampled in world space on
+     every frame, the base node's keys are deleted, the world positions
+     are keyed back onto the controls and their cycle infinity is set to
+     constant.  Keyed custom attributes such as foot roll are baked too.
+
+Why not just Copy Multi + Paste Keys?
+  "Copy Xform WS Multi Objects Range" does capture the world path of all
+  the selected controls as they cycle.  But "Paste Xform WS Keys Playback
+  Range" only writes onto keys that already exist, and a cycle usually
+  only has keys inside its first loop.  Past that loop there are no keys
+  to overwrite, so the feet drift back onto the node.  Walk Off Node
+  writes a key on every frame and removes the base slide and the cycle
+  for you, in the right order.
+
+-------------------------------------------------------------------------
+
 KEYBOARD SHORTCUTS
 ------------------
 Every copy and paste function can be bound to a Maya hotkey.
@@ -1021,6 +1050,19 @@ class _TextDialog(QtWidgets.QDialog):
         row.addStretch()
         row.addWidget(btn_close)
         layout.addLayout(row)
+
+
+def show_walk_off_node():
+    """Open the Walk Off Node tool (ships with the Animation Tool Kit)."""
+    try:
+        import walk_off_node
+    except ImportError:
+        cmds.warning(
+            "xform_copy_paste: Walk Off Node is not installed. Install the "
+            "Animation Tool Kit, or copy walk_off_node.py to your scripts folder."
+        )
+        return None
+    return walk_off_node.show()
 
 
 def show_help():
@@ -1241,6 +1283,30 @@ class XformCopyPasteDialog(QtWidgets.QDialog):
             layout.addWidget(self._desc_label(desc))
             if i < len(paste_buttons) - 1:
                 layout.addSpacing(10)
+
+        layout.addSpacing(14)
+        layout.addWidget(self._separator())
+        layout.addSpacing(12)
+
+        # ── WALK CYCLE section ──────────────────────────────────────────────
+        layout.addWidget(self._section_label("Walk Cycle"))
+        layout.addSpacing(8)
+        btn_walk = QtWidgets.QPushButton("Walk Off Node...")
+        btn_walk.setProperty("atkRole", "multi")
+        btn_walk.setToolTip(
+            "Treadmill walk cycle -> travelling walk.  Samples the feet, hands\n"
+            "and waist in world space as they cycle, keys that path, then\n"
+            "removes the base node's slide and the cycle.  See Help."
+        )
+        btn_walk.clicked.connect(lambda *_: show_walk_off_node())
+        layout.addWidget(btn_walk)
+        layout.addSpacing(3)
+        layout.addWidget(
+            self._desc_label(
+                "Key a cycling walk's feet, hands and waist in world space, "
+                "then remove the base slide so the character walks off the node."
+            )
+        )
 
         layout.addSpacing(14)
         layout.addWidget(self._separator())

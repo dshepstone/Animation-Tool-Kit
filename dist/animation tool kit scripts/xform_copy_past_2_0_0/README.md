@@ -60,6 +60,17 @@ Maya's default `Maya_Default` hotkey set is locked — if it is active you will 
 1. Select all source controllers → click **Copy Xform WS Multi Objects Range**
 2. Select corresponding target controllers (same order/count) → click **Paste Xform WS Keys Playback Range**
 
+**Walk cycle → walk off the node:**
+
+For a treadmill cycle, where the base / layout node slides forward while the feet, hands and waist loop in place, click **Walk Off Node...** in the tool window. It opens the ATK **Walk Off Node** tool:
+
+1. Load the IK feet, IK hands and waist / COG controls.
+2. Set the sliding base node.
+3. Pick a range. It can be longer than one cycle.
+4. Click **Walk Off Node**.
+
+Each control's world-space path is keyed on every frame, the base node's keys are removed and the cycle infinity is set to constant, so the character walks off the node. *Copy Multi + Paste Keys* alone can't do this, because it only overwrites keys that already exist, and a cycle has none past its first loop.
+
 **Step through frames manually:**
 1. Select source → click **Copy Xform World Space**
 2. Select target → click **Paste Xform WS Next Frame** repeatedly to paste and step forward

@@ -6,7 +6,7 @@ Run from the repository root using Python 3.9+:
 python -m pip install PySide6
 python -m unittest discover -s tests -p "test_playblast*.py" -v
 python -m compileall -q "animation tool kit scripts/Playblast_Creator" atk_toolbar
-python package_atk_release.py --version 1.1.12
+python package_atk_release.py --version 1.1.13
 ```
 
 FFmpeg and ffprobe must be on PATH for the media integration tests. CI asserts
