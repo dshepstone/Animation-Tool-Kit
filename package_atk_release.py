@@ -1,6 +1,6 @@
 """Build and verify a portable release ZIP from the canonical source tree.
 
-Usage: python package_atk_release.py --version 1.1.11 [--sync-dist]
+Usage: python package_atk_release.py --version 1.1.12 [--sync-dist]
 The Python packager complements the existing PowerShell packager for CI.
 """
 import argparse
@@ -26,7 +26,7 @@ def release_files(version):
 
 def build(version, sync_dist=False):
     if not re.fullmatch(r'\d+\.\d+\.\d+', version):
-        raise ValueError('Expected a semantic version such as 1.1.11')
+        raise ValueError('Expected a semantic version such as 1.1.12')
     text = (ROOT/'atk_toolbar/__init__.py').read_text(encoding='utf-8')
     if '__version__ = "%s"' % version not in text:
         raise ValueError('Requested version does not match the toolkit')
