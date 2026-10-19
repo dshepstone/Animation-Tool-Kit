@@ -466,7 +466,7 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         header.setObjectName("lbl_title")
         layout.addWidget(header)
 
-        version_label = QtWidgets.QLabel("Toolbar version 1.1.10")
+        version_label = QtWidgets.QLabel("Toolbar version 1.1.11")
         version_label.setObjectName("lbl_subtitle")
         layout.addWidget(version_label)
         layout.addWidget(_hsep())
