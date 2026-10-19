@@ -35,8 +35,9 @@ jobs:
         run: python -c "import shutil; from PySide6 import QtCore; assert shutil.which('ffmpeg') and shutil.which('ffprobe')"
       - run: python -m unittest discover -s tests -p "test_playblast*.py" -v
       - run: python -m unittest discover -s tests -p "test_timeline_ticks.py" -v
+      - run: python -m unittest discover -s tests -p "test_toolbar_widget_refs.py" -v
       - run: python -m compileall -q "animation tool kit scripts/Playblast_Creator" atk_toolbar
-      - run: python package_atk_release.py --version 1.1.11
+      - run: python package_atk_release.py --version 1.1.12
   release:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -48,13 +49,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python package_atk_release.py --version 1.1.11
-      - name: Publish verified ATK 1.1.11 release once
+      - run: python package_atk_release.py --version 1.1.12
+      - name: Publish verified ATK 1.1.12 release once
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view ATK_1.1.11 >/dev/null 2>&1; then
+          if gh release view ATK_1.1.12 >/dev/null 2>&1; then
             echo 'Release already exists; preserving published assets.'
           else
-            gh release create ATK_1.1.11 dist/AnimationToolKit_v1_1_11.zip dist/AnimationToolKit_v1_1_11.zip.sha256 --target "$GITHUB_SHA" --title 'Animation Tool Kit v1.1.11' --notes-file Animation_Tool_Kit_v1.1.11_Release_Notes.md --latest
+            gh release create ATK_1.1.12 dist/AnimationToolKit_v1_1_12.zip dist/AnimationToolKit_v1_1_12.zip.sha256 --target "$GITHUB_SHA" --title 'Animation Tool Kit v1.1.12' --notes-file Animation_Tool_Kit_v1.1.12_Release_Notes.md --latest
           fi

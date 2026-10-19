@@ -8,7 +8,7 @@ Public API
     atk_toolbar.toggle()  # show when hidden, hide when shown (shelf button)
 """
 
-__version__ = "1.1.11"
+__version__ = "1.1.12"
 __author__  = "Animation Tool Kit"
 
 from .atk_toolbar import show, close, toggle, is_visible, _rebuild_ui  # noqa: F401

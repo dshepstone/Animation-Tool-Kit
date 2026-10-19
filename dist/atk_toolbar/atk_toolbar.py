@@ -55,7 +55,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.1.11"
+VERSION        = "1.1.12"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -1803,7 +1803,11 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
 # ---------------------------------------------------------------------------
 _toolbar_widget = None
 _dock_watcher   = None
-_dock_watcher_target = None   # widget the dock watcher is installed on
+# Never keep a wrapInstance() wrapper of a Maya-owned widget in a module
+# global.  shiboken cannot tell when Maya deletes such a widget (workspace
+# switches, deleteUI), so a stored wrapper silently dangles and calling into
+# it -- or wrapInstance handing the stale wrapper back for a new widget at the
+# same address -- locks up / crashes Maya.  Look the control up fresh instead.
 
 # Marker used to find our quitApplication scriptJob (survives module reloads).
 _QUIT_JOB_MARKER = "_atk._shutdown_cleanup()"
@@ -1819,21 +1823,18 @@ def _shutdown_cleanup():
     (access violation in shiboken6.abi3.dll).  Runs on quitApplication, while
     both Python and Qt are still fully alive.
     """
-    global _dock_watcher, _dock_watcher_target, _toolbar_widget, _release_anim
+    global _dock_watcher, _toolbar_widget, _release_anim
 
     watcher = _dock_watcher
-    target = _dock_watcher_target
     _dock_watcher = None
-    _dock_watcher_target = None
 
     if watcher is not None:
         try:
-            if target is not None and shiboken.isValid(target):
-                target.removeEventFilter(watcher)
-        except Exception:
-            pass
-        try:
             if shiboken.isValid(watcher):
+                watcher._timer.stop()
+                target = _live_control_widget()
+                if target is not None:
+                    target.removeEventFilter(watcher)
                 shiboken.delete(watcher)
         except Exception:
             pass
@@ -1849,6 +1850,22 @@ def _shutdown_cleanup():
     # The toolbar widget is owned by Maya's workspaceControl (C++ parent);
     # just drop our Python reference so nothing outlives the interpreter.
     _toolbar_widget = None
+
+
+def _live_control_widget():
+    """Fresh wrapper of the toolbar's workspaceControl widget, or None.
+
+    Resolved through Maya on every call so it is never a stale pointer.
+    """
+    try:
+        if not cmds.workspaceControl(WORKSPACE_NAME, exists=True):
+            return None
+        ptr = omui.MQtUtil.findControl(WORKSPACE_NAME)
+        if ptr is None:
+            return None
+        return wrapInstance(int(ptr), QtWidgets.QWidget)
+    except Exception:
+        return None
 
 
 def _register_quit_cleanup():
@@ -1889,17 +1906,16 @@ def _rebuild_ui():
 
     # Watch the wrapper for dock-to-dock moves (no floating transition, so
     # floatingChangeCommand stays silent) and re-run the orientation fix.
-    global _dock_watcher, _dock_watcher_target
+    # Qt drops the filter by itself when Maya deletes the old control, so
+    # only the current (freshly looked-up) widget is ever touched here.
+    global _dock_watcher
     if _dock_watcher is None or not shiboken.isValid(_dock_watcher):
         _dock_watcher = _DockWatcher()
     try:
-        if _dock_watcher_target is not None and shiboken.isValid(_dock_watcher_target):
-            _dock_watcher_target.removeEventFilter(_dock_watcher)
         parent_widget.removeEventFilter(_dock_watcher)
     except Exception:
         pass
     parent_widget.installEventFilter(_dock_watcher)
-    _dock_watcher_target = parent_widget
     _register_quit_cleanup()
 
     # Remove any existing ATKToolbarWidget immediately (setParent(None) detaches
