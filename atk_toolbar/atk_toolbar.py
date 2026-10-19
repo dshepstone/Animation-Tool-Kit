@@ -40,9 +40,11 @@ from maya import OpenMayaUI as omui
 try:
     from PySide6 import QtCore, QtGui, QtWidgets
     from shiboken6 import wrapInstance
+    import shiboken6 as shiboken
 except ImportError:
     from PySide2 import QtCore, QtGui, QtWidgets
     from shiboken2 import wrapInstance
+    import shiboken2 as shiboken
 
 from . import atk_loader
 from . import atk_icons
@@ -53,7 +55,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.1.10"
+VERSION        = "1.1.11"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -1801,6 +1803,69 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
 # ---------------------------------------------------------------------------
 _toolbar_widget = None
 _dock_watcher   = None
+_dock_watcher_target = None   # widget the dock watcher is installed on
+
+# Marker used to find our quitApplication scriptJob (survives module reloads).
+_QUIT_JOB_MARKER = "_atk._shutdown_cleanup()"
+
+
+def _shutdown_cleanup():
+    """Detach and destroy Python-owned Qt objects before Maya quits.
+
+    _DockWatcher is an unparented, Python-owned QObject installed as an event
+    filter on Maya's workspaceControl widget.  If it is still alive when the
+    Python interpreter finalizes, shiboken tears it down after Qt/Maya have
+    already started destroying their widgets, which crashes Maya on exit
+    (access violation in shiboken6.abi3.dll).  Runs on quitApplication, while
+    both Python and Qt are still fully alive.
+    """
+    global _dock_watcher, _dock_watcher_target, _toolbar_widget, _release_anim
+
+    watcher = _dock_watcher
+    target = _dock_watcher_target
+    _dock_watcher = None
+    _dock_watcher_target = None
+
+    if watcher is not None:
+        try:
+            if target is not None and shiboken.isValid(target):
+                target.removeEventFilter(watcher)
+        except Exception:
+            pass
+        try:
+            if shiboken.isValid(watcher):
+                shiboken.delete(watcher)
+        except Exception:
+            pass
+
+    if _release_anim is not None:
+        try:
+            if shiboken.isValid(_release_anim):
+                _release_anim.stop()
+        except Exception:
+            pass
+        _release_anim = None
+
+    # The toolbar widget is owned by Maya's workspaceControl (C++ parent);
+    # just drop our Python reference so nothing outlives the interpreter.
+    _toolbar_widget = None
+
+
+def _register_quit_cleanup():
+    """Install a single quitApplication scriptJob that runs _shutdown_cleanup."""
+    try:
+        for job in cmds.scriptJob(listJobs=True) or []:
+            if _QUIT_JOB_MARKER in job:
+                return
+        cmds.scriptJob(
+            event=[
+                "quitApplication",
+                "import atk_toolbar.atk_toolbar as _atk; " + _QUIT_JOB_MARKER,
+            ],
+            protected=True,
+        )
+    except Exception:
+        pass
 
 
 def _rebuild_ui():
@@ -1824,14 +1889,18 @@ def _rebuild_ui():
 
     # Watch the wrapper for dock-to-dock moves (no floating transition, so
     # floatingChangeCommand stays silent) and re-run the orientation fix.
-    global _dock_watcher
-    if _dock_watcher is None:
+    global _dock_watcher, _dock_watcher_target
+    if _dock_watcher is None or not shiboken.isValid(_dock_watcher):
         _dock_watcher = _DockWatcher()
     try:
+        if _dock_watcher_target is not None and shiboken.isValid(_dock_watcher_target):
+            _dock_watcher_target.removeEventFilter(_dock_watcher)
         parent_widget.removeEventFilter(_dock_watcher)
     except Exception:
         pass
     parent_widget.installEventFilter(_dock_watcher)
+    _dock_watcher_target = parent_widget
+    _register_quit_cleanup()
 
     # Remove any existing ATKToolbarWidget immediately (setParent(None) detaches
     # from the layout right now; deleteLater() cleans up memory later).

@@ -2,12 +2,11 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.10** adds **Timeline Ticks**: a compact yellow/red/blue palette
-for classifying existing keys as Key, Extreme, Breakdown or Inbetween. Marks
-persist with the scene and follow supported key edits, including ATK Add/Remove
-Frames and Undo/Redo. Clear All Marks works across the scene; Hide/Show keeps
-tracking active. This release retains the updated ATK website logo and Playblast
-Creator reliability fixes. See [release notes](Animation_Tool_Kit_v1.1.10_Release_Notes.md).
+Version **1.1.11** fixes a crash when closing Maya while the ATK toolbar is
+loaded (an access violation in `shiboken6.abi3.dll` during shutdown). It keeps
+everything from 1.1.10, including **Timeline Ticks**: a compact yellow/red/blue
+palette for classifying existing keys as Key, Extreme, Breakdown or Inbetween.
+See [release notes](Animation_Tool_Kit_v1.1.11_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.
