@@ -80,11 +80,38 @@ def main():
                 check.setChecked(axis=='X')
             window.panel.start.setValue(1)
             window.panel.end.setValue(24)
+            # A key outside the range must survive; one inside is replaced.
+            cmds.setKeyframe(control,attribute='rx',time=30,value=7)
             window.panel.make_preview(True)
-            window.panel.optimize_bake.setChecked(True)
+            assert cmds.ls('Overlap_preview*') and not cmds.ls('Kinequill*')
+            assert window.panel.optimize_bake.isChecked()
             window.panel.bake()
-            layer=window.panel.bake_layers.currentData()
-            assert cmds.objExists(layer)
+            # The bake is a plain time curve on the control: no layer, blend
+            # node, preview or endpoint is left connected to or near the rig.
+            assert not cmds.ls(type='animLayer')
+            sources=cmds.listConnections(control+'.rx',source=True,destination=False) or []
+            assert len(sources)==1 and cmds.nodeType(sources[0])=='animCurveTA',sources
+            assert (cmds.listConnections(sources[0],source=True,destination=False) or [])==[]
+            assert not cmds.ls('Overlap_*') and not cmds.ls('Kinequill*')
+            times=cmds.keyframe(control,attribute='rx',query=True,timeChange=True)
+            assert 30 in times and min(times)==1 and max(t for t in times if t<30)==24,times
+            stats=window.panel.session.last_bake_stats
+            assert stats['after']<stats['before'],stats
+            assert window.panel.bake_layers.currentData() is None
+            cmds.undo()
+            assert cmds.keyframe(control,attribute='rx',query=True,timeChange=True)==[30.0]
+            # Layers baked by 0.4.0 are refused as input and can be deleted.
+            layer=cmds.animLayer('Kinequill_overlap#',override=True)
+            cmds.addAttr(layer,longName='overlapBake',attributeType='bool',defaultValue=True)
+            cmds.animLayer(layer,edit=True,attribute=control+'.rx')
+            window.panel.refresh_bake_layers()
+            assert window.panel.bake_layers.currentData()==layer
+            window.panel.make_preview(True)
+            try:
+                window.panel.bake()
+                raise AssertionError('Layered channel must be refused')
+            except ValueError as error:
+                assert 'animation layers' in str(error)
             window.panel.delete_selected_bake()
             assert not cmds.objExists(layer) and cmds.objExists(control)
             assert not atk_icons._generate_icon('overlap','timing',32).isNull()
@@ -103,10 +130,31 @@ def main():
                 atk_loader.launch_tool('overlap')
             assert fresh_ui._window is not window
             assert fresh_ui._window.objectName()=='ATKOverlapWindow' and fresh_ui._window.isVisible()
-            fresh_ui._window.close()
+            # Settings > Reload Scripts: open tool windows close and are
+            # queued to reopen, and the atk_toolbar package itself is purged
+            # so the rebuilt strip runs freshly imported toolbar code.
+            from atk_toolbar import atk_settings
+            open_window=fresh_ui._window
+            dialog=atk_settings.ATKSettingsDialog()
+            queued=[]
+            with patch.object(QtWidgets.QMessageBox,'information'), patch.object(
+                    QtCore.QTimer,'singleShot',side_effect=lambda ms,fn:queued.append(fn)):
+                dialog._reload_scripts()
+            assert not open_window.isVisible()
+            assert 'atk_toolbar' not in sys.modules and 'atk_overlap' not in sys.modules
+            assert len(queued)==1
+            reopened=[]
+            import atk_toolbar.atk_toolbar as fresh_toolbar
+            assert fresh_toolbar is not atk_toolbar and fresh_toolbar.atk_loader is not atk_loader
+            with patch.object(fresh_toolbar,'show') as fresh_show, patch.object(
+                    fresh_toolbar.atk_loader,'launch_tool',side_effect=reopened.append):
+                queued[0]()
+            assert fresh_show.called and reopened==['overlap'],reopened
+            atk_loader,atk_toolbar=fresh_toolbar.atk_loader,fresh_toolbar
+            open_window.deleteLater()
             toolbar.close()
             cmds.optionVar(remove='atk_hidden_overlap') if cmds.optionVar(exists='atk_hidden_overlap') else None
-    print('PASS: MEL install, package/assets/licence, registry, visibility, launcher, preview, bake/delete, icon, button, and reload')
+    print('PASS: MEL install, package/assets/licence, registry, visibility, launcher, preview, direct bake/undo, legacy layer delete, icon, button, reload, and full toolbar reload with window reopen')
 
 
 try:

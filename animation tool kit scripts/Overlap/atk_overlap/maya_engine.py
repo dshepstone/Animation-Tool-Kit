@@ -1,7 +1,7 @@
-"""Maya adapter: source capture -> deterministic solve -> preview or layer.
+"""Maya adapter: source capture -> deterministic solve -> preview or bake.
 
 All Maya operations run on the main thread. A Session owns only its helper
-group; baked layers are scene deliverables and survive session cleanup.
+group; baked keys live on the controls and survive session cleanup.
 """
 from contextlib import contextmanager
 import math
@@ -11,7 +11,7 @@ from maya.api import OpenMaya as om
 
 from .settings import Settings
 from .solver import Spring
-from .reduction import reduce_keys
+from .reduction import anchor_indices, validate as validate_samples
 
 
 class Cancelled(RuntimeError):
@@ -66,6 +66,41 @@ def world_pivot(node):
 
 def lerp_vector(a, b, weight):
     return a * (1 - weight) + b * weight
+
+
+def set_key(node, attr, frame, value):
+    cmds.setKeyframe(node, attribute=attr, time=frame, value=value,
+                     inTangentType="auto", outTangentType="auto")
+
+
+def fit_curve(node, attr, samples, tolerance):
+    """Key the ends and swing peaks with auto tangents, then key the worst
+    missed frame in each gap until every sampled frame is within tolerance.
+
+    Measured on Maya's own evaluated curve, so tangent changes caused by
+    neighbouring keys and by kept source keys outside the range count.
+    Returns the number of keys written.
+    """
+    keyed = sorted(anchor_indices(samples, tolerance)) if len(samples) > 2 else list(range(len(samples)))
+    for i in keyed:
+        set_key(node, attr, *samples[i])
+    while True:
+        added = []
+        for left, right in zip(keyed, keyed[1:]):
+            worst, furthest = tolerance, None
+            for i in range(left + 1, right):
+                time, value = samples[i]
+                error = abs(cmds.keyframe(node, attribute=attr, query=True, eval=True,
+                                          time=(time, time))[0] - value)
+                if error > worst:
+                    worst, furthest = error, i
+            if furthest is not None:
+                added.append(furthest)
+        if not added:
+            return len(keyed)
+        for i in added:
+            set_key(node, attr, *samples[i])
+        keyed = sorted(keyed + added)
 
 
 @contextmanager
@@ -172,10 +207,10 @@ class Session:
 
     def create_tip(self):
         """Editable endpoint on the last control. Sample consumes it as an offset."""
-        with scene_state("Kinequill endpoint"):
+        with scene_state("Overlap endpoint"):
             if self.tip and cmds.objExists(self.tip):
                 cmds.delete(self.tip)
-            self.tip = cmds.spaceLocator(name="Kinequill_endpoint#")[0]
+            self.tip = cmds.spaceLocator(name="Overlap_endpoint#")[0]
             cmds.parent(self.tip, self.controls[-1], relative=True)
             vector = [ui_distance(v) for v in self.default_tip_offset(len(self.controls) - 1)]
             cmds.setAttr(self.tip + ".translate", *vector)
@@ -193,7 +228,7 @@ class Session:
         samples = []
         offsets = []
         components = []
-        with scene_state("Kinequill sample"):
+        with scene_state("Overlap sample"):
             for fi, frame in enumerate(frames):
                 if progress:
                     progress(fi / len(frames), "Sampling frame {}".format(frame))
@@ -359,14 +394,14 @@ class Session:
 
     def preview(self, progress=None):
         self._ready()
-        with scene_state("Kinequill preview"):
+        with scene_state("Overlap preview"):
             self.clear_preview()
-            group = cmds.group(empty=True, name="Kinequill_preview#")
+            group = cmds.group(empty=True, name="Overlap_preview#")
             self.preview_group = group
             try:
                 proxies = []
                 for node in self.controls:
-                    proxy = cmds.spaceLocator(name=node.split("|")[-1].replace(":", "_") + "_KQ#")[0]
+                    proxy = cmds.spaceLocator(name=node.split("|")[-1].replace(":", "_") + "_overlap#")[0]
                     cmds.parent(proxy, group)
                     cmds.setAttr(proxy + ".overrideEnabled", True)
                     cmds.setAttr(proxy + ".overrideColor", 18)
@@ -389,59 +424,73 @@ class Session:
                 raise
         return group
 
+    def bake_plugs(self):
+        """Output plugs, checked before any key is written.
+
+        The bake writes straight onto each control's own time curve, so the
+        result is an ordinary keyed control with nothing from Overlap wired in.
+        Layered channels are refused: writing the combined sample into one
+        layer would double-count the others.
+        """
+        prefix = "r" if self.settings.mode == "rotation" else "t"
+        plugs = []
+        for node in self.controls:
+            for axis in self.settings.channels:
+                plug = node + "." + prefix + axis.lower()
+                for source in cmds.listConnections(plug, source=True, destination=False) or []:
+                    kind = cmds.nodeType(source)
+                    if kind.startswith("animBlendNode"):
+                        raise ValueError("{} is driven by animation layers. Delete old Overlap bake "
+                                         "layers (Legacy layer list) or merge your layers, then refresh "
+                                         "source.".format(plug.split("|")[-1]))
+                    if kind not in ("animCurveTA", "animCurveTL", "animCurveTU"):
+                        raise ValueError("Bake needs a time-keyed or unkeyed channel: " + plug)
+                plugs.append(plug)
+        return plugs
+
     def bake(self, progress=None):
+        """Key the solved motion onto the controls. Source keys inside the
+        range are replaced; keys outside it are kept. One Undo reverts it."""
         self._ready()
         self.validate()
-        layer = None
-        prefix = "r" if self.settings.mode == "rotation" else "t"
-        attrs = [prefix + a.lower() for a in self.settings.channels]
+        plugs = self.bake_plugs()
         self.last_bake_stats = None
-        before = len(self.results) * len(self.controls) * len(attrs)
+        component = 2 if self.settings.mode == "rotation" else 1
+        # Rotation tolerance is explicitly degrees, independent of
+        # Maya's current angular display unit.
+        tolerance = self.settings.key_tolerance
+        if self.settings.mode == "rotation":
+            tolerance = om.MAngle(tolerance, om.MAngle.kDegrees).asUnits(om.MAngle.uiUnit())
+        planned = []
+        for plug in plugs:
+            index = self.controls.index(plug.rsplit(".", 1)[0])
+            axis = "xyz".index(plug[-1])
+            planned.append((plug, validate_samples(
+                [(frame, row[index][component][axis]) for frame, row in self.results], tolerance)))
+        if progress:
+            progress(1.0, "Writing keys")
         after = 0
-        with scene_state("Kinequill bake"):
-            try:
-                layer = cmds.animLayer("Kinequill_overlap#", override=True, passthrough=True)
-                cmds.addAttr(layer, longName="overlapBake", attributeType="bool", defaultValue=True)
-                for node in self.controls:
-                    for attr in attrs:
-                        cmds.animLayer(layer, edit=True, attribute=node + "." + attr)
-                for index, node in enumerate(self.controls):
-                    for ai, attr in enumerate(attrs):
-                        if progress:
-                            progress((index * len(attrs) + ai) / (len(self.controls) * len(attrs)),
-                                     "Reducing / baking {}.{}".format(node.split("|")[-1], attr))
-                        axis = "xyz".index(attr[-1])
-                        component = 2 if self.settings.mode == "rotation" else 1
-                        samples = [(frame, row[index][component][axis]) for frame, row in self.results]
-                        # Rotation tolerance is explicitly degrees, independent of
-                        # Maya's current angular display unit.
-                        tolerance = self.settings.key_tolerance
-                        if self.settings.mode == "rotation":
-                            tolerance = om.MAngle(tolerance, om.MAngle.kDegrees).asUnits(om.MAngle.uiUnit())
-                        keys = reduce_keys(samples, tolerance) if self.settings.optimize_bake else samples
-                        after += len(keys)
-                        for ki, (frame, value) in enumerate(keys):
-                            if progress and ki % 100 == 0:
-                                progress((index * len(attrs) + ai) / (len(self.controls) * len(attrs)),
-                                         "Writing {}.{}".format(node.split("|")[-1], attr))
-                            cmds.setKeyframe(node, attribute=attr, time=frame, value=value,
-                                             animLayer=layer, noResolve=True,
-                                             inTangentType="linear", outTangentType="linear")
-                # One-frame boundary handles; source wins outside the chosen interval.
-                for frame, value in ((self.start - 1, 0), (self.start, 1),
-                                     (self.end, 1), (self.end + 1, 0)):
-                    cmds.setKeyframe(layer, attribute="weight", time=frame, value=value,
-                                     inTangentType="linear", outTangentType="linear")
-            except BaseException:
-                if layer and cmds.objExists(layer):
-                    cmds.delete(layer)
-                raise
-        self.last_bake_stats = {"before": before, "after": after, "layer": layer}
-        return layer
+        # No progress callbacks below: cancelling must never leave a partial bake.
+        with scene_state("Overlap bake"):
+            for plug, samples in planned:
+                node, attr = plug.rsplit(".", 1)
+                if cmds.listConnections(plug, source=True, destination=False):
+                    cmds.cutKey(node, attribute=attr, time=(self.start, self.end), clear=True)
+                if self.settings.optimize_bake:
+                    after += fit_curve(node, attr, samples, tolerance)
+                else:
+                    for frame, value in samples:
+                        set_key(node, attr, frame, value)
+                    after += len(samples)
+            # The bake is final: drop this session's previews and endpoint in
+            # the same Undo, so nothing from Overlap stays in the scene.
+            self.cleanup()
+        self.last_bake_stats = {"before": len(self.results) * len(plugs), "after": after}
+        return plugs
 
     def cleanup(self):
         """Remove only this session's endpoint and previews; retain baked output."""
-        with scene_state("Kinequill cleanup"):
+        with scene_state("Overlap cleanup"):
             self.clear_preview()
             if self.tip and cmds.objExists(self.tip):
                 cmds.delete(self.tip)

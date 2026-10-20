@@ -119,7 +119,8 @@ class Panel(QtWidgets.QWidget):
         self.preview_button = QtWidgets.QPushButton("2. Update preview from cached source")
         self.preview_button.clicked.connect(lambda: self.run(lambda: self.make_preview(False)))
         layout.addWidget(self.preview_button)
-        self.optimize_bake = QtWidgets.QCheckBox("Optimize bake (reduce unnecessary keys)")
+        self.optimize_bake = QtWidgets.QCheckBox("Optimize bake (only key where the motion needs it)")
+        self.optimize_bake.setChecked(True)
         layout.addWidget(self.optimize_bake)
         bake_form = QtWidgets.QFormLayout()
         layout.addLayout(bake_form)
@@ -128,19 +129,19 @@ class Panel(QtWidgets.QWidget):
         self.key_tolerance.setDecimals(4)
         self.key_tolerance.setSingleStep(.05)
         self.key_tolerance.setValue(defaults.key_tolerance)
-        self.key_tolerance.setEnabled(False)
         self.key_tolerance_label = QtWidgets.QLabel("Bake tolerance (degrees)")
         bake_form.addRow(self.key_tolerance_label, self.key_tolerance)
         self.optimize_bake.toggled.connect(self.key_tolerance.setEnabled)
         self.key_tolerance.setToolTip("Maximum error per output channel. Lower = more keys. "
-                                     "Endpoints and swing peaks are retained. Linear tangents preserve the error bound.")
-        self.bake_button = QtWidgets.QPushButton("3. Bake to new animation layer")
+                                     "Endpoints and swing peaks are keyed with auto tangents; extra keys go only where the curve misses a frame by more than this.")
+        self.bake_button = QtWidgets.QPushButton("3. Bake to controls")
         self.bake_button.setStyleSheet("background: #285c51; padding: 8px; font-weight: bold;")
         self.bake_button.clicked.connect(lambda: self.run(self.bake))
         layout.addWidget(self.bake_button)
+        # Older versions baked to animation layers; this row removes them.
         bake_row = QtWidgets.QHBoxLayout()
         layout.addLayout(bake_row)
-        bake_row.addWidget(QtWidgets.QLabel('Bake layer'))
+        bake_row.addWidget(QtWidgets.QLabel('Legacy layer'))
         self.bake_layers = BakeLayerCombo(self.refresh_bake_layers)
         self.bake_layers.setMinimumContentsLength(12)
         self.bake_layers.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -248,11 +249,11 @@ class Panel(QtWidgets.QWidget):
         if not session.samples or (session.start, session.end) != (self.start.value(), self.end.value()):
             raise ValueError("Refresh source and preview for this range first")
         with self.progress() as report:
-            layer = session.bake(report)
+            session.bake(report)
         stats = session.last_bake_stats
-        self.refresh_bake_layers(layer)
-        self.status.setText("Baked to {}. Keys: {} → {}. Mute the layer to compare.".format(
-            layer, stats["before"], stats["after"]))
+        self.refresh_bake_layers()
+        self.status.setText("Baked onto the controls. Keys: {} → {}. Undo reverts the bake.".format(
+            stats["before"], stats["after"]))
         # Reusing a baked source cache can unintentionally overwrite later edits.
         session.samples, session.results = [], []
 
@@ -262,7 +263,7 @@ class Panel(QtWidgets.QWidget):
         for layer in list_bakes():
             self.bake_layers.addItem(layer, layer)
         if self.bake_layers.count() == 0:
-            self.bake_layers.addItem('No bake layers', None)
+            self.bake_layers.addItem('None in scene', None)
         else:
             index = self.bake_layers.findData(selected)
             if index >= 0:
@@ -286,7 +287,7 @@ class Panel(QtWidgets.QWidget):
         if self.session:
             self.session.cleanup()
             self.session = None
-        self.status.setText("Session helpers cleared. Baked layers retained.")
+        self.status.setText("Session helpers cleared. Baked keys retained.")
 
     def save_preset(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save Overlap preset", "", "JSON (*.json)")

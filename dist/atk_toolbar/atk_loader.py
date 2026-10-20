@@ -135,7 +135,7 @@ TOOL_REGISTRY = [
         "icon_file": "overlap_32.png",
         "icon_key":  "overlap",
         "group":     "timing",
-        "version":   "0.4.0",
+        "version":   "0.5.0",
     },
     {
         "id":        "xform_copy_paste",
@@ -532,6 +532,34 @@ def is_tool_installed(tool_id):
 # Script reloading
 # ---------------------------------------------------------------------------
 
+def tool_module_roots():
+    """Map each top-level module a tool owns to that tool's id.
+
+    Helper modules (e.g. playblast_creator_presets, savePlus_core, Studio
+    Library's mutils/studioqt) are included: Reload Scripts must purge them
+    too, otherwise the fresh tool module re-imports the stale cached helpers.
+    """
+    roots = {}
+    for tool in TOOL_REGISTRY:
+        for name in [tool["module"]] + list(tool.get("extra_modules", ())):
+            roots.setdefault(name.split(".")[0], tool["id"])
+    return roots
+
+
+def purge_toolbar_modules():
+    """Drop the atk_toolbar package itself from ``sys.modules``.
+
+    The caller must then import ``atk_toolbar.atk_toolbar`` afresh and call
+    its ``show()`` so the toolbar, registry, icons and settings dialog run
+    the newly installed code (this is what the installer does as well).
+    """
+    root = __name__.split(".")[0]
+    for name in list(sys.modules):
+        if name == root or name.startswith(root + "."):
+            del sys.modules[name]
+    importlib.invalidate_caches()
+
+
 def reload_tool_modules():
     """Purge every tool module from ``sys.modules`` so the next launch
     re-imports the latest installed scripts, and reload tool Maya plug-ins —
@@ -548,17 +576,8 @@ def reload_tool_modules():
     setup_paths()
     importlib.invalidate_caches()
 
-    roots = set()
-    for tool in TOOL_REGISTRY:
-        roots.add(tool["module"].split(".")[0])
-        # Helper modules (e.g. playblast_creator_presets, savePlus_core,
-        # Studio Library's mutils/studioqt) must be purged too, otherwise
-        # the fresh tool module re-imports the stale cached helpers.
-        for extra in tool.get("extra_modules", ()):
-            roots.add(extra.split(".")[0])
-
     purged = set()
-    for root in roots:
+    for root in tool_module_roots():
         module = sys.modules.get(root)
         shutdown = getattr(module, "shutdown", None)
         if callable(shutdown):
