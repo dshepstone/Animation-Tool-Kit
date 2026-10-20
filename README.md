@@ -4,7 +4,8 @@ Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and la
 
 Version **1.1.14** fixes **Overlap**'s bake. It now keys the controls directly,
 with no animation layer or other Overlap node left connected. Its optimized bake
-keys only where the motion needs it. It keeps **Walk Off Node** from 1.1.13, the
+keys only where the motion needs it. **Settings → Reload Scripts** now reloads
+the toolbar itself and reopens open tools on the new code. It keeps **Walk Off Node** from 1.1.13, the
 1.1.12 workspace-switch crash fix, the 1.1.11 exit-crash fix and **Timeline
 Ticks** from 1.1.10.
 See [release notes](Animation_Tool_Kit_v1.1.14_Release_Notes.md).

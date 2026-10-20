@@ -266,10 +266,9 @@ class ATKSettingsDialog(QtWidgets.QDialog):
 
         btn_reload = QtWidgets.QPushButton("Reload Scripts")
         btn_reload.setToolTip(
-            "Re-import the latest installed tool scripts without restarting Maya.\n"
-            "Use this after installing or updating a tool.\n"
-            "Tool windows that are already open keep running on the old code\n"
-            "until they are relaunched from the toolbar."
+            "Re-import the latest installed toolbar and tool scripts without\n"
+            "restarting Maya. Use this after installing or updating ATK.\n"
+            "Open tool windows are closed and reopened on the new code."
         )
         btn_reload.clicked.connect(self._reload_scripts)
 
@@ -635,39 +634,39 @@ class ATKSettingsDialog(QtWidgets.QDialog):
     # ── Script reloading ─────────────────────────────────────────────────────
 
     def _reload_scripts(self):
-        """Re-import the latest installed tool scripts without restarting Maya.
+        """Re-import the latest installed scripts without restarting Maya.
 
-        Purges every registered tool module so the next launch picks up the
-        freshly installed files, refreshes the Tools tab installed states,
-        and rebuilds the toolbar so inline widgets use the new code too.
+        Closes open tool windows, purges every registered tool module and the
+        atk_toolbar package itself, then rebuilds the toolbar from the fresh
+        code and reopens the tools that were open, so everything on the strip
+        runs the newly installed scripts.
         """
         try:
+            reopen = close_tool_windows()
             purged, plugin_notes = atk_loader.reload_tool_modules()
         except Exception as exc:
             cmds.warning("ATK Toolbar: script reload failed: {}".format(exc))
             return
 
-        self._refresh_installed_states()
-
-        # Rebuild the toolbar so inline widgets (e.g. the Inbetweener
-        # slider) are recreated from the reloaded modules.
-        try:
-            self._request_rebuild()
-        except Exception as exc:
-            cmds.warning("ATK Toolbar: rebuild after reload failed: {}".format(exc))
-
-        if purged:
-            summary = "Reloaded {} tool module{}. Relaunch open tools to use the new scripts.".format(
-                len(purged), "" if len(purged) == 1 else "s")
-        else:
-            summary = "Scripts refreshed. Tools will import the latest installed files on next launch."
+        summary = "Reloaded the toolbar and {} tool module{}.".format(
+            len(purged), "" if len(purged) == 1 else "s")
+        if reopen:
+            summary += " Reopened: {}.".format(", ".join(
+                t["label"] for t in atk_loader.TOOL_REGISTRY if t["id"] in reopen))
         if plugin_notes:
             for note in plugin_notes:
                 cmds.warning("ATK Toolbar: {}".format(note))
             summary += "\n\n" + "\n".join(plugin_notes)
-        cmds.inViewMessage(amg="<hl>ATK Toolbar</hl>: {}".format(summary),
-                           pos="midCenter", fade=True)
         QtWidgets.QMessageBox.information(self, "Reload Scripts", summary)
+
+        # This dialog belongs to the old package; the next gear click opens
+        # a fresh one. Rebuild after this handler returns, as on re-dock.
+        global _dialog_instance
+        _dialog_instance = None
+        self.close()
+        self.deleteLater()
+        atk_loader.purge_toolbar_modules()
+        QtCore.QTimer.singleShot(0, lambda: _show_fresh_toolbar(reopen, summary))
 
     def _refresh_installed_states(self):
         """Update the Tools tab 'not installed' labels and checkbox states."""
@@ -683,6 +682,77 @@ class ATKSettingsDialog(QtWidgets.QDialog):
 # Singleton show helper
 # ---------------------------------------------------------------------------
 _dialog_instance = None
+
+
+def close_tool_windows():
+    """Close every open window built from a registered tool's modules.
+
+    Returns the ids of the tools that had a window open, so Reload Scripts
+    can reopen them on the reloaded code. Windows embedded in the toolbar
+    (inline sliders) are skipped; the toolbar rebuild recreates those.
+    Dockable windows are closed by deleting their Maya workspaceControl.
+    """
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return []
+    roots = atk_loader.tool_module_roots()
+
+    def owner(widget):
+        return roots.get(type(widget).__module__.split(".")[0])
+
+    outermost = []
+    for widget in app.allWidgets():
+        try:
+            if owner(widget) is None or not widget.isVisible():
+                continue
+            parent, inside = widget.parentWidget(), False
+            while parent is not None:
+                if owner(parent) or type(parent).__module__.split(".")[0] == __name__.split(".")[0]:
+                    inside = True        # nested in a tool window, or in the toolbar
+                    break
+                parent = parent.parentWidget()
+            if not inside:
+                outermost.append(widget)
+        except RuntimeError:             # C++ object already deleted
+            continue
+
+    reopen = []
+    for widget in outermost:
+        try:
+            tool_id = owner(widget)
+            control, parent = None, widget
+            while parent is not None:
+                name = parent.objectName()
+                if name and cmds.workspaceControl(name, exists=True):
+                    control = name
+                    break
+                parent = parent.parentWidget()
+            if control:
+                cmds.deleteUI(control)
+            else:
+                # Plain Qt close: Maya's dockable mixin overrides close() to
+                # act on a workspaceControl, which a floating window lacks.
+                QtWidgets.QWidget.close(widget.window())
+            if tool_id not in reopen:
+                reopen.append(tool_id)
+        except Exception as exc:
+            cmds.warning("ATK Toolbar: could not close a tool window: {}".format(exc))
+    return reopen
+
+
+def _show_fresh_toolbar(reopen, summary):
+    """Import the purged atk_toolbar package anew, rebuild, reopen tools."""
+    import importlib
+    try:
+        toolbar = importlib.import_module("atk_toolbar.atk_toolbar")
+        toolbar.show()
+        for tool_id in reopen:
+            toolbar.atk_loader.launch_tool(tool_id)
+    except Exception as exc:
+        cmds.warning("ATK Toolbar: rebuild after reload failed: {}".format(exc))
+        return
+    cmds.inViewMessage(amg="<hl>ATK Toolbar</hl>: {}".format(summary.split("\n")[0]),
+                       pos="midCenter", fade=True)
 
 
 def show(rebuild_callback=None):

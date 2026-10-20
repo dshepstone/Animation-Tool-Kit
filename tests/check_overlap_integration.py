@@ -130,10 +130,31 @@ def main():
                 atk_loader.launch_tool('overlap')
             assert fresh_ui._window is not window
             assert fresh_ui._window.objectName()=='ATKOverlapWindow' and fresh_ui._window.isVisible()
-            fresh_ui._window.close()
+            # Settings > Reload Scripts: open tool windows close and are
+            # queued to reopen, and the atk_toolbar package itself is purged
+            # so the rebuilt strip runs freshly imported toolbar code.
+            from atk_toolbar import atk_settings
+            open_window=fresh_ui._window
+            dialog=atk_settings.ATKSettingsDialog()
+            queued=[]
+            with patch.object(QtWidgets.QMessageBox,'information'), patch.object(
+                    QtCore.QTimer,'singleShot',side_effect=lambda ms,fn:queued.append(fn)):
+                dialog._reload_scripts()
+            assert not open_window.isVisible()
+            assert 'atk_toolbar' not in sys.modules and 'atk_overlap' not in sys.modules
+            assert len(queued)==1
+            reopened=[]
+            import atk_toolbar.atk_toolbar as fresh_toolbar
+            assert fresh_toolbar is not atk_toolbar and fresh_toolbar.atk_loader is not atk_loader
+            with patch.object(fresh_toolbar,'show') as fresh_show, patch.object(
+                    fresh_toolbar.atk_loader,'launch_tool',side_effect=reopened.append):
+                queued[0]()
+            assert fresh_show.called and reopened==['overlap'],reopened
+            atk_loader,atk_toolbar=fresh_toolbar.atk_loader,fresh_toolbar
+            open_window.deleteLater()
             toolbar.close()
             cmds.optionVar(remove='atk_hidden_overlap') if cmds.optionVar(exists='atk_hidden_overlap') else None
-    print('PASS: MEL install, package/assets/licence, registry, visibility, launcher, preview, direct bake/undo, legacy layer delete, icon, button, and reload')
+    print('PASS: MEL install, package/assets/licence, registry, visibility, launcher, preview, direct bake/undo, legacy layer delete, icon, button, reload, and full toolbar reload with window reopen')
 
 
 try:
