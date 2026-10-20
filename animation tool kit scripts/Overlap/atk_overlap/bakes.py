@@ -16,3 +16,7 @@ def delete_bake(layer):
         raise ValueError('Choose an Overlap bake layer to delete')
     with scene_state('Overlap delete bake'):
         cmds.delete(layer)
+        # Maya keeps an empty BaseAnimation root; drop it with the last layer.
+        root = cmds.animLayer(query=True, root=True)
+        if root and not cmds.animLayer(root, query=True, children=True):
+            cmds.delete(root)

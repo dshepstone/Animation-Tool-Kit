@@ -1,6 +1,6 @@
 """ATK's isolated Overlap package, with a UI-independent simulation API."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 
 def show():

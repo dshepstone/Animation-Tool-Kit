@@ -11,7 +11,7 @@ th, td { border: 1px solid #52615f; padding: 8px; text-align: left; }
 th { background: #354c46; } .note { background: #34403d; padding: 12px; }
 .muted { color: #b3bfb9; } code { color: #f1cd8a; }
 </style></head><body>
-<h1>Overlap</h1><p class="muted">User guide · Version 0.4.0 · Offline reference</p>
+<h1>Overlap</h1><p class="muted">User guide · Version 0.5.0 · Offline reference</p>
 <p>Add lag, swing, and settling to animated controls, then bake an editable result.</p>
 <p><a href="#start">Quick start</a> · <a href="#spring">Settings</a> ·
 <a href="#examples">Suggested numbers</a> · <a href="#about">About &amp; licence</a></p>
@@ -23,18 +23,18 @@ th { background: #354c46; } .note { background: #34403d; padding: 12px; }
 <li>Use <b>Auto: continue chain</b> for a chain endpoint. Create a locator if you want to adjust the final segment.</li>
 <li>Click <b>Refresh source + preview</b>. Locators show the simulation; the original rig is driven after baking.</li>
 <li>Tune the spring, then click <b>Update preview from cached source</b>. Refresh source after changing source keys or endpoints.</li>
-<li>Optionally enable <b>Optimize bake</b>, then click <b>Bake to new animation layer</b>.</li>
-<li>Mute the new layer to compare. To replace it, choose it in <b>Bake layer</b>, click <b>Delete bake</b>, refresh source, and bake again.</li></ol>
-<p class="note">For a replacement pass, mute or delete earlier output layers before sampling source.
-Leaving a layer active intentionally includes its animation in the next simulation.</p>
+<li>Keep <b>Optimize bake</b> on for a light curve, then click <b>Bake to controls</b>.</li>
+<li>The controls now carry ordinary keys with nothing from Overlap connected. To redo it, Undo the bake, refresh source, and bake again.</li></ol>
+<p class="note">Scenes baked with Overlap 0.4 or earlier contain an animation layer. Remove it with
+<b>Legacy layer</b> &gt; <b>Delete bake</b> before sampling source again.</p>
 <h2><a name="setup"></a>Controls and setup</h2>
 <h3><a name="controls"></a>Controls to simulate</h3><p>Load the rig controls you want to add overlap to. For a chain, put the top control first and the bottom control last. Animate the driver or parent first: a chain at rest needs source movement to create a swing.</p>
-<h3><a name="load"></a>Load selected</h3><p>Select controls in Maya, then click this to put them in the list. Selected parents are placed before their children. Loading a new selection clears this session&#x27;s preview and endpoint; baked animation layers remain.</p>
+<h3><a name="load"></a>Load selected</h3><p>Select controls in Maya, then click this to put them in the list. Selected parents are placed before their children. Loading a new selection clears this session&#x27;s preview and endpoint; baked keys remain.</p>
 <h3><a name="up"></a>Up</h3><p>Move the highlighted list entry one place earlier. Use this to arrange the chain from its root toward its tip. This changes the simulation order, not the rig hierarchy.</p>
 <h3><a name="down"></a>Down</h3><p>Move the highlighted list entry one place later. Parent controls must appear before their selected children. The last control uses the endpoint to define its final segment.</p>
 <h3><a name="mode"></a>Mode</h3><p>Rotation adds swing by turning the controls, useful for tails, ears, and pendulums. Translation adds lag to their positions, useful for floating props or controls that should follow a moving target.</p>
-<h3><a name="channels"></a>Apply overlap to</h3><p>Choose which local control channels receive overlap. For a pendulum that bends around its local X axis, select Rotate X only. Unchecked axes keep their source animation and receive no keys on the new layer. The choice applies to every loaded control.</p>
-<h3><a name="range"></a>Start / end</h3><p>The first and last frames to preview and bake. Include time after the driver stops so the swing can settle. A bake layer fades on over the frame before Start and fades off over the frame after End. Extend Maya&#x27;s playback range if needed.</p>
+<h3><a name="channels"></a>Apply overlap to</h3><p>Choose which local control channels receive overlap. For a pendulum that bends around its local X axis, select Rotate X only. Unchecked axes keep their source animation and receive no new keys. The choice applies to every loaded control.</p>
+<h3><a name="range"></a>Start / end</h3><p>The first and last frames to preview and bake. Include time after the driver stops so the swing can settle. Bake replaces the keys inside this range; keys outside it are kept. Extend Maya&#x27;s playback range if needed.</p>
 <h3><a name="save"></a>Save preset</h3><p>Save the spring settings, output axes, endpoint mode, and bake optimization options to a JSON file. The preset does not store rig control names, frame range, or a custom locator&#x27;s position.</p>
 <h3><a name="load_preset"></a>Load preset</h3><p>Restore settings from a saved JSON preset. Your rig controls are kept. Check the endpoint and refresh source afterward. Older presets keep their manual axis/length behavior and default to all output axes and an unoptimized bake.</p>
 <h3><a name="shelf"></a>Add to shelf</h3><p>Choose your preferred Maya shelf, then use File &gt; Add to current shelf. Overlap adds its custom 32 by 32 icon and saves the shelf. Running this again updates the existing Overlap button on that shelf instead of adding another. Keep the tool folder in its installed location.</p>
@@ -56,18 +56,19 @@ there is no physical mass control.</p>
 away from the X axis. A tip placed on the rotation axis cannot produce useful swing around that axis.
 After changing endpoint direction settings, replace an existing locator and refresh source.</p>
 <h2><a name="baking"></a>Preview, bake, and recreate</h2>
-<h3><a name="refresh"></a>Refresh source + preview</h3><p>Read the current source animation, solve the spring, and build animated locator previews. Use this after editing source keys, parents, frame range, or endpoint placement. To replace a previous pass, mute its bake layer first. The original rig is driven only after Bake.</p>
+<h3><a name="refresh"></a>Refresh source + preview</h3><p>Read the current source animation, solve the spring, and build animated locator previews. Use this after editing source keys, parents, frame range, or endpoint placement. To redo a pass, Undo the bake first so source is sampled without it. The original rig is driven only after Bake.</p>
 <h3><a name="preview"></a>Update preview from cached source</h3><p>Reuse the source animation already sampled, then calculate a new preview with your current stiffness, damping, strength, substeps, or output axes. It is faster than sampling again. If you changed source animation or endpoint placement, use Refresh source instead.</p>
-<h3><a name="optimize"></a>Optimize bake</h3><p>Remove unnecessary output keys while keeping the first/last keys and sampled swing peaks. The simulation stays at full quality. With this off, every frame is keyed. With it on, the tolerance controls how closely the reduced curves follow the full bake.</p>
+<h3><a name="optimize"></a>Optimize bake</h3><p>On by default. Keys only where the motion needs them, keeping the first/last keys and sampled swing peaks. The simulation stays at full quality. With this off, every frame is keyed. With it on, the tolerance controls how closely the reduced curves follow the full bake.</p>
 <h3><a name="tolerance"></a>Bake tolerance</h3><p>The maximum allowed difference per baked channel when optimization is on. Rotation uses degrees; translation uses scene distance units. Lower values retain more keys; higher values permit fewer. Start at 0.25 degrees. This is a channel error limit, not the total world-space error at the end of a chain.</p>
-<h3><a name="bake"></a>Bake to new animation layer</h3><p>Apply the previewed motion to the actual controls on a new override animation layer. Only checked channels are keyed; original source curves remain. Mute the layer to compare. Optimization settings can change after preview. Undo removes a successful bake; refresh source before another pass.</p>
-<h3><a name="delete_bake"></a>Delete bake</h3><p>Choose a generated bake layer from the Bake layer list, then click Delete bake. This removes that layer and its baked curves, preserving original source keys and the rig. Saved bake layers can be selected after reopening a scene. Maya Undo restores a deleted layer. Refresh source before creating a replacement pass.</p>
-<h3><a name="clear"></a>Clear session helpers</h3><p>Remove this window&#x27;s preview locators and endpoint, and discard its cached source and simulation. The loaded control list and settings stay. Baked animation layers and the rig remain in the scene.</p>
+<h3><a name="bake"></a>Bake to controls</h3><p>Key the previewed motion directly onto the controls&#x27; own animation curves, replacing their keys inside the frame range. No animation layer, blend node, or other Overlap node stays connected, and the preview locators and endpoint are removed. Only checked channels are keyed. Channels driven by animation layers are refused: delete old Overlap layers or merge layers first. Optimization settings can change after preview. One Undo reverts the whole bake; refresh source before another pass.</p>
+<h3><a name="delete_bake"></a>Delete bake</h3><p>Overlap 0.4 and earlier baked onto animation layers. Choose one of those layers from the Legacy layer list, then click Delete bake to remove it and its curves, preserving original source keys and the rig. Maya Undo restores a deleted layer. Refresh source before baking a replacement.</p>
+<h3><a name="clear"></a>Clear session helpers</h3><p>Remove this window&#x27;s preview locators and endpoint, and discard its cached source and simulation. The loaded control list and settings stay. Baked keys and the rig remain in the scene.</p>
 <p>Optimization measures error per local channel. Rotation tolerance is always degrees; translation
 uses scene distance units. A smaller tolerance keeps more keys. The simulation and cached preview keep
-their full resolution. Reduced curves retain linear tangents, sampled peaks, and the first and last keys.</p>
-<p>The layer has full weight inside the frame range and zero weight outside it, with one-frame linear
-transition handles. Disabled channels and original animation curves remain untouched.</p>
+their full resolution. Optimized curves key the first and last frames and the swing peaks with auto
+tangents, then add a key only where the curve misses a baked frame by more than the tolerance.</p>
+<p>Keys inside the frame range are replaced on the controls&#x27; own curves; keys outside it, and
+disabled channels, remain untouched.</p>
 <h2><a name="examples"></a>Suggested numbers and examples</h2>
 <p>These are starting points, not universal presets. Source speed, segment length, and the rig change
 the result. The restrained pendulum row is the approved example tested during development.</p>
@@ -91,13 +92,13 @@ Results vary with the motion. For translation, try a tolerance such as 0.01 scen
 <li><b>The last control does not swing in the intended plane:</b> use Auto endpoint direction and replace the locator.</li>
 <li><b>Too much motion:</b> reduce strength first, then raise damping slightly.</li>
 <li><b>The swing stops too soon:</b> extend the frame range and lower damping a little.</li>
-<li><b>A replacement pass looks exaggerated:</b> check whether previous output layers were left active during source sampling.</li>
+<li><b>A replacement pass looks exaggerated:</b> Undo the earlier bake, or delete its legacy layer, before refreshing source.</li>
 <li><b>Unsupported transform/channel:</b> use unlocked, keyable FK transform controls on enabled axes.
 Unit scale, no shear, and zero rotate axis are required. Offset pivots are supported; do not reset rig pivots.</li>
-<li><b>Delete bake is disabled:</b> no generated output layers were found. Create a bake first or reopen a scene containing one.</li></ul>
+<li><b>Delete bake is disabled:</b> the scene has no legacy Overlap layers. New bakes key the controls directly, so Undo reverts them.</li></ul>
 <h2><a name="about"></a>About Overlap</h2>
 <table cellspacing="0" cellpadding="7"><tr><th>Application</th><td>Overlap</td></tr>
-<tr><th>Version</th><td>0.4.0</td></tr><tr><th>Creator / copyright holder</th><td>David Shepstone</td></tr>
+<tr><th>Version</th><td>0.5.0</td></tr><tr><th>Creator / copyright holder</th><td>David Shepstone</td></tr>
 <tr><th>Licence</th><td>Private proprietary software · All rights reserved</td></tr>
 <tr><th>Host</th><td>Autodesk Maya · Python 3 · Qt / PySide</td></tr></table>
 <p>Copyright © 2026 David Shepstone. All rights reserved. No public redistribution licence is granted.</p>

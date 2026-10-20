@@ -4,12 +4,12 @@ from .maya_engine import scene_state
 
 
 def create_demo():
-    with scene_state("Kinequill demo"):
-        group = cmds.group(empty=True, name="Kinequill_demo#")
+    with scene_state("Overlap demo"):
+        group = cmds.group(empty=True, name="Overlap_demo#")
         controls = []
         parent = group
         for i in range(4):
-            control = cmds.circle(name="KQ_demo_{}_CTRL#".format(i + 1),
+            control = cmds.circle(name="Overlap_demo_{}_CTRL#".format(i + 1),
                                   normal=(1, 0, 0), radius=.7, constructionHistory=False)[0]
             cmds.parent(control, parent, relative=True)
             cmds.setAttr(control + ".tx", 0 if i == 0 else 4)

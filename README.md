@@ -2,12 +2,12 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.13** adds **Walk Off Node**. It turns a treadmill walk cycle into
-a walk that travels: the IK feet, hands and waist are keyed where they really
-are in world space, and the base node's slide and the cycle are removed, so the
-character walks off the node. It keeps the 1.1.12 workspace-switch crash fix,
-the 1.1.11 exit-crash fix and **Timeline Ticks** from 1.1.10.
-See [release notes](Animation_Tool_Kit_v1.1.13_Release_Notes.md).
+Version **1.1.14** fixes **Overlap**'s bake. It now keys the controls directly,
+with no animation layer or other Overlap node left connected. Its optimized bake
+keys only where the motion needs it. It keeps **Walk Off Node** from 1.1.13, the
+1.1.12 workspace-switch crash fix, the 1.1.11 exit-crash fix and **Timeline
+Ticks** from 1.1.10.
+See [release notes](Animation_Tool_Kit_v1.1.14_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.

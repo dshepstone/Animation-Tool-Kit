@@ -80,11 +80,38 @@ def main():
                 check.setChecked(axis=='X')
             window.panel.start.setValue(1)
             window.panel.end.setValue(24)
+            # A key outside the range must survive; one inside is replaced.
+            cmds.setKeyframe(control,attribute='rx',time=30,value=7)
             window.panel.make_preview(True)
-            window.panel.optimize_bake.setChecked(True)
+            assert cmds.ls('Overlap_preview*') and not cmds.ls('Kinequill*')
+            assert window.panel.optimize_bake.isChecked()
             window.panel.bake()
-            layer=window.panel.bake_layers.currentData()
-            assert cmds.objExists(layer)
+            # The bake is a plain time curve on the control: no layer, blend
+            # node, preview or endpoint is left connected to or near the rig.
+            assert not cmds.ls(type='animLayer')
+            sources=cmds.listConnections(control+'.rx',source=True,destination=False) or []
+            assert len(sources)==1 and cmds.nodeType(sources[0])=='animCurveTA',sources
+            assert (cmds.listConnections(sources[0],source=True,destination=False) or [])==[]
+            assert not cmds.ls('Overlap_*') and not cmds.ls('Kinequill*')
+            times=cmds.keyframe(control,attribute='rx',query=True,timeChange=True)
+            assert 30 in times and min(times)==1 and max(t for t in times if t<30)==24,times
+            stats=window.panel.session.last_bake_stats
+            assert stats['after']<stats['before'],stats
+            assert window.panel.bake_layers.currentData() is None
+            cmds.undo()
+            assert cmds.keyframe(control,attribute='rx',query=True,timeChange=True)==[30.0]
+            # Layers baked by 0.4.0 are refused as input and can be deleted.
+            layer=cmds.animLayer('Kinequill_overlap#',override=True)
+            cmds.addAttr(layer,longName='overlapBake',attributeType='bool',defaultValue=True)
+            cmds.animLayer(layer,edit=True,attribute=control+'.rx')
+            window.panel.refresh_bake_layers()
+            assert window.panel.bake_layers.currentData()==layer
+            window.panel.make_preview(True)
+            try:
+                window.panel.bake()
+                raise AssertionError('Layered channel must be refused')
+            except ValueError as error:
+                assert 'animation layers' in str(error)
             window.panel.delete_selected_bake()
             assert not cmds.objExists(layer) and cmds.objExists(control)
             assert not atk_icons._generate_icon('overlap','timing',32).isNull()
@@ -106,7 +133,7 @@ def main():
             fresh_ui._window.close()
             toolbar.close()
             cmds.optionVar(remove='atk_hidden_overlap') if cmds.optionVar(exists='atk_hidden_overlap') else None
-    print('PASS: MEL install, package/assets/licence, registry, visibility, launcher, preview, bake/delete, icon, button, and reload')
+    print('PASS: MEL install, package/assets/licence, registry, visibility, launcher, preview, direct bake/undo, legacy layer delete, icon, button, and reload')
 
 
 try:
