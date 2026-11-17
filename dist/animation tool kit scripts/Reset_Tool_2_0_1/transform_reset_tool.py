@@ -117,8 +117,27 @@ def _iter_reset_targets(attr_value_pairs):
 
 
 def _reset_attributes(attr_value_pairs):
-    for full_attr, value in _iter_reset_targets(attr_value_pairs):
-        cmds.setAttr(full_attr, value)
+    """Reset the channels in one undo step, keying them when Auto Key is on."""
+    try:
+        auto_key = bool(cmds.autoKeyframe(query=True, state=True))
+    except Exception:
+        auto_key = False
+
+    # One undo chunk: a reset used to need one Ctrl+Z per channel.
+    cmds.undoInfo(openChunk=True, chunkName="ATKResetTransforms")
+    try:
+        for full_attr, value in _iter_reset_targets(attr_value_pairs):
+            try:
+                cmds.setAttr(full_attr, value)
+                # setAttr never auto-keys; follow Maya's rule and key the
+                # channels that are already animated so the reset is not
+                # lost on the next frame change.
+                if auto_key and cmds.keyframe(full_attr, query=True, keyframeCount=True):
+                    cmds.setKeyframe(full_attr)
+            except RuntimeError as exc:
+                cmds.warning(f"Reset Tool: skipped {full_attr} ({exc})".strip())
+    finally:
+        cmds.undoInfo(closeChunk=True)
 
 
 def reset_translate():
@@ -556,6 +575,12 @@ def assign_hotkey(action_key, key, ctrl=False, alt=False, shift=False):
         )
         if result == "Cancel":
             return False
+
+    # Re-assigning an action must release its previous key, otherwise the
+    # old shortcut keeps firing the reset as well.
+    previous = _get_current_hotkey(action_key)
+    if previous and previous != display:
+        _clear_hotkey(action_key)
 
     # --- Create the nameCommand that wraps our runtime command ---
     # Docs: cmds.nameCommand('myNC', ann='...', command='myRuntimeCmd')

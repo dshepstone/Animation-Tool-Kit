@@ -55,7 +55,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.1.14"
+VERSION        = "1.1.15"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -1790,11 +1790,17 @@ class _FrameStepperToolbarWidget(QtWidgets.QFrame):
             return
         changed = self._mod.shift_keys(curves, frames * direction, False)
         if not changed:
-            self._mod._show_headsup("<span style='color:#ffaf00'>No keys in the chosen scope.</span>")
+            self._mod._show_headsup(
+                "<span style='color:#ffaf00'>{}</span>".format(
+                    "No blank frames to remove." if direction < 0
+                    else "No keys in the chosen scope."))
             return
         action = "Inserted" if direction > 0 else "Removed"
+        # shift_keys returns the frames actually moved (older copies of the
+        # tool return True); removal stops before keys would collide.
+        moved = frames if changed is True else abs(int(changed))
         self._mod._show_headsup(
-            "<span style='color:#a0ff7a'>{} {} frame(s).</span>".format(action, frames)
+            "<span style='color:#a0ff7a'>{} {} frame(s).</span>".format(action, moved)
         )
 
 

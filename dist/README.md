@@ -2,13 +2,14 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.14** fixes **Overlap**'s bake. It now keys the controls directly,
-with no animation layer or other Overlap node left connected. Its optimized bake
-keys only where the motion needs it. **Settings → Reload Scripts** now reloads
-the toolbar itself and reopens open tools on the new code. It keeps **Walk Off Node** from 1.1.13, the
-1.1.12 workspace-switch crash fix, the 1.1.11 exit-crash fix and **Timeline
-Ticks** from 1.1.10.
-See [release notes](Animation_Tool_Kit_v1.1.14_Release_Notes.md).
+Version **1.1.15** is a toolkit-wide bug-fix pass. It fixes SavePlus version
+numbering, frame removal in **Add / Remove Frames**, rotate-order handling in
+**AnimSnap** and **Xform Copy Paste**, and bugs in Reset Tool, Micro
+Manipulator, Wire Shape Tool, Smart Select Sets and Noise Generator. It adds
+two tools to the timing group: **Key Cleanup** and **Stagger Keys**. It keeps
+everything from 1.1.14, including the Overlap clean bake and the full
+**Reload Scripts**.
+See [release notes](Animation_Tool_Kit_v1.1.15_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.
@@ -58,6 +59,14 @@ If that file is missing, it falls back to:
   and Undo/Redo while tracking is active. The window also includes green. Install using
   the usual ATK installer, then launch it from the timing group. See its
   [usage and limitations](animation%20tool%20kit%20scripts/Timeline_Ticks_1_0_0/README.md).
+
+- **Key Cleanup** removes redundant keys, static channels, sub-frame keys and
+  Euler flips on the selection or the whole scene. It's in the timing group. See its
+  [usage notes](animation%20tool%20kit%20scripts/Key_Cleanup_1_0_0/README.md).
+
+- **Stagger Keys** offsets keys across a selection in selection order, to block
+  in overlap on tails, spines and fingers. It's in the timing group. See its
+  [usage notes](animation%20tool%20kit%20scripts/Stagger_Keys_1_0_0/README.md).
 
 - **Walk Off Node** turns a treadmill walk cycle into a walk that travels. It keys
   the IK feet, hands and waist where they really are in world space, removes the

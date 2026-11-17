@@ -52,7 +52,7 @@ import maya.cmds as cmds
 import maya.mel as mel
 import maya.OpenMayaUI as omui
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 TITLE = "Curve Noise Generator"
 
 # Legacy maya.cmds UI names (deleted on launch if a 1.0.0 window remains)
@@ -334,9 +334,15 @@ def bake(interval, allowed=None):
                         baked_frames.append(f)
             if (ef - sf) % interval != 0 and ef in sampled:
                 cmds.setKeyframe(plug, time=ef, value=sampled[ef])
-
+            # Cutting every key deletes the anim curve node; setKeyframe then
+            # builds a new one that may not reuse the old name (renamed
+            # curves, name clashes). Look the curve up again before styling.
+            if not cmds.objExists(crv):
+                rebuilt = cmds.keyframe(plug, q=True, name=True) or []
+                if not rebuilt:
+                    continue
+                crv = rebuilt[0]
             cmds.keyTangent(crv, time=(sf, ef), itt="auto", ott="auto")
-
             for f in baked_frames:
                 cmds.keyframe(crv, time=(f, f), tickDrawSpecial=True)
                 cmds.keyframe(crv, time=(f, f), breakdown=True)

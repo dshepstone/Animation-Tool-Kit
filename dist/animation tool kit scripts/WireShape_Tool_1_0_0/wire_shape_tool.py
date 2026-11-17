@@ -172,11 +172,14 @@ def _create_from_mel(key: str, rename_to: Optional[str] = None) -> List[str]:
     sel = cmds.ls(sl=True, long=False) or []
     after = set(cmds.ls(assemblies=True) or [])
     created = [x for x in sel if x not in before] or list(after - before)
-    if rename_to and created:
-        try:
-            created[0] = cmds.rename(created[0], rename_to)
-        except Exception:
-            pass
+    if rename_to:
+        # The MEL proc makes one shape per selected object; name them all
+        # (Maya numbers the duplicates) instead of only the first.
+        for i, node in enumerate(created):
+            try:
+                created[i] = cmds.rename(node, rename_to)
+            except Exception:
+                pass
     return created
 
 # -----------------------------
@@ -594,9 +597,16 @@ def add_offset_groups(count: int = 1):
     if not sel:
         cmds.warning("Wire Shapes: Select one or more objects to add offset groups.")
         return []
-
-    outermost = []
-    for node in sel:
+    # Track nodes by UUID: inserting a group changes the DAG path of the
+    # wrapped object and of everything selected beneath it, so the paths
+    # captured above go stale as soon as the first object is wrapped.
+    sel_ids = cmds.ls(sel, uuid=True) or []
+    outermost_ids = []
+    for node_id in sel_ids:
+        found = cmds.ls(node_id, long=True) or []
+        if not found:
+            continue
+        node = found[0]
         short = node.split("|")[-1]
         target = node
         first_grp = None
@@ -612,16 +622,18 @@ def add_offset_groups(count: int = 1):
                 cmds.xform(grp, ws=True, ro=rot)
             if parent:
                 grp = cmds.parent(grp, parent[0])[0]
+            grp = (cmds.ls(grp, long=True) or [grp])[0]
             target = cmds.parent(target, grp)[0]
+            target = (cmds.ls(target, long=True) or [target])[0]
             if first_grp is None:
-                first_grp = grp
-        outermost.append(first_grp)
-
-    cmds.select(sel, replace=True)
-    print("Wire Shapes: Added {0} offset group(s) to {1} object(s).".format(count, len(sel)))
-    return outermost
-
-
+                first_grp = (cmds.ls(grp, uuid=True) or [None])[0]
+        if first_grp:
+            outermost_ids.append(first_grp)
+    wrapped = cmds.ls(sel_ids, long=True) or []
+    if wrapped:
+        cmds.select(wrapped, replace=True)
+    print("Wire Shapes: Added {0} offset group(s) to {1} object(s).".format(count, len(wrapped)))
+    return cmds.ls(outermost_ids, long=True) or []
 # -----------------------------
 # Registry
 # -----------------------------
@@ -1202,12 +1214,12 @@ class WireShapeToolUI:
 
     # ── Actions ──────────────────────────────────────────────────────────────
 
-    def _snap_to_previous_selection(self, node, prev_sel):
-        """Move node to the pivot of the last previously selected object."""
+    def _snap_to_previous_selection(self, node, prev_sel, index=-1):
+        """Move node to the pivot of a previously selected object (last by default)."""
         if not (self.snap_cb.isChecked() and prev_sel):
             return
         try:
-            src = prev_sel[-1]
+            src = prev_sel[index]
             pos = cmds.xform(src, q=True, ws=True, rp=True)
             cmds.xform(node, ws=True, t=pos)
         except Exception:
@@ -1216,7 +1228,11 @@ class WireShapeToolUI:
     def _on_create(self, shape_def: ShapeDef):
         # Capture selection before creation for snap-to-selection
         prev_sel = cmds.ls(sl=True, long=True) or []
-
+        # The classic MEL shapes build one copy per selected object so each
+        # can snap to its own target. With Snap off that only stacks
+        # duplicates at the origin, so create a single shape instead.
+        if prev_sel and not self.snap_cb.isChecked():
+            cmds.select(clear=True)
         try:
             created = shape_def.creator()
         except Exception as e:
@@ -1232,7 +1248,12 @@ class WireShapeToolUI:
             return
 
         cmds.select(created, replace=True)
-        self._snap_to_previous_selection(created[0], prev_sel)
+        if len(created) > 1 and len(created) == len(prev_sel):
+            # One shape per selected object: snap each to its own target.
+            for i, node in enumerate(created):
+                self._snap_to_previous_selection(node, prev_sel, i)
+        else:
+            self._snap_to_previous_selection(created[0], prev_sel)
 
         try:
             cmds.xform(created, centerPivots=True)

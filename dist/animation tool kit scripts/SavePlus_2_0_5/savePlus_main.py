@@ -3869,7 +3869,8 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
             reference_node = cmds.referenceQuery(reference_nodes[0], referenceNode=True)
             
             # Get the file path for this reference
-            reference_file = cmds.referenceQuery(reference_node, filename=True)
+            reference_file = cmds.referenceQuery(
+                reference_node, filename=True, withoutCopyNumber=True)
             print(f"Reference file: {reference_file}")
             
             # Correct way to handle nested references
@@ -3928,7 +3929,8 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
                     # Suggest a new filename with asset name
                     suggested_name = f"shot_{asset_name}_v001.ma"
                     self.filename_input.setText(suggested_name)
-                    self.filename_input.setToolTip(new_path)  # Show full path on hover
+                    # Show full path on hover
+                    self.filename_input.setToolTip(os.path.join(reference_dir, suggested_name))
                     print(f"Created new suggested filename: {suggested_name}")
                 
                 self.update_filename_preview()
@@ -3970,7 +3972,7 @@ class SavePlusUI(MayaQWidgetDockableMixin, QMainWindow):
                 ext = '.ma' if self.filetype_combo.currentIndex() == 0 else '.mb'
             
             # Find the trailing number pattern
-            match = re.search(r'(\D*)(\d+)(\D*)$', base_name)
+            match = re.search(r'^(.*?)(\d+)(\D*)$', base_name)
             
             if match:
                 # If a number is found

@@ -9,15 +9,19 @@
 
 import maya.cmds as cmds
 import maya.OpenMayaUI as omui
-from PySide6 import QtWidgets, QtCore
-from shiboken6 import wrapInstance
+try:
+    from PySide6 import QtWidgets, QtCore
+    from shiboken6 import wrapInstance
+except ImportError:  # Maya 2022-2024
+    from PySide2 import QtWidgets, QtCore
+    from shiboken2 import wrapInstance
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Constants
 # ──────────────────────────────────────────────────────────────────────────────
 
 WINDOW_OBJECT = "microManipulatorWin"
-WINDOW_TITLE  = "Micro Manipulator Tool v1.0.0"
+WINDOW_TITLE  = "Micro Manipulator Tool v1.0.1"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -84,6 +88,8 @@ class FullConsoleUI(QtWidgets.QDialog):
         self.speed_pct = 5
         self._stored_states = []
         self._current_scrub_mode = None
+        self._chunk_open = False
+        self._touched_attrs = set()
         self._tool_job = None
 
         self._build()
@@ -265,9 +271,15 @@ class FullConsoleUI(QtWidgets.QDialog):
         if not sel: 
             return cmds.warning("[MicroManipulator] Please select an object first.")
 
+        # A previous drag that never got its release event must not leave
+        # Maya's undo queue with a dangling open chunk.
+        self._close_chunk()
+
         self._current_scrub_mode = mode
         cmds.undoInfo(openChunk=True, chunkName=f"Micro{mode.capitalize()}")
-        
+        self._chunk_open = True
+        self._touched_attrs = set()
+
         self._stored_states = []
         for obj in sel:
             try:
@@ -300,18 +312,47 @@ class FullConsoleUI(QtWidgets.QDialog):
                     new_val = base_val + scaled_delta
                     
                 cmds.setAttr(f"{obj}.{mode}{axis}", new_val)
+                self._touched_attrs.add(f"{obj}.{mode}{axis}")
             except Exception: pass 
 
-    def _on_scrub_end(self):
-        self._stored_states = []
-        self._current_scrub_mode = None
+    def _auto_key_touched(self):
+        """Honour Maya's Auto Key: setAttr never keys on its own, so key the
+        already-animated channels the drag changed (same rule Maya uses)."""
+        try:
+            if not cmds.autoKeyframe(query=True, state=True):
+                return
+        except Exception:
+            return
+        for attr in sorted(self._touched_attrs):
+            try:
+                if cmds.keyframe(attr, query=True, keyframeCount=True):
+                    cmds.setKeyframe(attr)
+            except Exception:
+                pass
+
+    def _close_chunk(self):
+        # Only close a chunk this tool opened; an unmatched closeChunk
+        # corrupts Maya's undo queue.
+        if not self._chunk_open:
+            return
+        self._chunk_open = False
         try: cmds.undoInfo(closeChunk=True)
         except Exception: pass
 
+    def _on_scrub_end(self):
+        if self._chunk_open:
+            self._auto_key_touched()
+        self._stored_states = []
+        self._touched_attrs = set()
+        self._current_scrub_mode = None
+        self._close_chunk()
+
     def closeEvent(self, event):
+        self._close_chunk()
         if self._tool_job is not None:
             try: cmds.scriptJob(kill=self._tool_job, force=True)
             except Exception: pass
+            self._tool_job = None
         QtWidgets.QDialog.closeEvent(self, event)
 
 def show():
@@ -323,4 +364,8 @@ def show():
     ui.show()
     return ui
 
-show()
+
+# Importing the module must not open a window: the ATK toolbar imports it and
+# then calls show() itself, which used to build the window twice.
+if __name__ == "__main__":
+    show()
