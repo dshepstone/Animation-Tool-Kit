@@ -435,15 +435,36 @@ def _active_window():
     return None
 
 
-def _close_window():
+def _close_window(now=False):
+    """Close the bar and its overlay.
+
+    ``now`` destroys the Qt objects immediately instead of with deleteLater.
+    Maya stops running Qt's event loop once it starts quitting, so a
+    deleteLater never happens then: the overlay and its event filter on
+    Maya's Time Slider survived until Python shut down, and PySide's exit
+    clean-up crashed Maya in shiboken6.abi3.dll.
+    """
     global _window
     window, _window = _window, None
-    if window is not None:
-        try:
-            window.close()
+    if window is None:
+        return
+    try:
+        window.timer.stop()
+        overlay = getattr(window, "overlay", None)
+        if overlay is not None:
+            timeline = overlay.parentWidget()
+            if timeline is not None:
+                timeline.removeEventFilter(overlay)
+        window.close()
+        if not now:
             window.deleteLater()
-        except RuntimeError:
-            pass  # The Maya workspace already destroyed the Qt object.
+            return
+        _QtWidgets, shiboken = _ui_classes()[1:]
+        for obj in (overlay, window):
+            if obj is not None and shiboken.isValid(obj):
+                shiboken.delete(obj)
+    except RuntimeError:
+        pass  # The Maya workspace already destroyed the Qt object.
 
 
 def start_tracking():
@@ -459,12 +480,19 @@ def start_tracking():
 
 
 def shutdown():
-    """Release every callback and window before reloading the tool module."""
+    """Release every Maya callback and Qt object this tool created.
+
+    Called before Reload Scripts purges the module and when Maya quits, so
+    nothing Python-owned is left for the interpreter's exit clean-up.
+    """
     global _window, _tracker
-    if _tracker is not None:
-        _tracker.stop()
-        _tracker = None
-    _close_window()
+    tracker, _tracker = _tracker, None
+    if tracker is not None:
+        try:
+            tracker.stop()
+        except Exception:
+            pass
+    _close_window(now=True)
 
 
 def show():

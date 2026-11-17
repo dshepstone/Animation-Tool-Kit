@@ -99,6 +99,40 @@ def _cleanup_session() -> None:
     _SESSION["overlay"] = None
 
 
+def shutdown() -> None:
+    """Destroy the panel, overlay, event filter and scriptJobs immediately.
+
+    Called by the ATK toolbar when Maya quits and before Reload Scripts.
+    deleteLater() does not run once Maya is quitting, so the Qt objects are
+    deleted synchronously; otherwise the overlay and event filter on Maya's
+    Time Slider outlive Qt and crash PySide's exit clean-up.
+    """
+    try:
+        import shiboken6 as shiboken
+    except ImportError:  # pragma: no cover - Maya 2022-2024 / no Qt
+        try:
+            import shiboken2 as shiboken
+        except ImportError:
+            shiboken = None
+
+    overlay = _SESSION.get("overlay")
+    event_filter = _SESSION.get("event_filter")
+    panel = _SESSION.get("panel")
+    _cleanup_session()
+    _SESSION["panel"] = None
+    _SESSION["controller"] = None
+    for obj in (event_filter, overlay, panel):
+        if obj is None or shiboken is None:
+            continue
+        try:
+            if shiboken.isValid(obj):
+                if obj is panel:
+                    obj.close()
+                shiboken.delete(obj)
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Maya-specific wiring
 # ---------------------------------------------------------------------------

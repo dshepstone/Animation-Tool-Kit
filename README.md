@@ -2,7 +2,8 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.15** is a toolkit-wide bug-fix pass. It fixes SavePlus version
+Version **1.1.15** is a toolkit-wide bug-fix pass. It fixes a crash when
+closing Maya and the Playblast Creator plug-in error at startup. It fixes SavePlus version
 numbering, frame removal in **Add / Remove Frames**, rotate-order handling in
 **AnimSnap** and **Xform Copy Paste**, and bugs in Reset Tool, Micro
 Manipulator, Wire Shape Tool, Smart Select Sets and Noise Generator. It adds

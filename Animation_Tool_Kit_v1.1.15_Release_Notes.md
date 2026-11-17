@@ -11,6 +11,19 @@ Both tools also put their common actions in the toolbar button's right-click men
 
 ## Fixed
 
+### Maya crashing on close
+
+Closing Maya 2027 with the ATK toolbar loaded could still crash during shutdown, with an access violation in `shiboken6.abi3.dll`. ATK 1.1.11 fixed one cause of this, the toolbar's dock watcher, but other tools left objects behind:
+
+- **Timeline Ticks** starts with every toolbar. It adds an overlay and an event filter to Maya's Time Slider, and Maya callbacks into Python. Its teardown used `deleteLater()`, which never runs once Maya is quitting, so they survived until Python shut down.
+- **Bookmarks**, once opened, does the same with its timeline overlay.
+
+When Maya quits, ATK now shuts down every loaded tool while Python and Qt are still running. It removes the Maya callbacks, removes the event filters from Maya's widgets, and deletes the overlays and tool windows straight away. **Reload Scripts** uses the same shutdown.
+
+### Playblast Creator: "playblast_creator.py was not found on MAYA_PLUG_IN_PATH" at startup
+
+Playblast Creator switched on Maya's auto-load for its plug-in. Maya stored only the file name, then looked for it at the next start before the ATK toolbar had added the plug-in's folder, so every Maya start logged this error. The toolbar now loads the plug-in from its full path when it starts, and turns Maya's own auto-load for it off. That also clears the old setting. The error can appear once more, on the first start after upgrading, until Maya saves its plug-in preferences.
+
 ### SavePlus 2.0.7
 
 - **Version numbers were built wrongly for some file names.** A name with two numbers lost everything before the last one: `shot010_anim_v003.ma` was saved as `_anim_v004.ma`. A project-prefixed name rolling over from 9 gained a digit: `A01_anim_v009.ma` became `A01_anim_v0010.ma`. Both now increment the last number and keep the rest of the name.
@@ -75,7 +88,7 @@ Temp Pivot, Onion Skin, Inbetweener, Tangent Tools, Character Snapshot, Mirror C
 
 ## Tests
 
-- New automated tests cover SavePlus versioning, Key Cleanup, Stagger Keys and frame removal.
+- New automated tests cover SavePlus versioning, Key Cleanup, Stagger Keys, frame removal and the clean-up when Maya quits.
 - A registry check confirms that every toolbar entry points at a function that exists, that the installer copies every tool, and that no tool opens its window when imported.
 - The Bookmarks test suite now runs outside Maya and is part of CI.
 - CI uploads the packaged ZIP as a build artifact on every run.

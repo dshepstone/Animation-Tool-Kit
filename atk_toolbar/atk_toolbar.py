@@ -1831,6 +1831,21 @@ def _shutdown_cleanup():
     """
     global _dock_watcher, _toolbar_widget, _release_anim
 
+    # Tools first: Timeline Ticks (started with every toolbar) and Bookmarks
+    # put overlays and event filters on Maya's Time Slider and Maya callbacks
+    # into Python. Left alive, they crash PySide's exit clean-up just like
+    # the dock watcher did in 1.1.11.
+    try:
+        atk_loader.shutdown_tool_modules()
+    except Exception:
+        pass
+    _delete_tool_windows()
+    try:
+        from . import atk_window
+        atk_window.shutdown()
+    except Exception:
+        pass
+
     watcher = _dock_watcher
     _dock_watcher = None
 
@@ -1856,6 +1871,30 @@ def _shutdown_cleanup():
     # The toolbar widget is owned by Maya's workspaceControl (C++ parent);
     # just drop our Python reference so nothing outlives the interpreter.
     _toolbar_widget = None
+
+
+def _delete_tool_windows():
+    """Close and delete ATK tool windows built from Python-subclassed widgets.
+
+    These Python-created windows (dialogs kept in module globals, and
+    top-level windows with no Maya parent) would otherwise survive until the
+    interpreter finalizes.
+    """
+    roots = set(atk_loader.tool_module_roots())
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return
+    for widget in list(app.topLevelWidgets()):
+        try:
+            module = type(widget).__module__ or ""
+            if module.split(".")[0] not in roots:
+                continue
+            if not shiboken.isValid(widget):
+                continue
+            widget.close()
+            shiboken.delete(widget)
+        except Exception:
+            pass
 
 
 def _live_control_widget():

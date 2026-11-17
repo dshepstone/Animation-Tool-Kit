@@ -445,8 +445,47 @@ def setup_paths():
             )
 
 
+def _plugin_file(plugin):
+    """Full path of a tool's Maya plug-in file shipped by ATK, or None."""
+    scripts_dir = cmds.internalVar(userScriptDir=True)
+    for folder in (os.path.join(scripts_dir, "playblast_creator", "PBC_v2_0_4"), scripts_dir):
+        path = os.path.join(folder, plugin)
+        if os.path.isfile(path):
+            return path.replace("\\", "/")
+    return None
+
+
+def load_tool_plugins():
+    """Load the tools' Maya plug-ins by full path, with Maya auto-load off.
+
+    Maya's own auto-load stores the bare file name and runs before the
+    toolbar adds the plug-in folder to MAYA_PLUG_IN_PATH, so it fails at
+    every start ("... was not found on MAYA_PLUG_IN_PATH"). Loading here
+    keeps scenes that contain the tools' nodes working once the toolbar is
+    up, and clears any stale auto-load preference left by older versions.
+    """
+    for tool in TOOL_REGISTRY:
+        plugin = tool.get("maya_plugin")
+        if not plugin:
+            continue
+        try:
+            if not _is_plugin_loaded(plugin):
+                path = _plugin_file(plugin)
+                if path is None:
+                    continue
+                cmds.loadPlugin(path, quiet=True)
+            if cmds.pluginInfo(plugin, query=True, autoload=True):
+                cmds.pluginInfo(plugin, edit=True, autoload=False)
+        except Exception as exc:
+            try:
+                cmds.warning("ATK Toolbar: could not load plug-in {}: {}".format(plugin, exc))
+            except Exception:
+                pass
+
+
 def start_tool_services():
     """Start idempotent runtime services required by installed toolbar tools."""
+    load_tool_plugins()
     for tool in TOOL_REGISTRY:
         if tool.get("startup_fn") and is_tool_installed(tool["id"]):
             launch_tool_fn(tool["id"], tool["startup_fn"])
@@ -584,6 +623,37 @@ def tool_module_roots():
     return roots
 
 
+def shutdown_tool_modules():
+    """Call ``shutdown()`` on every loaded tool module that defines one.
+
+    Used before Reload Scripts purges the modules and when Maya quits, so
+    tools release Maya callbacks, event filters on Maya widgets and Python
+    owned Qt objects while Python and Qt are still running. Returns the
+    names of the modules that were shut down.
+    """
+    names = []
+    for tool in TOOL_REGISTRY:
+        for name in [tool["module"]] + list(tool.get("extra_modules", ())):
+            for candidate in (name, name.split(".")[0]):
+                if candidate not in names:
+                    names.append(candidate)
+    done = []
+    for name in names:
+        module = sys.modules.get(name)
+        shutdown = getattr(module, "shutdown", None)
+        if not callable(shutdown):
+            continue
+        try:
+            shutdown()
+            done.append(name)
+        except Exception as exc:
+            try:
+                cmds.warning("ATK Toolbar: {} shutdown failed: {}".format(name, exc))
+            except Exception:
+                pass
+    return done
+
+
 def purge_toolbar_modules():
     """Drop the atk_toolbar package itself from ``sys.modules``.
 
@@ -614,12 +684,10 @@ def reload_tool_modules():
     setup_paths()
     importlib.invalidate_caches()
 
+    shutdown_tool_modules()
+
     purged = set()
     for root in tool_module_roots():
-        module = sys.modules.get(root)
-        shutdown = getattr(module, "shutdown", None)
-        if callable(shutdown):
-            shutdown()
         prefix = root + "."
         for name in list(sys.modules):
             if name == root or name.startswith(prefix):

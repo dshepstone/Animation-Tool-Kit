@@ -271,6 +271,19 @@ class _LaunchWatcher(QtCore.QObject):
         return False
 
 
+def shutdown():
+    """Remove application-wide launch watchers that have not expired yet."""
+    app = QtWidgets.QApplication.instance()
+    while _launch_watchers:
+        watcher = _launch_watchers.pop()
+        try:
+            if app is not None:
+                app.removeEventFilter(watcher)
+            watcher.deleteLater()
+        except RuntimeError:
+            pass
+
+
 class watch_launch(object):
     """Context manager wrapped around a tool launcher:
 
