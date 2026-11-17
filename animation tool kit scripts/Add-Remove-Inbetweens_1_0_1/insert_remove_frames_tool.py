@@ -9,6 +9,7 @@ menu bar exposing an HTML-based Help/How To window.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Type, TypeVar
 
 from maya import cmds, mel  # type: ignore[import-not-found]  # pylint: disable=import-error
@@ -237,6 +238,10 @@ def _time_slider_range() -> Optional[Tuple[float, float]]:
     start, end = range_values
     if start > end:
         start, end = end, start
+    # ``rangeArray`` reports the frame *after* the highlight as its end, so a
+    # key sitting one frame past the selection used to be re-spaced as well.
+    if end - start >= 1:
+        end -= 1
     return start, end
 
 
@@ -271,8 +276,51 @@ def _mel_shift(curves: Sequence[str], start: float, end: Optional[float], delta:
     )
 
 
-def shift_keys(curves: Sequence[str], delta: int, use_range: bool) -> bool:
+def _editable_curves(curves: Sequence[str]) -> List[str]:
+    """Drop locked anim curves; one of them makes the whole shift fail."""
+    editable: List[str] = []
+    for curve in curves:
+        try:
+            if cmds.lockNode(curve, query=True, lock=True)[0]:
+                continue
+        except Exception:
+            pass
+        editable.append(curve)
+    return editable
+
+
+def removable_frames(curves: Sequence[str], start: float) -> Optional[int]:
+    """Return how many blank frames can be removed in front of ``start``.
+
+    Keys at or after ``start`` are pulled back when frames are removed. They
+    must stop before the last key in front of ``start`` on the same curve,
+    otherwise keys land on, or jump over, earlier keys and the animation is
+    scrambled. The limit is shared by every curve so they stay in sync.
+    ``None`` means there is no limit (no curve has keys on both sides).
+    """
+    limit: Optional[int] = None
+    for curve in curves:
+        try:
+            times = cmds.keyframe(curve, query=True, timeChange=True) or []
+        except RuntimeError:
+            continue
+        before = [t for t in times if t < start]
+        after = [t for t in times if t >= start]
+        if not before or not after:
+            continue
+        gap = int(math.floor(min(after) - max(before) - 1 + 1e-6))
+        gap = max(gap, 0)
+        if limit is None or gap < limit:
+            limit = gap
+    return limit
+
+
+def shift_keys(curves: Sequence[str], delta: int, use_range: bool) -> int:
     """Shift keys on curves by ``delta`` frames respecting the chosen range.
+
+    Returns the number of frames the keys actually moved (signed, ``0`` when
+    nothing moved). Removing frames only ever removes *blank* frames: the
+    amount is reduced so keys never collide with the keys in front of them.
 
     The function wraps all edits inside a single undo chunk, honours the
     selected/current time logic, and performs a ripple shift when a time range
@@ -280,12 +328,21 @@ def shift_keys(curves: Sequence[str], delta: int, use_range: bool) -> bool:
     edit command to apply the shift from the time slider.
     """
 
+    curves = _editable_curves(curves)
     if not curves:
-        return False
+        return 0
     if delta == 0:
-        return False
+        return 0
 
     current = cmds.currentTime(query=True)
+
+    if delta < 0:
+        shift_start = get_time_range(True)[0] if use_range else current + 1
+        limit = removable_frames(curves, shift_start)
+        if limit is not None and limit < -delta:
+            delta = -limit
+            if delta == 0:
+                return 0
 
     cmds.undoInfo(openChunk=True)
     any_shifted = False
@@ -307,7 +364,7 @@ def shift_keys(curves: Sequence[str], delta: int, use_range: bool) -> bool:
     finally:
         cmds.undoInfo(closeChunk=True)
 
-    return any_shifted
+    return delta if any_shifted else 0
 
 
 def ripple_spacing_on_selected_keys(
@@ -685,16 +742,28 @@ class InsertRemoveFramesUI(QtWidgets.QWidget):
 
     # ---------------------------------------------------------------- logic
     def _restore_settings(self) -> None:
+        # Read everything first and block saving while the widgets are set:
+        # each widget change fires _save_settings, which used to overwrite
+        # the not-yet-restored options with the widget defaults.
         mode = _get_option_var_string("mode", "selected")
-        if mode == "scene":
-            self.scene_button.setChecked(True)
-        else:
-            self.selected_button.setChecked(True)
-        self.range_checkbox.setChecked(_get_option_var_bool("use_range", False))
-        self.frames_spinbox.setValue(_get_option_var_int("frames", 1))
-        self.inbetween_spinbox.setValue(_get_option_var_int("inbetweens", 2))
+        use_range = _get_option_var_bool("use_range", False)
+        frames = _get_option_var_int("frames", 1)
+        inbetweens = _get_option_var_int("inbetweens", 2)
+        self._restoring = True
+        try:
+            if mode == "scene":
+                self.scene_button.setChecked(True)
+            else:
+                self.selected_button.setChecked(True)
+            self.range_checkbox.setChecked(use_range)
+            self.frames_spinbox.setValue(frames)
+            self.inbetween_spinbox.setValue(inbetweens)
+        finally:
+            self._restoring = False
 
-    def _save_settings(self) -> None:
+    def _save_settings(self, *_args: Any) -> None:
+        if getattr(self, "_restoring", False):
+            return
         _set_option_var_string("mode", "scene" if self._is_scene_mode() else "selected")
         _set_option_var_bool("use_range", self.range_checkbox.isChecked())
         _set_option_var_int("frames", self.frames_spinbox.value())
@@ -745,7 +814,11 @@ class InsertRemoveFramesUI(QtWidgets.QWidget):
             return
 
         if not changed:
-            warning = "No keys in the chosen scope/range."
+            warning = (
+                "No blank frames to remove, or no keys after this frame."
+                if direction < 0
+                else "No keys in the chosen scope/range."
+            )
             _show_headsup(f"<span style='color:#ffaf00'>{warning}</span>")
             self._set_status(warning, ok=False)
             return
@@ -753,7 +826,10 @@ class InsertRemoveFramesUI(QtWidgets.QWidget):
         self._save_settings()
 
         action = "Inserted" if direction > 0 else "Removed"
-        message = f"{action} {frames} frame(s)."
+        moved = abs(int(changed))
+        message = f"{action} {moved} frame(s)."
+        if moved < frames:
+            message += " Stopped before keys would collide."
         _show_headsup(f"<span style='color:#a0ff7a'>{message}</span>")
         self._set_status(message, ok=True)
 
@@ -970,11 +1046,15 @@ def show() -> InsertRemoveFramesUI:
     to guarantee the UI always rebuilds cleanly.
     """
 
+    global _window
     if cmds.workspaceControl(WORKSPACE_CONTROL_NAME, exists=True):
         try:
             cmds.deleteUI(WORKSPACE_CONTROL_NAME, control=True)
         except RuntimeError:
             pass
+    # Forget the previous (now deleted) widget so the fallback below can tell
+    # whether Maya really ran the uiScript for the new control.
+    _window = None
 
     cmds.workspaceControl(
         WORKSPACE_CONTROL_NAME,
@@ -1000,6 +1080,7 @@ __all__ = [
     "gather_anim_curves",
     "get_time_range",
     "shift_keys",
+    "removable_frames",
     "ripple_spacing_on_selected_keys",
     "show",
 ]

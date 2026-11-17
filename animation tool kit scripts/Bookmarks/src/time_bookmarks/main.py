@@ -39,10 +39,14 @@ def launch() -> None:
     """Detect the execution context and start the appropriate launcher."""
     try:
         import maya.cmds  # noqa: F401  — presence check only
-        _launch_in_maya()
     except ImportError:
         from time_bookmarks.dev_launch import main
         main()
+        return
+    # Kept outside the try block: an ImportError raised while building the
+    # Maya panel must surface as an error, not silently start the dev
+    # launcher (which builds a second, fake-backed window inside Maya).
+    _launch_in_maya()
 
 
 # ---------------------------------------------------------------------------

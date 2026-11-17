@@ -40,6 +40,41 @@ _LEGACY_WIN_ID = "animSnapWindow"
 # Core snap functions
 # ---------------------------------------------------------------------------
 
+_ROTATE_ORDERS = ("xyz", "yzx", "zxy", "xzy", "yxz", "zyx")
+
+
+def _rotation_for_source(source, target, rotation):
+    """Re-express ``target``'s world rotation in ``source``'s rotate order.
+
+    ``xform -q -ws -ro`` returns Euler angles in the *queried* node's rotate
+    order, and ``xform -ws -ro`` reads them in the *edited* node's order, so
+    copying the three numbers between controls with different rotate orders
+    (very common on rigs) produced the wrong orientation.
+    """
+    try:
+        src_order = cmds.xform(source, query=True, rotateOrder=True)
+        tgt_order = cmds.xform(target, query=True, rotateOrder=True)
+    except Exception:
+        return rotation
+    if src_order == tgt_order:
+        return rotation
+    if src_order not in _ROTATE_ORDERS or tgt_order not in _ROTATE_ORDERS:
+        return rotation
+    try:
+        import math
+        import maya.api.OpenMaya as om2
+        euler = om2.MEulerRotation(
+            math.radians(rotation[0]),
+            math.radians(rotation[1]),
+            math.radians(rotation[2]),
+            _ROTATE_ORDERS.index(tgt_order),
+        )
+        euler.reorderIt(_ROTATE_ORDERS.index(src_order))
+        return [math.degrees(euler.x), math.degrees(euler.y), math.degrees(euler.z)]
+    except Exception:
+        return rotation
+
+
 def snap(translate=True, rotate=True):
     """Snap the first selected object to the second selected object in world space.
 
@@ -64,6 +99,8 @@ def snap(translate=True, rotate=True):
     # Query target world-space transforms
     target_translation = cmds.xform(target, query=True, worldSpace=True, translation=True)
     target_rotation = cmds.xform(target, query=True, worldSpace=True, rotation=True)
+    if rotate:
+        target_rotation = _rotation_for_source(source, target, target_rotation)
 
     # Apply to source in world space (handles parent hierarchies correctly).
     # One undo chunk so a snap undoes in a single step.
@@ -623,6 +660,12 @@ def assign_hotkey(action_key, key, ctrl=False, alt=False, shift=False):
         if result == "Cancel":
             return False
 
+    # Re-assigning an action must release its previous key, otherwise the
+    # old shortcut keeps firing the snap as well.
+    previous = _get_current_hotkey(action_key)
+    if previous and previous != display:
+        _clear_hotkey(action_key)
+
     # Create the nameCommand that wraps our runtime command
     cmds.nameCommand(nc_name, ann=annotation, sourceType="mel", command=rt_name)
 
@@ -684,12 +727,17 @@ def _build_key_map():
     if _QT_KEY_TO_MAYA:
         return
     key = QtCore.Qt.Key
+
+    def _value(qt_key):
+        # PySide6 enums expose .value; PySide2 enums convert with int().
+        return qt_key.value if hasattr(qt_key, "value") else int(qt_key)
+
     for i in range(26):
-        _QT_KEY_TO_MAYA[key.Key_A.value + i] = chr(ord("a") + i)
+        _QT_KEY_TO_MAYA[_value(key.Key_A) + i] = chr(ord("a") + i)
     for i in range(10):
-        _QT_KEY_TO_MAYA[key.Key_0.value + i] = str(i)
+        _QT_KEY_TO_MAYA[_value(key.Key_0) + i] = str(i)
     for i in range(1, 13):
-        _QT_KEY_TO_MAYA[getattr(key, "Key_F{}".format(i)).value] = "F{}".format(i)
+        _QT_KEY_TO_MAYA[_value(getattr(key, "Key_F{}".format(i)))] = "F{}".format(i)
     extras = {
         key.Key_Space: "Space", key.Key_Return: "Return", key.Key_Enter: "Return",
         key.Key_Tab: "Tab", key.Key_Backspace: "Backspace", key.Key_Delete: "Delete",
@@ -700,7 +748,7 @@ def _build_key_map():
         key.Key_Insert: "Insert",
     }
     for qt_key, maya_str in extras.items():
-        _QT_KEY_TO_MAYA[qt_key.value if hasattr(qt_key, "value") else qt_key] = maya_str
+        _QT_KEY_TO_MAYA[_value(qt_key)] = maya_str
 
 
 def _parse_key_sequence(seq):

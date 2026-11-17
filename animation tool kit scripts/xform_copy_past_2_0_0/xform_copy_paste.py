@@ -162,12 +162,72 @@ _XFORM_STORE = {
 # Private helpers
 # ---------------------------------------------------------------------------
 
+_ROTATE_ORDERS = ("xyz", "yzx", "zxy", "xzy", "yxz", "zyx")
+
+
+def _reorder_rotation(rotation, from_order, to_order):
+    """Re-express Euler angles (degrees) from one rotate order in another.
+
+    ``xform -ws -ro`` reads and writes Euler angles in the rotate order of
+    the node it is called on.  Copying the three numbers from a control to
+    one with a different rotate order (very common on rigs) pasted the wrong
+    orientation, so stored rotations are always kept in XYZ order and
+    converted to the target's own order when they are pasted.
+    """
+    if from_order == to_order:
+        return list(rotation)
+    if from_order not in _ROTATE_ORDERS or to_order not in _ROTATE_ORDERS:
+        return list(rotation)
+    try:
+        import math
+        import maya.api.OpenMaya as om2
+        euler = om2.MEulerRotation(
+            math.radians(rotation[0]),
+            math.radians(rotation[1]),
+            math.radians(rotation[2]),
+            _ROTATE_ORDERS.index(from_order),
+        )
+        euler.reorderIt(_ROTATE_ORDERS.index(to_order))
+        return [math.degrees(euler.x), math.degrees(euler.y), math.degrees(euler.z)]
+    except Exception:
+        return list(rotation)
+
+
+def _rotate_order(obj):
+    try:
+        return cmds.xform(obj, q=True, rotateOrder=True)
+    except Exception:
+        return "xyz"
+
+
 def _get_xform(obj):
-    """Return (translate, rotate, scale) world-space lists for obj at current time."""
+    """Return (translate, rotate, scale) world-space lists for obj at current time.
+
+    The rotation is returned in XYZ rotate order regardless of the object's
+    own order (see ``_reorder_rotation``).
+    """
     t = cmds.xform(obj, q=True, ws=True, t=True)
     r = cmds.xform(obj, q=True, ws=True, ro=True)
+    r = _reorder_rotation(r, _rotate_order(obj), "xyz")
     s = cmds.xform(obj, q=True, ws=True, s=True)
     return t, r, s
+
+
+def _euler_filter(objs):
+    """Run Maya's Euler filter on the rotate curves of ``objs``.
+
+    World-space rotations pasted frame by frame can flip by 360 degrees
+    between keys; the filter removes those flips after a multi-frame paste.
+    """
+    for obj in objs:
+        try:
+            curves = cmds.keyframe(
+                obj, q=True, name=True,
+                attribute=("rotateX", "rotateY", "rotateZ")) or []
+            if len(curves) == 3:
+                cmds.filterCurve(curves)
+        except Exception:
+            pass
 
 
 def _world_to_local_scale(obj, s):
@@ -197,7 +257,7 @@ def _set_xform(obj, t, r, s):
     except RuntimeError:
         cmds.warning("xform_copy_paste: could not set translate on '{}' (locked/connected) — skipped.".format(obj))
     try:
-        cmds.xform(obj, ws=True, ro=r)
+        cmds.xform(obj, ws=True, ro=_reorder_rotation(r, "xyz", _rotate_order(obj)))
     except RuntimeError:
         cmds.warning("xform_copy_paste: could not set rotate on '{}' (locked/connected) — skipped.".format(obj))
     try:
@@ -518,6 +578,7 @@ def paste_xform_world_space_bake_frames():
                 _set_xform(obj, entry["translate"], entry["rotate"], entry["scale"])
                 _set_keyframe(obj, f)
             baked += 1
+        _euler_filter(sel)
     finally:
         cmds.currentTime(original_frame)
         cmds.undoInfo(closeChunk=True)
@@ -667,6 +728,7 @@ def paste_xform_world_space_keys_range():
                 _set_xform(obj, entry["translate"], entry["rotate"], entry["scale"])
                 _set_keyframe(obj, kf)
                 total_keys += 1
+        _euler_filter(sel)
     finally:
         cmds.currentTime(original_frame)
         cmds.undoInfo(closeChunk=True)
@@ -1636,6 +1698,12 @@ def assign_hotkey(action_key, key, ctrl=False, alt=False, shift=False):
         if result == "Cancel":
             return False
 
+    # Re-assigning an action must release its previous key, otherwise the
+    # old shortcut keeps firing the action as well.
+    previous = _get_current_hotkey(action_key)
+    if previous and previous != display:
+        _clear_hotkey(action_key)
+
     # Create the nameCommand that wraps our runtime command
     cmds.nameCommand(nc_name, ann=annotation, sourceType="mel", command=rt_name)
 
@@ -1697,12 +1765,17 @@ def _build_key_map():
     if _QT_KEY_TO_MAYA:
         return
     key = QtCore.Qt.Key
+
+    def _value(qt_key):
+        # PySide6 enums expose .value; PySide2 enums convert with int().
+        return qt_key.value if hasattr(qt_key, "value") else int(qt_key)
+
     for i in range(26):
-        _QT_KEY_TO_MAYA[key.Key_A.value + i] = chr(ord("a") + i)
+        _QT_KEY_TO_MAYA[_value(key.Key_A) + i] = chr(ord("a") + i)
     for i in range(10):
-        _QT_KEY_TO_MAYA[key.Key_0.value + i] = str(i)
+        _QT_KEY_TO_MAYA[_value(key.Key_0) + i] = str(i)
     for i in range(1, 13):
-        _QT_KEY_TO_MAYA[getattr(key, "Key_F{}".format(i)).value] = "F{}".format(i)
+        _QT_KEY_TO_MAYA[_value(getattr(key, "Key_F{}".format(i)))] = "F{}".format(i)
     extras = {
         key.Key_Space: "Space", key.Key_Return: "Return", key.Key_Enter: "Return",
         key.Key_Tab: "Tab", key.Key_Backspace: "Backspace", key.Key_Delete: "Delete",
@@ -1713,7 +1786,7 @@ def _build_key_map():
         key.Key_Insert: "Insert",
     }
     for qt_key, maya_str in extras.items():
-        _QT_KEY_TO_MAYA[qt_key.value if hasattr(qt_key, "value") else qt_key] = maya_str
+        _QT_KEY_TO_MAYA[_value(qt_key)] = maya_str
 
 
 def _parse_key_sequence(seq):
