@@ -103,16 +103,20 @@ class PBCPlayblastUtils(object):
 
     @classmethod
     def _set_plugin_autoload(cls):
-        """Mark the plugin for auto-load so scenes that reference the
-        PlayblastCreatorShotMask node type open cleanly next session.
+        """Keep Maya's own auto-load for this plug-in switched OFF.
 
-        Without this, Maya reports 'Unrecognized node type
-        PlayblastCreatorShotMask; preserving node information during this
-        session' whenever a saved scene is reopened before the UI is
-        launched.
+        Earlier versions switched it on. Maya stored the bare file name
+        ("playblast_creator.py") and, at the next start, looked for it on
+        MAYA_PLUG_IN_PATH before the ATK toolbar had added the plug-in's
+        folder, so every Maya start logged "Plug-in playblast_creator.py was
+        not found on MAYA_PLUG_IN_PATH". The ATK toolbar now loads the
+        plug-in from its full path when it starts (atk_loader
+        .load_tool_plugins), which also keeps scenes with shot masks opening
+        cleanly. Turning auto-load off here clears the stale preference.
         """
         try:
-            cmds.pluginInfo(cls.PLUG_IN_NAME, edit=True, autoload=True)
+            if cmds.pluginInfo(cls.PLUG_IN_NAME, query=True, autoload=True):
+                cmds.pluginInfo(cls.PLUG_IN_NAME, edit=True, autoload=False)
         except Exception:
             pass
 

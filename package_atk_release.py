@@ -1,7 +1,9 @@
 """Build and verify a portable release ZIP from the canonical source tree.
 
-Usage: python package_atk_release.py --version 1.1.14 [--sync-dist]
+Usage: python package_atk_release.py --version 1.1.15 [--sync-dist] [--label rc1]
 The Python packager complements the existing PowerShell packager for CI.
+--label adds a suffix to the ZIP name (AnimationToolKit_v1_1_15_rc1.zip) for
+pre-release builds handed out for testing; the contents are the same.
 """
 import argparse
 import hashlib
@@ -24,16 +26,19 @@ def release_files(version):
                   and p.suffix not in ('.pyc','.pyo') and p.name not in ('.DS_Store','Thumbs.db'))
 
 
-def build(version, sync_dist=False):
+def build(version, sync_dist=False, label=''):
     if not re.fullmatch(r'\d+\.\d+\.\d+', version):
-        raise ValueError('Expected a semantic version such as 1.1.14')
+        raise ValueError('Expected a semantic version such as 1.1.15')
     text = (ROOT/'atk_toolbar/__init__.py').read_text(encoding='utf-8')
     if '__version__ = "%s"' % version not in text:
         raise ValueError('Requested version does not match the toolkit')
     paths = release_files(version)
     dist = ROOT/'dist'
     dist.mkdir(exist_ok=True)
-    target = dist/('AnimationToolKit_v%s.zip' % version.replace('.','_'))
+    if label and not re.fullmatch(r'[A-Za-z0-9]+', label):
+        raise ValueError('Expected a plain label such as rc1')
+    suffix = ('_' + label) if label else ''
+    target = dist/('AnimationToolKit_v%s%s.zip' % (version.replace('.','_'), suffix))
     with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
         for path in paths:
             name = path.relative_to(ROOT).as_posix()
@@ -61,5 +66,6 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--version',required=True)
     parser.add_argument('--sync-dist',action='store_true')
+    parser.add_argument('--label',default='',help='pre-release suffix for the ZIP name, e.g. rc1')
     args=parser.parse_args()
-    build(args.version,args.sync_dist)
+    build(args.version,args.sync_dist,args.label)

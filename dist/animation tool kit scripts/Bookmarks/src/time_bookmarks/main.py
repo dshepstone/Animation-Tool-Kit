@@ -39,10 +39,14 @@ def launch() -> None:
     """Detect the execution context and start the appropriate launcher."""
     try:
         import maya.cmds  # noqa: F401  — presence check only
-        _launch_in_maya()
     except ImportError:
         from time_bookmarks.dev_launch import main
         main()
+        return
+    # Kept outside the try block: an ImportError raised while building the
+    # Maya panel must surface as an error, not silently start the dev
+    # launcher (which builds a second, fake-backed window inside Maya).
+    _launch_in_maya()
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +97,40 @@ def _cleanup_session() -> None:
         except RuntimeError:
             pass
     _SESSION["overlay"] = None
+
+
+def shutdown() -> None:
+    """Destroy the panel, overlay, event filter and scriptJobs immediately.
+
+    Called by the ATK toolbar when Maya quits and before Reload Scripts.
+    deleteLater() does not run once Maya is quitting, so the Qt objects are
+    deleted synchronously; otherwise the overlay and event filter on Maya's
+    Time Slider outlive Qt and crash PySide's exit clean-up.
+    """
+    try:
+        import shiboken6 as shiboken
+    except ImportError:  # pragma: no cover - Maya 2022-2024 / no Qt
+        try:
+            import shiboken2 as shiboken
+        except ImportError:
+            shiboken = None
+
+    overlay = _SESSION.get("overlay")
+    event_filter = _SESSION.get("event_filter")
+    panel = _SESSION.get("panel")
+    _cleanup_session()
+    _SESSION["panel"] = None
+    _SESSION["controller"] = None
+    for obj in (event_filter, overlay, panel):
+        if obj is None or shiboken is None:
+            continue
+        try:
+            if shiboken.isValid(obj):
+                if obj is panel:
+                    obj.close()
+                shiboken.delete(obj)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

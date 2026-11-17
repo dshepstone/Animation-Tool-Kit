@@ -12,7 +12,7 @@ from datetime import datetime
 from savePlus_maya import cmds
 
 # Constants
-VERSION = "2.0.6"
+VERSION = "2.0.7"
 DEBUG_MODE = False
 DEFAULT_PROJECT_DIRS = [
     "assets",
@@ -438,7 +438,7 @@ def save_plus_proc(file_path=None, respect_project=True):
                 print(f"DEBUG: Incrementing version number from {version_number} to {new_version_number}")
             else:
                 # Try more flexible pattern for any number at the end of the string
-                number_match = re.search(r'(.*)(\d+)$', remainder)
+                number_match = re.search(r'^(.*?)(\d+)$', remainder)
                 
                 if number_match:
                     prefix = number_match.group(1)
@@ -452,7 +452,7 @@ def save_plus_proc(file_path=None, respect_project=True):
                     print(f"DEBUG: Incrementing number from {number} to {new_number} with project prefix preserved")
                 else:
                     # Try to find any numbers in the string that we can increment
-                    number_anywhere = re.search(r'(.*)(\d+)(.*)', remainder)
+                    number_anywhere = re.search(r'^(.*?)(\d+)(\D*)$', remainder)
                     
                     if number_anywhere:
                         before = number_anywhere.group(1)
@@ -477,7 +477,7 @@ def save_plus_proc(file_path=None, respect_project=True):
                 clean_base_name = base_name.replace('\\', '')
                 
                 # Look for the pattern after removing the backslash
-                clean_match = re.search(r'(.*)(\d+)$', clean_base_name)
+                clean_match = re.search(r'^(.*?)(\d+)$', clean_base_name)
                 if clean_match:
                     prefix = clean_match.group(1)
                     number = clean_match.group(2)
@@ -511,7 +511,7 @@ def save_plus_proc(file_path=None, respect_project=True):
                     print(f"DEBUG: Incrementing version number from {version_number} to {new_version_number}")
                 else:
                     # Regular expression to find the trailing number
-                    match = re.search(r'(\D*)(\d+)(\D*)$', base_name)
+                    match = re.search(r'^(.*?)(\d+)(\D*)$', base_name)
                     
                     if match:
                         # If a number is found
@@ -566,7 +566,7 @@ def save_plus_proc(file_path=None, respect_project=True):
                 remainder = project_prefix_match.group(2)
                 
                 # Try to find and increment the last number in the remainder
-                number_match = re.search(r'(\D*)(\d+)(\D*)$', remainder)
+                number_match = re.search(r'^(.*?)(\d+)(\D*)$', remainder)
                 if number_match:
                     prefix = number_match.group(1)
                     number = number_match.group(2)
@@ -582,7 +582,7 @@ def save_plus_proc(file_path=None, respect_project=True):
             else:
                 # Regular case (no project identifier)
                 # Try to find and increment the last number in the filename
-                number_match = re.search(r'(\D*)(\d+)(\D*)$', attempt_version)
+                number_match = re.search(r'^(.*?)(\d+)(\D*)$', attempt_version)
                 if number_match:
                     prefix = number_match.group(1)
                     number = number_match.group(2)

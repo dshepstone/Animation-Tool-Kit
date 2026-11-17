@@ -174,6 +174,8 @@ def _draw_symbol(painter, icon_key, accent, size):
         "user_dir": _draw_user_dir,
         "bookmark": _draw_bookmark,
         "warning":  _draw_warning,
+        "stagger":  _draw_stagger,
+        "cleanup":  _draw_cleanup,
     }
 
     fn = dispatch.get(icon_key, _draw_generic)
@@ -641,6 +643,44 @@ def _draw_bookmark(painter, accent, s, m):
         QtCore.QPointF(cx - bw * 0.55, top + s * 0.20),
         QtCore.QPointF(cx + bw * 0.55, top + s * 0.20),
     )
+
+
+def _draw_stagger(painter, accent, s, m):
+    """Three key bars, each starting later than the one above - staggered keys."""
+    bar_h = s * 0.11
+    length = s * 0.40
+    painter.setPen(QtCore.Qt.NoPen)
+    for row, color in enumerate((accent, accent.darker(125), accent.darker(160))):
+        x = m + row * s * 0.12
+        y = s * 0.24 + row * s * 0.21
+        painter.setBrush(QtGui.QBrush(color))
+        painter.drawRoundedRect(QtCore.QRectF(x, y, length, bar_h), bar_h / 2, bar_h / 2)
+        painter.setBrush(QtGui.QBrush(_FG_COLOR))
+        painter.drawEllipse(QtCore.QPointF(x + bar_h * 0.5, y + bar_h * 0.5),
+                            bar_h * 0.62, bar_h * 0.62)
+
+
+def _draw_cleanup(painter, accent, s, m):
+    """A curve with one key kept and one key struck out - key clean-up."""
+    path = QtGui.QPainterPath()
+    path.moveTo(m, s * 0.66)
+    path.cubicTo(s * 0.36, s * 0.66, s * 0.40, s * 0.30, s * 0.62, s * 0.30)
+    path.lineTo(s - m, s * 0.30)
+    painter.setPen(_pen(accent, s * 0.06))
+    painter.setBrush(QtCore.Qt.NoBrush)
+    painter.drawPath(path)
+
+    # Kept keys
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtGui.QBrush(_FG_COLOR))
+    for x, y in ((m, s * 0.66), (s * 0.62, s * 0.30)):
+        painter.drawEllipse(QtCore.QPointF(x, y), s * 0.065, s * 0.065)
+
+    # Removed (redundant) key: a small cross on the flat hold
+    cx, cy, r = s * 0.80, s * 0.30, s * 0.085
+    painter.setPen(_pen(QtGui.QColor("#ef6464"), s * 0.07))
+    painter.drawLine(QtCore.QPointF(cx - r, cy - r), QtCore.QPointF(cx + r, cy + r))
+    painter.drawLine(QtCore.QPointF(cx - r, cy + r), QtCore.QPointF(cx + r, cy - r))
 
 
 def _draw_generic(painter, accent, s, m):

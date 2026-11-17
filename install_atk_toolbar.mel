@@ -348,6 +348,8 @@ global proc atk__install()
         "AnimSnap_1_0_0/anim_snap.py",
         "xform_copy_past_2_0_0/xform_copy_paste.py",
         "Walk_Off_Node_1_0_0/walk_off_node.py",
+        "Stagger_Keys_1_0_0/stagger_keys.py",
+        "Key_Cleanup_1_0_0/key_cleanup.py",
         "selection_set_2_0_4/SmartSelectSets_v2.py",
         "Mirror_Controls_2_3_0/mirror_controls_v2_3_0.py",
         "Character_Snapshot_1_0_0/character_snapshot_v1_0_0.py",

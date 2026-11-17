@@ -91,7 +91,7 @@ TOOL_REGISTRY = [
         "icon_file": "add_Remove.png",
         "icon_key":  "frames",
         "group":     "timing",
-        "version":   "1.0.2",
+        "version":   "1.0.3",
     },
     {
         "id":        "tangent_tools",
@@ -124,7 +124,7 @@ TOOL_REGISTRY = [
         "icon_file": "noise_generator_icon.png",
         "icon_key":  "noise",
         "group":     "timing",
-        "version":   "1.1.0",
+        "version":   "1.1.1",
     },
     {
         "id":        "overlap",
@@ -146,7 +146,7 @@ TOOL_REGISTRY = [
         "icon_file": "xform_copy_paste.png",
         "icon_key":  "xform",
         "group":     "timing",
-        "version":   "2.0.0",
+        "version":   "2.0.1",
     },
     {
         "id":        "walk_off_node",
@@ -160,6 +160,44 @@ TOOL_REGISTRY = [
         "version":   "1.0.0",
     },
     {
+        "id":        "stagger_keys",
+        "label":     "Stagger Keys",
+        "tooltip":   "Offset keys across a selection, in selection order, to block in overlap",
+        "module":    "stagger_keys",
+        "launch_fn": "show",
+        "context_actions": [
+            ("Stagger +1 Frame",    "stagger_plus_1"),
+            ("Stagger +2 Frames",   "stagger_plus_2"),
+            ("Stagger -1 Frame",    "stagger_minus_1"),
+            None,
+            ("Offset All +1 Frame", "offset_plus_1"),
+            ("Offset All -1 Frame", "offset_minus_1"),
+        ],
+        "icon_file": "stagger_keys.png",
+        "icon_key":  "stagger",
+        "group":     "timing",
+        "version":   "1.0.0",
+    },
+    {
+        "id":        "key_cleanup",
+        "label":     "Key Cleanup",
+        "tooltip":   "Remove redundant keys, static channels, sub-frame keys and Euler flips",
+        "module":    "key_cleanup",
+        "launch_fn": "show",
+        "context_actions": [
+            ("Remove Redundant Keys",     "remove_redundant_keys"),
+            ("Delete Static Channels",    "delete_static_channels"),
+            ("Snap Keys to Whole Frames", "snap_keys_to_frames"),
+            ("Euler Filter",              "euler_filter"),
+            None,
+            ("Run All Passes",            "clean_all"),
+        ],
+        "icon_file": "key_cleanup.png",
+        "icon_key":  "cleanup",
+        "group":     "timing",
+        "version":   "1.0.0",
+    },
+    {
         "id":        "bookmarks",
         "label":     "Bookmarks",
         "tooltip":   "Create and navigate time bookmarks on the Maya timeline",
@@ -168,7 +206,7 @@ TOOL_REGISTRY = [
         "icon_file": "Bookmark.png",
         "icon_key":  "bookmark",
         "group":     "timing",
-        "version":   "0.1.0",
+        "version":   "0.1.1",
     },
     {
         "id":        "micro_manipulator",
@@ -179,7 +217,7 @@ TOOL_REGISTRY = [
         "icon_file": "Micro_Manipulator_Icon.png",
         "icon_key":  "xform",
         "group":     "viewport",
-        "version":   "1.0.0",
+        "version":   "1.0.1",
     },
     {
         "id":        "temp_pivot",
@@ -235,7 +273,7 @@ TOOL_REGISTRY = [
         "icon_file": "animSnap.png",
         "icon_key":  "snap",
         "group":     "viewport",
-        "version":   "1.1.0",
+        "version":   "1.1.1",
     },
     {
         "id":        "wire_shape",
@@ -246,7 +284,7 @@ TOOL_REGISTRY = [
         "icon_file": "Shape_Icon.png",
         "icon_key":  "wire",
         "group":     "rigging",
-        "version":   "2.0.0",
+        "version":   "2.0.1",
     },
     {
         "id":        "reset",
@@ -270,7 +308,7 @@ TOOL_REGISTRY = [
         "icon_file": "reset_icon.png",
         "icon_key":  "reset",
         "group":     "rigging",
-        "version":   "2.0.1",
+        "version":   "2.0.2",
     },
     {
         "id":        "selection_set",
@@ -281,7 +319,7 @@ TOOL_REGISTRY = [
         "icon_file": "selectionSet.png",
         "icon_key":  "select",
         "group":     "rigging",
-        "version":   "2.5.0",
+        "version":   "2.5.1",
     },
     {
         "id":        "character_snapshot",
@@ -316,7 +354,7 @@ TOOL_REGISTRY = [
         "icon_file": "saveplus.png",
         "icon_key":  "save",
         "group":     "pipeline",
-        "version":   "2.0.6",
+        "version":   "2.0.7",
     },
     {
         "id":        "studio_library",
@@ -407,8 +445,47 @@ def setup_paths():
             )
 
 
+def _plugin_file(plugin):
+    """Full path of a tool's Maya plug-in file shipped by ATK, or None."""
+    scripts_dir = cmds.internalVar(userScriptDir=True)
+    for folder in (os.path.join(scripts_dir, "playblast_creator", "PBC_v2_0_4"), scripts_dir):
+        path = os.path.join(folder, plugin)
+        if os.path.isfile(path):
+            return path.replace("\\", "/")
+    return None
+
+
+def load_tool_plugins():
+    """Load the tools' Maya plug-ins by full path, with Maya auto-load off.
+
+    Maya's own auto-load stores the bare file name and runs before the
+    toolbar adds the plug-in folder to MAYA_PLUG_IN_PATH, so it fails at
+    every start ("... was not found on MAYA_PLUG_IN_PATH"). Loading here
+    keeps scenes that contain the tools' nodes working once the toolbar is
+    up, and clears any stale auto-load preference left by older versions.
+    """
+    for tool in TOOL_REGISTRY:
+        plugin = tool.get("maya_plugin")
+        if not plugin:
+            continue
+        try:
+            if not _is_plugin_loaded(plugin):
+                path = _plugin_file(plugin)
+                if path is None:
+                    continue
+                cmds.loadPlugin(path, quiet=True)
+            if cmds.pluginInfo(plugin, query=True, autoload=True):
+                cmds.pluginInfo(plugin, edit=True, autoload=False)
+        except Exception as exc:
+            try:
+                cmds.warning("ATK Toolbar: could not load plug-in {}: {}".format(plugin, exc))
+            except Exception:
+                pass
+
+
 def start_tool_services():
     """Start idempotent runtime services required by installed toolbar tools."""
+    load_tool_plugins()
     for tool in TOOL_REGISTRY:
         if tool.get("startup_fn") and is_tool_installed(tool["id"]):
             launch_tool_fn(tool["id"], tool["startup_fn"])
@@ -546,6 +623,37 @@ def tool_module_roots():
     return roots
 
 
+def shutdown_tool_modules():
+    """Call ``shutdown()`` on every loaded tool module that defines one.
+
+    Used before Reload Scripts purges the modules and when Maya quits, so
+    tools release Maya callbacks, event filters on Maya widgets and Python
+    owned Qt objects while Python and Qt are still running. Returns the
+    names of the modules that were shut down.
+    """
+    names = []
+    for tool in TOOL_REGISTRY:
+        for name in [tool["module"]] + list(tool.get("extra_modules", ())):
+            for candidate in (name, name.split(".")[0]):
+                if candidate not in names:
+                    names.append(candidate)
+    done = []
+    for name in names:
+        module = sys.modules.get(name)
+        shutdown = getattr(module, "shutdown", None)
+        if not callable(shutdown):
+            continue
+        try:
+            shutdown()
+            done.append(name)
+        except Exception as exc:
+            try:
+                cmds.warning("ATK Toolbar: {} shutdown failed: {}".format(name, exc))
+            except Exception:
+                pass
+    return done
+
+
 def purge_toolbar_modules():
     """Drop the atk_toolbar package itself from ``sys.modules``.
 
@@ -576,12 +684,10 @@ def reload_tool_modules():
     setup_paths()
     importlib.invalidate_caches()
 
+    shutdown_tool_modules()
+
     purged = set()
     for root in tool_module_roots():
-        module = sys.modules.get(root)
-        shutdown = getattr(module, "shutdown", None)
-        if callable(shutdown):
-            shutdown()
         prefix = root + "."
         for name in list(sys.modules):
             if name == root or name.startswith(prefix):

@@ -30,7 +30,7 @@ from PySide6 import QtCore, QtWidgets, QtGui
 
 TOOL_NAME = "SmartSelectSetsToolV2"
 TOOL_TITLE = "Smart Select Sets"
-TOOL_VERSION = "2.5.0"
+TOOL_VERSION = "2.5.1"
 SCHEMA_VERSION = 2
 SCENE_NODE_NAME = "ConestogaSelectionGroupNode"
 SCENE_ATTR_NAME = "groupsData"
@@ -426,7 +426,21 @@ class SmartSelectSetsManager:
         next_group_id = int(payload.get("next_group_id", max_group_id + 1))
         self.next_group_id = max(next_group_id, max_group_id + 1)
 
+    def reset(self) -> None:
+        """Forget every category and set (used when a different scene opens)."""
+        self.categories = {DEFAULT_CATEGORY: Category(name=DEFAULT_CATEGORY, display_name=DEFAULT_CATEGORY)}
+        self.groups = {}
+        self.next_group_id = 1
+
+    def is_empty(self) -> bool:
+        """True when there is nothing worth storing in the scene."""
+        return not self.groups and all(name == DEFAULT_CATEGORY for name in self.categories)
+
     def save_to_scene_node(self) -> None:
+        # Nothing to store and no data node yet: do not add a node to (and
+        # dirty) a scene just because the window was opened and closed.
+        if self.is_empty() and not cmds.objExists(SCENE_NODE_NAME):
+            return
         payload = json.dumps(self.to_payload(), indent=2)
         if not cmds.objExists(SCENE_NODE_NAME):
             cmds.createNode("transform", name=SCENE_NODE_NAME)
@@ -933,7 +947,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         self.menu_button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         menu = QtWidgets.QMenu(self)
         menu.addAction("Save to Scene", self.save_to_scene)
-        menu.addAction("Load from Scene", self.load_from_scene)
+        menu.addAction("Load from Scene", lambda *_: self.load_from_scene())
         menu.addSeparator()
         menu.addAction("Export JSON", self.export_json)
         menu.addAction("Import JSON", self.import_json)
@@ -958,7 +972,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
 
         load_btn = QtWidgets.QPushButton("Load")
         load_btn.setToolTip("Reload groups stored in the current Maya scene.")
-        load_btn.clicked.connect(self.load_from_scene)
+        load_btn.clicked.connect(lambda *_: self.load_from_scene())
         row.addWidget(load_btn)
 
         row.addStretch(1)
@@ -1009,7 +1023,8 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             pass
 
     def _on_scene_opened(self, *args):
-        QtCore.QTimer.singleShot(50, lambda: self.load_from_scene(show_feedback=False))
+        QtCore.QTimer.singleShot(
+            50, lambda: self.load_from_scene(show_feedback=False, reset_if_missing=True))
 
     # ----- ui refresh -----
     def clear_categories_ui(self) -> None:
@@ -1598,9 +1613,14 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         except Exception as exc:
             self._show_error(str(exc))
 
-    def load_from_scene(self, show_feedback: bool = True) -> None:
+    def load_from_scene(self, show_feedback: bool = True, reset_if_missing: bool = False) -> None:
         try:
             found = self.manager.load_from_scene_node()
+            if not found and reset_if_missing:
+                # A different scene without saved sets was opened. Keeping
+                # the previous scene's sets showed stale buttons and wrote
+                # them into the new scene when the window closed.
+                self.manager.reset()
             # Fresh data, fresh view: only categories that hold sets render
             self._session_categories.clear()
             self.refresh_ui()
