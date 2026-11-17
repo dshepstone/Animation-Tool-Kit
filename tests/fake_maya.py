@@ -17,6 +17,7 @@ class FakeScene(object):
         self.types = {}         # curve -> node type
         self.locked = set()
         self.referenced = set()
+        self.tangents = {}      # curve -> {"in": [...], "out": [...]} angles
         self.selection = []
         self.selected_keys = {}  # curve -> [times]
         self.current_time = 1.0
@@ -149,7 +150,10 @@ class FakeScene(object):
         return None
 
     def keyTangent(self, curve, **kwargs):
-        return [0.0] * len(self.curves[curve])
+        count = len(self.curves[curve])
+        angles = self.tangents.get(curve, {})
+        side = "in" if kwargs.get("inAngle") else "out"
+        return list(angles.get(side, [0.0] * count))
 
     def cutKey(self, curve, **kwargs):
         for start, end in kwargs.get("time", []):

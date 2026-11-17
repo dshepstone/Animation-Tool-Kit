@@ -44,35 +44,68 @@ _ROTATE_ATTRS = ("rotateX", "rotateY", "rotateZ")
 # Pure helpers (no Maya calls - covered by the unit tests)
 # ---------------------------------------------------------------------------
 
-def redundant_key_indices(values, tolerance=DEFAULT_TOLERANCE, flat=None):
+def redundant_key_indices(values, in_flat, out_flat, tolerance=DEFAULT_TOLERANCE):
     """Return the indices of keys that add nothing to a curve.
 
-    A key is redundant when it has the same value as the key before it and
-    the key after it, so it sits inside a flat hold.  The first and last key
-    of every hold are kept, which keeps the hold's length and the timing of
-    the moves on either side of it.
+    A key is redundant when it sits inside a truly flat hold: it has the same
+    value as the keys on either side, and both curve segments it touches are
+    flat.  That means the previous key's out tangent, this key's in and out
+    tangents, and the next key's in tangent must all be flat.  Equal values
+    alone are not enough: a sloped tangent on a neighbour bends the curve
+    through this key, and removing it would change the motion.
 
-    ``flat`` is an optional list of booleans, one per key.  A key whose
-    tangents are not flat is kept: it bends the curve even though its value
-    matches its neighbours.
+    ``in_flat`` / ``out_flat`` hold one boolean per key.  The first and last
+    key of every hold are kept, which keeps the hold's length and the timing
+    of the moves on either side of it.
     """
+    count = len(values)
+    if len(in_flat) != count or len(out_flat) != count:
+        return []
     redundant = []
-    for i in range(1, len(values) - 1):
+    for i in range(1, count - 1):
         if abs(values[i] - values[i - 1]) > tolerance:
             continue
         if abs(values[i] - values[i + 1]) > tolerance:
             continue
-        if flat is not None and not flat[i]:
+        if not (out_flat[i - 1] and in_flat[i] and out_flat[i] and in_flat[i + 1]):
             continue
         redundant.append(i)
     return redundant
 
 
-def is_static(values, tolerance=DEFAULT_TOLERANCE):
-    """True when every key holds the same value (within ``tolerance``)."""
+def is_static(values, in_flat=None, out_flat=None, tolerance=DEFAULT_TOLERANCE):
+    """True when the curve never changes value.
+
+    Every key must hold the same value (within ``tolerance``) *and*, when
+    there is more than one key, every tangent must be flat: equal key values
+    joined by sloped tangents still move between the keys.  Pass the tangent
+    flags whenever they are known; without them a multi-key curve is never
+    reported as static.
+    """
     if not values:
         return False
-    return max(values) - min(values) <= tolerance
+    if max(values) - min(values) > tolerance:
+        return False
+    if len(values) == 1:
+        return True
+    if in_flat is None or out_flat is None:
+        return False
+    if len(in_flat) != len(values) or len(out_flat) != len(values):
+        return False
+    return all(in_flat) and all(out_flat)
+
+
+def _tangent_flags(curve, count):
+    """Return ``(in_flat, out_flat)`` for a curve, or ``(None, None)`` if unknown."""
+    try:
+        in_angles = cmds.keyTangent(curve, query=True, inAngle=True) or []
+        out_angles = cmds.keyTangent(curve, query=True, outAngle=True) or []
+    except Exception:
+        return None, None
+    if len(in_angles) != count or len(out_angles) != count:
+        return None, None
+    return ([abs(a) <= _FLAT_ANGLE for a in in_angles],
+            [abs(a) <= _FLAT_ANGLE for a in out_angles])
 
 
 def subframe_times(times, epsilon=1e-4):
@@ -211,17 +244,10 @@ def remove_redundant_keys(scope="selected", time_range=None,
             values = cmds.keyframe(curve, query=True, valueChange=True) or []
             if len(times) < 3 or len(times) != len(values):
                 continue
-            flat = None
-            try:
-                in_angles = cmds.keyTangent(curve, query=True, inAngle=True) or []
-                out_angles = cmds.keyTangent(curve, query=True, outAngle=True) or []
-                if len(in_angles) == len(times) and len(out_angles) == len(times):
-                    flat = [abs(a) <= _FLAT_ANGLE and abs(b) <= _FLAT_ANGLE
-                            for a, b in zip(in_angles, out_angles)]
-            except Exception:
-                flat = None
-
-            doomed = [times[i] for i in redundant_key_indices(values, tolerance, flat)
+            in_flat, out_flat = _tangent_flags(curve, len(times))
+            if in_flat is None:
+                continue  # tangents unknown: never guess, keep every key
+            doomed = [times[i] for i in redundant_key_indices(values, in_flat, out_flat, tolerance)
                       if in_range(times[i], time_range)]
             if not doomed:
                 continue
@@ -254,7 +280,8 @@ def delete_static_channels(scope="selected", tolerance=DEFAULT_TOLERANCE, curves
     with _UndoChunk("ATKKeyCleanupStatic"):
         for curve in curves:
             values = cmds.keyframe(curve, query=True, valueChange=True) or []
-            if not is_static(values, tolerance):
+            in_flat, out_flat = _tangent_flags(curve, len(values))
+            if not is_static(values, in_flat, out_flat, tolerance):
                 continue
             if _is_referenced(curve):
                 skipped += 1

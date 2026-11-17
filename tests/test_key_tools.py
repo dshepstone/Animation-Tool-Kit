@@ -26,20 +26,49 @@ class KeyCleanupTests(unittest.TestCase):
         self.scene = FakeScene()
         self.tool = load_tool(KEY_CLEANUP, self.scene)
 
+    def _find(self, values, in_flat=None, out_flat=None, **kwargs):
+        flat = [True] * len(values)
+        return self.tool.redundant_key_indices(
+            values, in_flat or flat, out_flat or flat, **kwargs)
+
     def test_redundant_indices_keep_the_ends_of_each_hold(self):
-        find = self.tool.redundant_key_indices
-        self.assertEqual(find([0, 0, 0, 0, 5]), [1, 2])
-        self.assertEqual(find([0, 5, 5, 5, 0]), [2])
-        self.assertEqual(find([0, 1, 2, 3]), [])
-        self.assertEqual(find([1, 1]), [])
-        self.assertEqual(find([]), [])
+        self.assertEqual(self._find([0, 0, 0, 0, 5]), [1, 2])
+        self.assertEqual(self._find([0, 5, 5, 5, 0]), [2])
+        self.assertEqual(self._find([0, 1, 2, 3]), [])
+        self.assertEqual(self._find([1, 1]), [])
+        self.assertEqual(self._find([]), [])
 
     def test_redundant_indices_respect_tolerance_and_tangents(self):
-        find = self.tool.redundant_key_indices
-        self.assertEqual(find([0, 0.0004, 0], tolerance=0.001), [1])
-        self.assertEqual(find([0, 0.01, 0], tolerance=0.001), [])
+        self.assertEqual(self._find([0, 0.0004, 0], tolerance=0.001), [1])
+        self.assertEqual(self._find([0, 0.01, 0], tolerance=0.001), [])
         # A key with a bent tangent shapes the curve and must stay.
-        self.assertEqual(find([0, 0, 0], flat=[True, False, True]), [])
+        self.assertEqual(self._find([0, 0, 0], in_flat=[True, False, True]), [])
+
+    def test_sloped_neighbour_tangents_keep_the_middle_key(self):
+        # Equal values at 0/5/10, upward out tangent on the first key and a
+        # downward in tangent on the last: the flat middle key pins the
+        # curve and removing it would add an overshoot.
+        self.assertEqual(self._find([0, 0, 0], out_flat=[False, True, True]), [])
+        self.assertEqual(self._find([0, 0, 0], in_flat=[True, True, False]), [])
+
+    def test_is_static_needs_flat_tangents(self):
+        static = self.tool.is_static
+        flat = [True, True, True]
+        self.assertTrue(static([2, 2, 2], flat, flat))
+        self.assertFalse(static([2, 2, 2], flat, [True, False, True]))
+        self.assertFalse(static([2, 2, 2]))           # tangents unknown
+        self.assertTrue(static([2]))                   # one key never moves
+        self.assertFalse(static([0, 1], [True, True], [True, True]))
+
+    def test_equal_keys_with_sloped_tangents_are_not_deleted(self):
+        s = self.scene
+        moving = s.add_curve("ctrl", "translateX", {1: 2.0, 10: 2.0, 20: 2.0})
+        s.tangents[moving] = {"in": [0, 30, 0], "out": [0, 30, 0]}
+        s.selection = ["ctrl"]
+        self.assertEqual(self.tool.delete_static_channels(), 0)
+        self.assertEqual(self.tool.remove_redundant_keys(), 0)
+        self.assertIn(moving, s.curves)
+        self.assertEqual(s.times(moving), [1, 10, 20])
 
     def test_remove_redundant_keys_in_scene(self):
         s = self.scene

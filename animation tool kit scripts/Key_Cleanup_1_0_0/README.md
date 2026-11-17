@@ -15,8 +15,8 @@ Each button is a single Undo. The four passes are also in the toolbar button's r
 
 | Pass | What it does |
 |---|---|
-| Remove Redundant Keys | Deletes keys that sit inside a flat hold. The first and last key of each hold stay, so timing does not change. Keys with non-flat tangents are kept. |
-| Delete Static Channels | Deletes curves whose keys never change value. The attribute keeps its value. Referenced curves are left alone. |
+| Remove Redundant Keys | Deletes keys that sit inside a flat hold. The first and last key of each hold stay, so timing does not change. A key is only removed when both curve segments it touches are flat, including the tangents of the keys on either side. |
+| Delete Static Channels | Deletes curves that never change value: every key holds the same value and every tangent is flat. Equal keys joined by sloped tangents still move, so those curves are kept. The attribute keeps its value. Referenced curves are left alone. |
 | Snap Keys to Whole Frames | Moves sub-frame keys, left by retiming or scaling, onto whole frames. |
 | Euler Filter | Removes 360-degree flips on the rotate channels, one object at a time. |
 
