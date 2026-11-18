@@ -611,9 +611,27 @@ def tweak_meshes():
     return sorted(set(out))
 
 
+def level_contribution(node, layer, frame, exclude=()):
+    """What a sequence level currently adds on ``frame``: its poses times their weights."""
+    weighted = []
+    for index, _pose_frame in core.level_entries(read_meta(node), layer):
+        if index in exclude:
+            continue
+        weight = cmds.getAttr(weight_plug(node, index), time=frame)
+        weighted.append((read_target(node, index), weight))
+    return core.blend_deltas(weighted)
+
+
 def commit_delta(mesh, delta, mode, frame, layer="", ramp_in=3.0, ramp_out=3.0,
-                 kind=core.KIND_SCULPT, label=None):
-    """Store an offset with a keying mode. A sequence pose on an occupied frame is refined."""
+                 kind=core.KIND_SCULPT, label=None, carry_level=True, exclude=()):
+    """Store an offset with a keying mode. A sequence pose on an occupied frame is refined.
+
+    ``delta`` is measured against the mesh as it shows on ``frame``. A new
+    sequence pose replaces its level on that frame (the neighbours are keyed
+    to 0 there), so with ``carry_level`` the level's current in-between shape
+    is folded into the new pose and the sculpt looks the same after commit.
+    ``exclude`` lists targets that were muted while measuring ``delta``.
+    """
     if mode == core.MODE_SEQUENCE and not layer:
         layer = "L1"
     node = ensure_tweak_node(mesh)
@@ -622,6 +640,8 @@ def commit_delta(mesh, delta, mode, frame, layer="", ramp_in=3.0, ramp_out=3.0,
         if existing is not None:
             write_target(node, existing, core.add_deltas(read_target(node, existing), delta))
             return existing
+        if carry_level:
+            delta = core.add_deltas(level_contribution(node, layer, frame, exclude), delta)
     label = label or core.frame_label(kind, frame if mode != core.MODE_STATIC else None,
                                       layer if mode == core.MODE_SEQUENCE else "")
     entry = core.make_entry(label, kind, mode,
@@ -637,7 +657,8 @@ def blank_pose(mesh, layer="L1", frame=None):
     with undo_chunk("blank pose"):
         if core.find_sequence_target(read_meta(node), layer, frame) is not None:
             raise TweakError("Level %s already has a pose on frame %g" % (layer, frame))
-        return commit_delta(mesh, {}, core.MODE_SEQUENCE, frame, layer, kind=core.KIND_BLANK)
+        return commit_delta(mesh, {}, core.MODE_SEQUENCE, frame, layer, kind=core.KIND_BLANK,
+                            carry_level=False)
 
 
 def hold_pose(mesh, layer="L1", frame=None):
@@ -652,7 +673,7 @@ def hold_pose(mesh, layer="L1", frame=None):
         raise TweakError("Level %s has no pose before frame %g to hold" % (layer, frame))
     with undo_chunk("hold pose"):
         return commit_delta(mesh, read_target(node, previous), core.MODE_SEQUENCE, frame,
-                            layer, kind=core.KIND_HOLD)
+                            layer, kind=core.KIND_HOLD, carry_level=False)
 
 
 def paint_mask(mesh, index):
@@ -849,8 +870,9 @@ def commit_sculpt(mesh_or_sculpt=None):
             write_target(node, index, core.refine_delta(read_target(node, index), delta,
                                                          record.get("refine_weight", 1.0)))
             return index
+        muted = [index for index, _source, _value in record.get("muted", [])]
         return commit_delta(xf, delta, record["mode"], record["frame"], record["layer"],
-                            record["ramp_in"], record["ramp_out"])
+                            record["ramp_in"], record["ramp_out"], exclude=muted)
 
 
 def cancel_sculpt(mesh_or_sculpt=None):

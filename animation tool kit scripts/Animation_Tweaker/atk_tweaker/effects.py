@@ -179,7 +179,7 @@ def push_out(mesh, driver, start=None, end=None, skin_offset=0.1, mask=None):
                 local = core.xform_point(current[i], d_inverse)
                 point, normal, _face = fn.getClosestPointAndNormal(om.MPoint(*local), om.MSpace.kObject)
                 surface = core.xform_point((point.x, point.y, point.z), d_matrix)
-                n_world = core.xform_vector((normal.x, normal.y, normal.z), d_matrix)
+                n_world = core.xform_normal((normal.x, normal.y, normal.z), d_matrix)
                 fixed = core.push_out_point(current[i], surface, n_world, skin_offset)
                 d = core.v_scale(core.v_sub(fixed, current[i]), core.mask_weight(mask, i))
                 if core.v_length(d) > 1e-7:

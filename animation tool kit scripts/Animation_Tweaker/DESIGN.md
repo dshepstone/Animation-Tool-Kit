@@ -90,6 +90,13 @@ the ends; effect levels fade to 0 one frame outside their range. Any insert
 or delete rekeys the level from scratch, so keys can never drift from the
 metadata.
 
+A new pose takes over its level on its frame (the neighbours are keyed to 0
+there). The sculpt delta was measured against the mesh *with* the level's
+in-between shape showing, so `engine.commit_delta` folds that shape (each
+pose's offsets times its weight on the frame, `level_contribution`) into the
+new pose. Targets muted while sculpting are left out, since they were not in
+the measured mesh. Blank and Hold poses do not carry the level.
+
 ## Feature map
 
 | # | Source feature | ATK Animation Tweaker | How the ATK approach differs |

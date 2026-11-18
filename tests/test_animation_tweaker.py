@@ -77,6 +77,11 @@ class DeltaTests(unittest.TestCase):
         refined = core.refine_delta(tweak, core.compute_delta(shown, sculpt), weight)
         close(self, core.apply_delta(base, refined, weight)[1], sculpt[1])
 
+    def test_blend_deltas(self):
+        blended = core.blend_deltas([({0: (0, 2, 0)}, 0.5), ({0: (0, 4, 0), 1: (1, 0, 0)}, 0.5),
+                                     ({2: (9, 9, 9)}, 0.0)])
+        self.assertEqual(blended, {0: (0, 3, 0), 1: (0.5, 0, 0)})
+
     def test_component_ranges_round_trip(self):
         indices = [0, 1, 2, 5, 7, 8, 100]
         comps = core.compress_indices(indices)
@@ -228,6 +233,15 @@ class MatrixAndSurfaceTests(unittest.TestCase):
         m = rotate_z(math.pi / 2, (5, 1, 0))
         moved = [core.xform_point(p, m) for p in driver]
         close(self, core.follow_surface(binding, moved, tris), core.xform_point(point, m))
+
+    def test_normals_stay_perpendicular_under_nonuniform_scale(self):
+        m = (4.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1)
+        # A 45-degree slope in object space; its tangent and normal.
+        tangent, normal = (1.0, 1.0, 0.0), core.v_normalize((1.0, -1.0, 0.0))
+        world_tangent = core.xform_vector(tangent, m)
+        self.assertAlmostEqual(core.v_dot(core.xform_normal(normal, m), world_tangent), 0.0)
+        self.assertNotAlmostEqual(core.v_dot(core.xform_vector(normal, m), world_tangent), 0.0)
+        self.assertAlmostEqual(core.v_length(core.xform_normal(normal, m)), 1.0)
 
     def test_push_out(self):
         surface, normal = (0, 0, 0), (0, 1, 0)
@@ -508,8 +522,10 @@ class FakeCmds(object):
         elif values:
             self.values[self._plug(plug)] = values[0] if len(values) == 1 else values
 
-    def getAttr(self, plug, multiIndices=False, **kwargs):
+    def getAttr(self, plug, multiIndices=False, time=None, **kwargs):
         plug = self._plug(plug)
+        if time is not None and plug in self.keys:
+            return core.evaluate_linear(sorted(self.keys[plug].items()), float(time))
         if multiIndices:
             prefix = plug + "["
             found = set()
@@ -619,13 +635,13 @@ class EngineTests(unittest.TestCase):
 
     def test_sequence_keys_rekey_on_insert_and_delete(self):
         e = self.engine
-        a = e.commit_delta("|body", {0: (0, 1, 0)}, core.MODE_SEQUENCE, 10.0, "L1")
-        b = e.commit_delta("|body", {0: (0, 2, 0)}, core.MODE_SEQUENCE, 30.0, "L1")
-        c = e.commit_delta("|body", {1: (0, 2, 0)}, core.MODE_SEQUENCE, 20.0, "L2")
+        a = e.commit_delta("|body", {0: (0, 1, 0)}, core.MODE_SEQUENCE, 10.0, "L1", carry_level=False)
+        b = e.commit_delta("|body", {0: (0, 2, 0)}, core.MODE_SEQUENCE, 30.0, "L1", carry_level=False)
+        c = e.commit_delta("|body", {1: (0, 2, 0)}, core.MODE_SEQUENCE, 20.0, "L2", carry_level=False)
         self.assertEqual(self.weight_keys(a), [(10.0, 1.0), (30.0, 0.0)])
         self.assertEqual(self.weight_keys(b), [(10.0, 0.0), (30.0, 1.0)])
         self.assertEqual(self.weight_keys(c), [(20.0, 1.0)])          # level L2 is separate
-        mid = e.commit_delta("|body", {0: (0, 3, 0)}, core.MODE_SEQUENCE, 20.0, "L1")
+        mid = e.commit_delta("|body", {0: (0, 3, 0)}, core.MODE_SEQUENCE, 20.0, "L1", carry_level=False)
         self.assertEqual(self.weight_keys(a), [(10.0, 1.0), (20.0, 0.0)])
         self.assertEqual(self.weight_keys(mid), [(10.0, 0.0), (20.0, 1.0), (30.0, 0.0)])
         # The same frame again refines the existing pose instead of adding one.
@@ -638,6 +654,24 @@ class EngineTests(unittest.TestCase):
         self.assertNotIn(mid, e.read_meta(self.node)["targets"])
         self.assertNotIn(mid, e.alias_map(self.node))
         self.assertNotIn("%s.weight[%d]" % (self.node, mid), self.cmds.values)
+
+    def test_new_pose_between_poses_keeps_the_in_between_shape(self):
+        e = self.engine
+        a = e.commit_delta("|body", {0: (0, 2, 0)}, core.MODE_SEQUENCE, 4.0, "L1", carry_level=False)
+        b = e.commit_delta("|body", {0: (0, 4, 0)}, core.MODE_SEQUENCE, 12.0, "L1", carry_level=False)
+        e.commit_delta("|body", {0: (0, 1, 0)}, core.MODE_STATIC, 1.0)     # other tweaks stay out
+        # Past the last pose the level holds it, so a new pose there starts from it.
+        tail = e.commit_delta("|body", {0: (0, 1, 0)}, core.MODE_SEQUENCE, 16.0, "L1")
+        self.assertEqual(e.read_target(self.node, tail), {0: (0, 5, 0)})
+        # On frame 8 the level shows 3. The artist sculpts it to 3.1.
+        mid = e.commit_delta("|body", {0: (0, 0.1, 0)}, core.MODE_SEQUENCE, 8.0, "L1")
+        stored = e.read_target(self.node, mid)[0]
+        self.assertAlmostEqual(stored[1], 3.1)
+        self.assertEqual(self.weight_keys(a), [(4.0, 1.0), (8.0, 0.0)])
+        # Sculpted with this level muted: only the edit is stored.
+        quiet = e.commit_delta("|body", {0: (0, 0.5, 0)}, core.MODE_SEQUENCE, 10.0, "L1",
+                               exclude=[a, b, mid, tail])
+        self.assertEqual(e.read_target(self.node, quiet), {0: (0, 0.5, 0)})
 
     def test_hold_and_blank_poses(self):
         e = self.engine

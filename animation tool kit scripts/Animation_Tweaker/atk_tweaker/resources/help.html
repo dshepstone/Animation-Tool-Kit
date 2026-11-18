@@ -64,7 +64,7 @@ Refine needs the tweak's weight to be above 0 on the current frame.</p>
 <td>Pose-to-pose shape animation: each sculpt crossfades into the next.</td></tr></table>
 <p>Sequence tweaks live on <b>levels</b> (L1, L2, ...). Each level is an independent pose-to-pose track, so you can run
 a cheek track and a cloth track without them affecting each other. Adding or deleting a pose rekeys its whole level.
-Sculpting on a frame that already has a pose on that level adds to that pose.</p>
+Sculpting on a frame that already has a pose on that level adds to that pose. A new pose between two others starts from the in-between shape the level shows on that frame, so what you sculpted is exactly what you get after Commit (unless you muted that level while sculpting).</p>
 <p>The first pose of a level stays on before its frame and the last stays on after it. To end a track, add a
 <b>Blank pose</b>: an empty pose that the previous one fades into.</p>
 <p><b>Hold pose</b> copies the previous pose on the level to the current frame, so the shape holds and then moves on.</p>

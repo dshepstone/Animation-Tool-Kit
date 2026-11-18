@@ -158,6 +158,15 @@ def refine_delta(existing, correction, current_weight):
     return add_deltas(existing, correction, 1.0 / current_weight)
 
 
+def blend_deltas(weighted):
+    """Sum of ``[(delta, weight), ...]``: what several targets add together."""
+    out = {}
+    for delta, weight in weighted:
+        if abs(weight) > 1e-9:
+            out = add_deltas(out, delta, weight)
+    return out
+
+
 def apply_delta(points, delta, weight=1.0):
     out = list(points)
     for index, d in delta.items():
@@ -401,6 +410,18 @@ def xform_vector(v, m):
     return (v[0] * m[0] + v[1] * m[4] + v[2] * m[8],
             v[0] * m[1] + v[1] * m[5] + v[2] * m[9],
             v[0] * m[2] + v[1] * m[6] + v[2] * m[10])
+
+
+def xform_normal(n, m):
+    """Transform a surface normal: by the inverse transpose of ``m``'s linear part.
+
+    Unlike :func:`xform_vector`, this keeps the normal perpendicular to the
+    surface when ``m`` has non-uniform scale or shear.
+    """
+    inv = mat_inverse(m)
+    return v_normalize((n[0] * inv[0] + n[1] * inv[1] + n[2] * inv[2],
+                        n[0] * inv[4] + n[1] * inv[5] + n[2] * inv[6],
+                        n[0] * inv[8] + n[1] * inv[9] + n[2] * inv[10]))
 
 
 def world_delta_to_object(delta, world_matrix):
