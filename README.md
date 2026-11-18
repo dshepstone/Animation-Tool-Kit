@@ -2,15 +2,13 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.15** is a toolkit-wide bug-fix pass. It fixes a crash when
-closing Maya and the Playblast Creator plug-in error at startup. It fixes SavePlus version
-numbering, frame removal in **Add / Remove Frames**, rotate-order handling in
-**AnimSnap** and **Xform Copy Paste**, and bugs in Reset Tool, Micro
-Manipulator, Wire Shape Tool, Smart Select Sets and Noise Generator. It adds
-two tools to the timing group: **Key Cleanup** and **Stagger Keys**. It keeps
-everything from 1.1.14, including the Overlap clean bake and the full
-**Reload Scripts**.
-See [release notes](Animation_Tool_Kit_v1.1.15_Release_Notes.md).
+Version **1.1.16** adds **Animation Tweaker** to the rigging group. It sculpts
+corrections and polish onto animated meshes after the skin, keys them as
+static, pulse or pose-to-pose tweaks, and bakes Smooth Motion, Stick to Surface,
+Push Out and Pin to World effects. It also has a surface-riding soft-modification
+handle and cache versions. It keeps everything from 1.1.15, including the
+toolkit-wide bug fixes, Key Cleanup and Stagger Keys.
+See [release notes](Animation_Tool_Kit_v1.1.16_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.
@@ -74,6 +72,14 @@ If that file is missing, it falls back to:
   base / layout node's slide and the cycle, so the character walks off the node.
   It's in the timing group, and also opens from **Xform Copy Paste**. See its
   [usage notes](animation%20tool%20kit%20scripts/Walk_Off_Node_1_0_0/README.md).
+
+- **Animation Tweaker** sculpts corrections onto animated meshes after the skin
+  and keys them as static, pulse or pose-to-pose tweaks. It also has Inflate,
+  Relax, frame-baked effects (Smooth Motion, Stick to Surface, Push Out, Pin to
+  World), a surface-riding handle, production utilities and cache versions.
+  It's in the rigging group. Every tweak is a target on one blendShape per mesh,
+  so nothing else is left in the scene. See its
+  [usage notes](animation%20tool%20kit%20scripts/Animation_Tweaker/README.md).
 
 - The installer copies files into Maya user preference/script locations (per-user install).
 - If a tool file or icon is missing, Maya will show a warning and continue installing the rest.
