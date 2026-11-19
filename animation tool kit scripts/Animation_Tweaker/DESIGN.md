@@ -38,7 +38,9 @@ Design rules:
    state to lose on Reload Scripts, and every session can be committed or
    cancelled later.
 2. **One node per mesh.** `<mesh>_atkTweaks` is a blendShape created with
-   `after=True`, so it sits after the skinCluster. Each tweak is a target with
+   `cmds.deformer(shape, type="blendShape")`, which appends it after the
+   skinCluster on the existing shape. (`blendShape(after=True)` is avoided:
+   Maya 2027 builds a second `...ShapeDeformed` shape with it.) Each tweak is a target with
    no geometry: its object-space offsets are written straight into
    `inputTarget[0].inputTargetGroup[i].inputTargetItem[6000]`
    (`inputPointsTarget` + `inputComponentsTarget`, sparse, run-length
@@ -149,7 +151,7 @@ The code was written without Maya available. These parts depend on Maya
 behaviour that the unit tests cannot see and are covered by
 `tests/check_animation_tweaker_maya.py` or need a manual check:
 
-- `cmds.blendShape(..., after=True)` placing the node after the skinCluster.
+- `cmds.deformer(shape, type="blendShape")` placing the node after the skinCluster.
 - Writing `pointArray`/`componentList` targets with `cmds.setAttr` and reading
   them back.
 - `MDGContextGuard` / `MDGContext` sampling on 2025–2027.

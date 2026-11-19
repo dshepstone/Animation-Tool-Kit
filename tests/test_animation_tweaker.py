@@ -494,12 +494,14 @@ class FakeCmds(object):
         self.undo.append(kwargs)
 
     # -- creation
-    def blendShape(self, xf, name=None, after=False):
-        assert after, "the tweak node must sit after the skinCluster"
+    def deformer(self, shape, type=None, name=None, **kwargs):
+        # cmds.deformer appends to the end of the chain (after the skinCluster).
+        # after=True must not be used: Maya builds a second shape with it.
+        assert type == "blendShape" and "after" not in kwargs
         self.types[name] = "blendShape"
         self.attrs[name] = []
         self.aliases[name] = {}
-        self.history[self.listRelatives(xf, shapes=True)[0]].append(name)
+        self.history[shape].append(name)
         return [name]
 
     def addAttr(self, node, longName=None, **kwargs):

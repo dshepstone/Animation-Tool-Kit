@@ -188,8 +188,14 @@ def attach(label=None):
             if not cmds.objExists(original):
                 cmds.warning("Animation Tweaker: original %s is missing; skipped" % original)
                 continue
-            node = cmds.blendShape(cache, original, after=True, origin="world",
-                                   name=short_name(original).split(":")[-1] + "_atkCache")[0]
+            # Append after the skinCluster on the existing shape (blendShape's
+            # own after=True would create a second "...ShapeDeformed" shape),
+            # then add the cache as a world-space target.
+            _xf, shape = resolve_mesh(original)
+            node = cmds.deformer(shape, type="blendShape",
+                                 name=short_name(original).split(":")[-1] + "_atkCache")[0]
+            cmds.setAttr(node + ".origin", 0)      # 0 = world
+            cmds.blendShape(node, edit=True, target=(shape, 0, cache, 1.0))
             cmds.setAttr(node + ".weight[0]", 1.0)
             cmds.connectAttr(CONTROL + ".envelope", node + ".envelope", force=True)
             attached.append({"original": original, "blendShape": node})

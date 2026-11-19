@@ -92,14 +92,15 @@ def create_handle(vertex=None, radius=None, name=None):
     base = name or (short_name(xf).split(":")[-1] + "_surfHandle")
     uv = _vertex_uv(vertex) if cmds.polyEvaluate(shape, uvcoord=True) else None
     with undo_chunk("create surface handle"):
-        try:
-            soft, handle = cmds.softMod(xf, name=base + "_softMod", falloffRadius=radius,
-                                        falloffCenter=position, falloffAroundSelection=False,
-                                        after=True)[:2]
-        except TypeError:
-            soft, handle = cmds.softMod(xf, name=base + "_softMod", falloffRadius=radius,
-                                        falloffCenter=position, falloffAroundSelection=False)[:2]
+        # The default placement appends after the skinCluster on the existing
+        # shape; ``after=True`` would create a second "...ShapeDeformed" shape.
+        soft, handle = cmds.softMod(shape, name=base + "_softMod", falloffRadius=radius,
+                                    falloffCenter=position, falloffAroundSelection=False)[:2]
         handle = cmds.rename(handle, base + "_handle")
+        # Maya renames the softMod along with its handle ("<handle>SoftMod");
+        # find it again from the handle and restore the intended name.
+        renamed = cmds.listConnections(handle + ".worldMatrix", type="softMod") or [soft]
+        soft = cmds.rename(renamed[0], base + "_softMod")
         pin = cmds.createNode("transform", name=base + "_pin")
         aim = cmds.createNode("transform", name=base + "_aim", parent=pin)
         handle = cmds.parent(handle, aim)[0]

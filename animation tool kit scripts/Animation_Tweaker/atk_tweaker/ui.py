@@ -686,14 +686,22 @@ class Window(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 _window = None
 
 
+def _dispose(widget):
+    """Hide, close and delete a window. The dockable mixin's close() may only
+    close the workspace control, and it overrides hide(), so hide the
+    dialog itself through QWidget."""
+    QtWidgets.QWidget.hide(widget)
+    widget.close()
+    widget.deleteLater()
+
+
 def _remove_stale():
     """Close windows left by an earlier import (ATK Reload Scripts purges modules)."""
     app = QtWidgets.QApplication.instance()
     for widget in (app.allWidgets() if app else []):
         try:
             if widget.objectName() == WINDOW_NAME:
-                widget.close()
-                widget.deleteLater()
+                _dispose(widget)
         except RuntimeError:
             pass
     if cmds.workspaceControl(WORKSPACE_NAME, query=True, exists=True):
@@ -720,8 +728,7 @@ def close():
     global _window
     if _window is not None:
         try:
-            _window.close()
-            _window.deleteLater()
+            _dispose(_window)
         except RuntimeError:
             pass
     _window = None

@@ -266,10 +266,10 @@ def ensure_tweak_node(mesh):
         return node
     xf, shape = resolve_mesh(mesh)
     name = short_name(xf).split(":")[-1] + NODE_SUFFIX
-    try:
-        node = cmds.blendShape(xf, name=name, after=True)[0]
-    except TypeError:
-        node = cmds.deformer(xf, type="blendShape", name=name, after=True)[0]
+    # ``cmds.deformer`` appends to the end of the chain (after the skinCluster)
+    # on the existing shape. ``blendShape(after=True)`` would instead create a
+    # second "...ShapeDeformed" shape, leaving callers holding a stale shape.
+    node = cmds.deformer(shape, type="blendShape", name=name)[0]
     cmds.addAttr(node, longName=MARKER_ATTR, attributeType="bool", defaultValue=True)
     cmds.addAttr(node, longName=META_ATTR, dataType="string")
     cmds.addAttr(node, longName=PROXY_FLAG_ATTR, attributeType="bool", defaultValue=False)

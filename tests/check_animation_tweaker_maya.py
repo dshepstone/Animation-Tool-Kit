@@ -111,8 +111,10 @@ def check_engine():
 
     cmds.undo()
     assert near(engine.read_points(shape)[30], before[30])
-    assert not cmds.ls("*_atkSculpt")
+    # Undoing a commit returns to the sculpt state, so the sculpt mesh is back.
+    assert cmds.objExists(sculpt) and not engine.read_target(node, index)
     cmds.redo()
+    assert not cmds.objExists(sculpt)
     assert near(engine.read_points(shape)[30], after[30])
     step("commit is one Undo")
 
