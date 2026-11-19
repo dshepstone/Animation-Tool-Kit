@@ -20,6 +20,13 @@ When the toolbar is narrower than it is tall, buttons are stacked vertically;
 otherwise they run horizontally.  The layout is rebuilt whenever the user
 calls ``_rebuild_ui()`` (e.g. after docking to a different edge).
 
+Layouts
+-------
+What the strip shows comes from ``atk_layout.plan_layout`` (Settings →
+Layout): the Full, Most used, Custom or Grouped preset, expert mode, 1-3
+rows (columns on a vertical bar) and alignment.  Group and More buttons open
+a ``_FoldPopup`` strip of ordinary tool buttons.
+
 Right-click context menu per button
 ------------------------------------
   • Open Tool
@@ -30,6 +37,7 @@ Right-click context menu per button
 
 import os
 import sys
+import time
 import importlib
 import shutil
 
@@ -48,6 +56,7 @@ except ImportError:
 
 from . import atk_loader
 from . import atk_icons
+from . import atk_layout
 from . import atk_settings
 
 # ---------------------------------------------------------------------------
@@ -55,7 +64,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.1.16"
+VERSION        = "1.1.17"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -150,6 +159,15 @@ _SCROLL_STYLE = (
     "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
 )
 
+_MENU_STYLE = (
+    "QMenu { background:#3c3c3c; color:#cccccc; border:1px solid #555; }"
+    "QMenu::item:selected { background:#4FC3F7; color:#000; }"
+)
+
+_POPUP_STYLE = (
+    "#ATKFoldPopup { background:#333333; border:1px solid #5a5a5a; border-radius:4px; }"
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -196,78 +214,117 @@ def _maya_main_window():
     return wrapInstance(int(ptr), QtWidgets.QWidget)
 
 
-def _count_layout_items():
-    """Return (n_buttons, n_seps) for the current visible tools and settings."""
-    show_sep = bool(atk_settings._get_pref_int(_OPT_SHOW_SEPARATORS, 1))
-    visible  = atk_loader.get_visible_tools()
-    n_buttons = len(visible) + 2   # +2 for the settings gear and the logo button
+# Tangent Tools carries three quick tangent buttons beside its own button.
+_EXTRA_SLOTS = {"tangent_tools": 3}
+_FOLD_LABEL_W = 60   # text label of a group / More button on a horizontal bar
+_GRIP_PX = 10
 
-    n_seps = 0
-    if show_sep:
-        n_seps = 1
-        prev_group = None
-        for tool in visible:
-            if prev_group and tool["group"] != prev_group:
+
+def _orientation_pref():
+    if cmds.optionVar(exists=_OPT_ORIENTATION):
+        val = cmds.optionVar(q=_OPT_ORIENTATION)
+        if val in ("horizontal", "vertical"):
+            return val
+    return "horizontal"
+
+
+def _layout_plan(orientation=None):
+    """Ask the layout engine what to show (see atk_layout.plan_layout)."""
+    orientation = orientation or _orientation_pref()
+    settings = atk_loader.get_layout_settings()
+    align = _get_alignment() if orientation == "horizontal" else settings["valign"]
+    return atk_layout.plan_layout(
+        atk_loader.TOOL_REGISTRY, settings, atk_loader.get_usage(), orientation,
+        icon_size=_get_icon_size(), align=align, show_separators=_show_separators(),
+        group_order=atk_loader.GROUP_ORDER, extra_slots=_EXTRA_SLOTS)
+
+
+def _fold_label_px(plan, orientation):
+    """Extra width a group / More button's label takes (icons only otherwise)."""
+    return _FOLD_LABEL_W if orientation == "horizontal" and not plan.expert else 0
+
+
+def _head_separator(plan):
+    return _show_separators() and not plan.expert
+
+
+def _inline_slider_on():
+    return atk_loader.is_tool_installed("inbetweener") and _show_inline_slider()
+
+
+def _frame_stepper_on():
+    return atk_loader.is_tool_installed("add_remove") and _show_frame_stepper()
+
+
+def _count_layout_items(plan=None):
+    """Return (n_buttons, n_seps) the bar shows: tools, fold-outs, gear and logo."""
+    plan = plan or _layout_plan()
+    n_buttons, n_seps = 2, int(_head_separator(plan))
+    for line in plan.lines:
+        for item in line:
+            if item.kind == "sep":
                 n_seps += 1
-            prev_group = tool["group"]
-
+            else:
+                n_buttons += 1
     return n_buttons, n_seps
 
 
+def _bar_length(orientation):
+    """Pixel length of the bar along its strip (no window chrome)."""
+    plan = _layout_plan(orientation)
+    btn = plan.button_size
+    parts = [_GRIP_PX, btn, btn]            # grip, gear, logo
+    if orientation == "vertical":
+        if _inline_slider_on():
+            parts.append(_INB_VSLIDER_BLOCK_HEIGHT)
+        if _head_separator(plan):
+            parts.append(1)
+    else:
+        if _head_separator(plan):
+            parts.append(1)
+        if _frame_stepper_on():
+            parts.append(_FRAME_STEPPER_WIDTH)
+            if _inline_slider_on():
+                parts.append(1)
+        if _inline_slider_on():
+            parts += [_INB_TOOLBAR_SLIDER_WIDTH, 1]
+    along, _across = atk_layout.measure(plan, _EXTRA_SLOTS, _fold_label_px(plan, orientation))
+    parts.append(along)
+    return sum(parts) + max(0, len(parts) - 1) * plan.spacing + 4   # + margins
+
+
 def _calc_content_height():
-    """Return the pixel height needed to display all visible buttons with no dead space.
+    """Pixel height of the vertical bar's content with no dead space.
 
-    Mirrors the layout logic in ATKToolbarWidget._build() so the window can be
-    pre-sized before the widget is constructed.
+    Mirrors ATKToolbarWidget._build() so the window can be pre-sized before
+    the widget is constructed.
     """
-    icon_sz  = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
-    btn_sz   = icon_sz + 8   # QToolButton fixed size
-    spacing  = 2             # QVBoxLayout/QHBoxLayout spacing
-    margins  = 4             # 2px top + 2px bottom
-
-    n_buttons, n_seps = _count_layout_items()
-    n_items  = n_buttons + n_seps
-    total = (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
-    total += 12   # grip handle strip
-    if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
-        total += (_INB_VSLIDER_BLOCK_HEIGHT + spacing)
-    return total
+    return _bar_length("vertical")
 
 
 def _horizontal_bar_height():
     """Pixel height of the horizontal bar's content (no window chrome)."""
-    icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
-    h = icon_sz + 8 + 4   # button size + layout margins
-    if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+    plan = _layout_plan("horizontal")
+    _along, across = atk_layout.measure(plan, _EXTRA_SLOTS)
+    h = max(across, plan.button_size) + 4   # rows + layout margins
+    if _inline_slider_on():
         h = max(h, _INB_TOOLBAR_SLIDER_HEIGHT + 4)
     return h
 
 
 def _vertical_bar_width():
     """Pixel width of the vertical bar, including its scrollbar allowance."""
-    icon_sz = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
-    w = icon_sz + 8 + 4   # button size + layout margins
-    if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+    plan = _layout_plan("vertical")
+    _along, across = atk_layout.measure(plan, _EXTRA_SLOTS)
+    w = max(across, plan.button_size) + 4   # columns + layout margins
+    if _inline_slider_on():
         w = max(w, _INB_VSLIDER_THICK + 8, 60)
     return w + _VERTICAL_SCROLLBAR_W
 
 
 def _calc_content_width():
-    """Return the pixel width needed to display all visible buttons horizontally."""
-    icon_sz  = atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
-    btn_sz   = icon_sz + 8
-    spacing  = 2
-    margins  = 4             # 2px left + 2px right
-
-    n_buttons, n_seps = _count_layout_items()
-    n_items  = n_buttons + n_seps
-    total = (n_buttons * btn_sz) + (n_seps * 1) + max(0, n_items - 1) * spacing + margins
-    total += 12   # grip handle strip
-    if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
-        total += (_INB_TOOLBAR_SLIDER_WIDTH + spacing)
-    if atk_loader.is_tool_installed("add_remove") and _show_frame_stepper():
-        total += (_FRAME_STEPPER_WIDTH + spacing)
-    return total
+    """Pixel width of the horizontal bar's content."""
+    return _bar_length("horizontal")
 
 
 def _get_chrome_height():
@@ -949,19 +1006,132 @@ class _GripHandle(QtWidgets.QWidget):
 # Toolbar Qt widget
 # ---------------------------------------------------------------------------
 
+def _set_layout_field(key, value):
+    """Change one layout setting and rebuild the bar (from menus)."""
+    settings = atk_loader.get_layout_settings()
+    settings[key] = value
+    atk_loader.save_layout_settings(settings)
+    # Deferred: the menu that asked is still on the call stack.
+    QtCore.QTimer.singleShot(0, rebuild_current)
+
+
+def _set_fold_open(item, is_open):
+    """Unfold (or fold) a built-in or custom group on the bar."""
+    settings = atk_loader.get_layout_settings()
+    if item.id.startswith("group:"):
+        settings["group_open"][item.id.split(":", 1)[1]] = bool(is_open)
+    elif item.id.startswith("custom:"):
+        try:
+            settings["custom_groups"][int(item.id.split(":", 1)[1])]["open"] = bool(is_open)
+        except (ValueError, IndexError):
+            return
+    atk_loader.save_layout_settings(settings)
+    QtCore.QTimer.singleShot(0, rebuild_current)
+
+
+class _FoldPopup(QtWidgets.QFrame):
+    """Small frameless strip of tool buttons opened from a group / More button.
+
+    A ``Qt.Popup`` window, so a click anywhere outside closes it.  Its buttons
+    are built by the toolbar's own ``_make_tool_btn``: same icon, tooltip,
+    left-click action and right-click menu as on the bar.  Using a tool
+    closes the strip.
+    """
+
+    MAX_PER_LINE = 8
+
+    def __init__(self, toolbar, item, plan, orientation, show_tips, anchor):
+        super(_FoldPopup, self).__init__(
+            anchor, QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint)
+        self.setObjectName("ATKFoldPopup")
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        self.setStyleSheet(_POPUP_STYLE)
+        self._toolbar = toolbar
+        self._item_id = item.id
+        self._orientation = orientation
+
+        widgets = []
+        for tool_id in item.tools:
+            tool = atk_loader._tool_by_id(tool_id)
+            if tool is None:
+                continue
+            widgets.append(toolbar._make_tool_btn(tool, plan.icon_size, show_tips,
+                                                  on_done=self.close))
+            if tool_id == "tangent_tools":
+                widgets.extend(toolbar._make_tangent_quick_buttons(
+                    plan.icon_size, show_tips, on_done=self.close))
+
+        grid = QtWidgets.QGridLayout(self)
+        grid.setContentsMargins(4, 4, 4, 4)
+        grid.setSpacing(max(plan.spacing, 2))
+        per_line = max(1, min(len(widgets), self.MAX_PER_LINE))
+        for n, widget in enumerate(widgets):
+            line, pos = divmod(n, per_line)
+            if orientation == "vertical":
+                grid.addWidget(widget, pos, line)
+            else:
+                grid.addWidget(widget, line, pos)
+        self.buttons = widgets
+        self.adjustSize()
+
+    def show_beside(self, anchor):
+        """Open away from the nearest screen edge: above a bar at the bottom,
+        below one at the top, right of one on the left, left of one on the right."""
+        size = self.sizeHint()
+        top_left = anchor.mapToGlobal(QtCore.QPoint(0, 0))
+        centre = anchor.mapToGlobal(anchor.rect().center())
+        avail = _screen_available_at(centre)
+        x, y = top_left.x(), top_left.y()
+        if self._orientation == "vertical":
+            if avail is not None and centre.x() > avail.center().x():
+                x = top_left.x() - size.width() - 2
+            else:
+                x = top_left.x() + anchor.width() + 2
+        else:
+            if avail is not None and centre.y() > avail.center().y():
+                y = top_left.y() - size.height() - 2
+            else:
+                y = top_left.y() + anchor.height() + 2
+        if avail is not None:
+            x = min(max(x, avail.left()), avail.right() - size.width())
+            y = min(max(y, avail.top()), avail.bottom() - size.height())
+        self.move(x, y)
+        self.show()
+
+    def hideEvent(self, event):
+        try:
+            self._toolbar._popup_hidden(self._item_id)
+        except Exception:
+            pass
+        super(_FoldPopup, self).hideEvent(event)
+
+
 class ATKToolbarWidget(QtWidgets.QWidget):
-    """The actual button-strip widget embedded inside the workspaceControl."""
+    """The actual button-strip widget embedded inside the workspaceControl.
+
+    What shows on the strip comes from the layout engine
+    (``atk_layout.plan_layout``); this class only renders that plan.
+    """
+
+    # Button side = icon size + _button_pad (smaller in expert mode).  A class
+    # default so helpers also work on a widget built without _build().
+    _button_pad = atk_layout.BUTTON_PAD
 
     def __init__(self, parent=None):
         super(ATKToolbarWidget, self).__init__(parent)
-        self._button_map = {}   # tool_id -> QToolButton
+        self._button_map = {}   # tool_id -> QToolButton (inline buttons)
+        self._fold_buttons = {}  # fold item id -> QToolButton
         self._current_orientation = None
+        self._plan = None
+        self._popup = None
+        self._popup_closed = (None, 0.0)   # (item id, time) of the last close
         self._build()
 
     # ── Construction ────────────────────────────────────────────────────────
 
     def _build(self):
         atk_loader.start_tool_services()
+        self._close_popup()
         # Clear any previous children
         old_layout = self.layout()
         if old_layout is not None:
@@ -973,9 +1143,14 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
         orientation = self._detect_orientation()
         self._current_orientation = orientation
-        icon_sz = _get_icon_size()
+        plan = _layout_plan(orientation)
+        self._plan = plan
+        self._button_pad = plan.button_pad
+        icon_sz = plan.icon_size
         show_tips = _show_tooltips()
-        show_sep = _show_separators()
+        head_sep = _head_separator(plan)
+        self._button_map = {}
+        self._fold_buttons = {}
 
         if orientation == "vertical":
             # The button column lives inside a scroll area so every icon
@@ -996,7 +1171,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             scroll.setWidget(body)
             layout = QtWidgets.QVBoxLayout(body)
             layout.setContentsMargins(2, 2, 2, 2)
-            layout.setSpacing(2)
+            layout.setSpacing(plan.spacing)
 
             # Grip handle at the very top for tear-off undocking
             layout.addWidget(_GripHandle("vertical", parent=body))
@@ -1005,25 +1180,16 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
             self._add_logo_btn(layout, icon_sz, show_tips, orientation)
             self._add_inbetweener_slider(layout, orientation)
-            if show_sep:
+            if head_sep:
                 self._add_sep(layout, orientation)
 
-            self._button_map = {}
-            prev_group = None
-            for tool in atk_loader.TOOL_REGISTRY:
-                if not atk_loader.is_tool_visible(tool["id"]):
-                    continue
-                if show_sep and prev_group and tool["group"] != prev_group:
-                    self._add_sep(layout, orientation)
-                btn = self._make_tool_btn(tool, icon_sz, show_tips)
-                self._button_map[tool["id"]] = btn
-                layout.addWidget(btn, 0, QtCore.Qt.AlignHCenter)
-                if tool["id"] == "tangent_tools":
-                    for tangent_btn in self._make_tangent_quick_buttons(icon_sz, show_tips):
-                        layout.addWidget(tangent_btn, 0, QtCore.Qt.AlignHCenter)
-                prev_group = tool["group"]
-
-            layout.addStretch()
+            # Tools: one column per line, aligned top / centre / bottom.
+            if plan.align in ("center", "end"):
+                layout.addStretch()
+            layout.addWidget(self._build_lines(plan, orientation, show_tips, body),
+                             0, QtCore.Qt.AlignHCenter)
+            if plan.align in ("start", "center"):
+                layout.addStretch()
 
             # Hug the bar: fixed width across, free along the column.
             self.setMinimumSize(0, 0)
@@ -1033,7 +1199,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         else:  # horizontal
             layout = QtWidgets.QHBoxLayout(self)
             layout.setContentsMargins(2, 2, 2, 2)
-            layout.setSpacing(2)
+            layout.setSpacing(plan.spacing)
 
             # Grip handle at the far left for tear-off undocking
             layout.addWidget(_GripHandle("horizontal", parent=self))
@@ -1041,49 +1207,29 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             # Settings gear always anchored to the far left, ATK logo to its right
             self._add_settings_btn(layout, icon_sz, show_tips, orientation)
             self._add_logo_btn(layout, icon_sz, show_tips, orientation)
-            if show_sep:
+            if head_sep:
                 self._add_sep(layout, orientation)
 
-            # Build the ordered list of tool widgets (buttons + group separators)
-            self._button_map = {}
+            # The inline widgets, then the tool rows.
             tool_widgets = []
-            if atk_loader.is_tool_installed("add_remove") and _show_frame_stepper():
+            if _frame_stepper_on():
                 tool_widgets.append(_FrameStepperToolbarWidget(parent=self))
-                if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+                if _inline_slider_on():
                     tool_widgets.append(self._make_sep_widget(orientation))
-            if atk_loader.is_tool_installed("inbetweener") and _show_inline_slider():
+            if _inline_slider_on():
                 # Keep the inline slider directly beside the TW button cluster.
                 tool_widgets.append(_InbetweenerToolbarSlider(parent=self, orientation=orientation))
                 # Visual divider between the inline slider and the TW tool button.
                 tool_widgets.append(self._make_sep_widget(orientation))
-            prev_group = None
-            for tool in atk_loader.TOOL_REGISTRY:
-                if not atk_loader.is_tool_visible(tool["id"]):
-                    continue
-                if show_sep and prev_group and tool["group"] != prev_group:
-                    tool_widgets.append(self._make_sep_widget(orientation))
-                btn = self._make_tool_btn(tool, icon_sz, show_tips)
-                self._button_map[tool["id"]] = btn
-                tool_widgets.append(btn)
-                if tool["id"] == "tangent_tools":
-                    tool_widgets.extend(self._make_tangent_quick_buttons(icon_sz, show_tips))
-                prev_group = tool["group"]
+            tool_widgets.append(self._build_lines(plan, orientation, show_tips, self))
 
-            # Respect workspace alignment preference while keeping the slider
+            # Respect the alignment preference while keeping the slider
             # adjacent to the TW tool cluster.
-            alignment = _get_alignment()
-            if alignment == "center":
+            if plan.align in ("center", "end"):
                 layout.addStretch()
-                for w in tool_widgets:
-                    layout.addWidget(w)
-                layout.addStretch()
-            elif alignment == "right":
-                layout.addStretch()
-                for w in tool_widgets:
-                    layout.addWidget(w)
-            else:  # left
-                for w in tool_widgets:
-                    layout.addWidget(w)
+            for w in tool_widgets:
+                layout.addWidget(w)
+            if plan.align in ("start", "center"):
                 layout.addStretch()
 
             # Hug the bar: fixed-ish height across, free along the row.
@@ -1091,9 +1237,124 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             self.setMaximumWidth(_QWIDGETSIZE_MAX)
             self.setMaximumHeight(_horizontal_bar_height())
 
+    def _build_lines(self, plan, orientation, show_tips, parent):
+        """The tool area: rows on a horizontal bar, columns on a vertical one."""
+        block = QtWidgets.QWidget(parent)
+        block.setObjectName("atk_tool_lines")
+        block.setSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Maximum)
+        horizontal = orientation != "vertical"
+        outer = QtWidgets.QVBoxLayout(block) if horizontal else QtWidgets.QHBoxLayout(block)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(plan.spacing)
+        multi = len(plan.lines) > 1
+        for line in plan.lines:
+            row = QtWidgets.QHBoxLayout() if horizontal else QtWidgets.QVBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(plan.spacing)
+            if multi and plan.align in ("center", "end"):
+                row.addStretch()
+            for item in line:
+                for w in self._item_widgets(item, plan, orientation, show_tips):
+                    if horizontal:
+                        row.addWidget(w)
+                    else:
+                        row.addWidget(w, 0, QtCore.Qt.AlignHCenter)
+            if multi and plan.align in ("start", "center"):
+                row.addStretch()
+            outer.addLayout(row)
+        return block
+
+    def _item_widgets(self, item, plan, orientation, show_tips):
+        """Widgets for one plan item."""
+        if item.kind == "sep":
+            return [self._make_sep_widget(orientation)]
+        if item.kind in ("group", "more"):
+            return [self._make_fold_btn(item, plan, orientation, show_tips)]
+        tool = atk_loader._tool_by_id(item.id)
+        if tool is None:
+            return []
+        btn = self._make_tool_btn(tool, plan.icon_size, show_tips)
+        self._button_map[tool["id"]] = btn
+        widgets = [btn]
+        if tool["id"] == "tangent_tools":
+            widgets.extend(self._make_tangent_quick_buttons(plan.icon_size, show_tips))
+        return widgets
+
+    # ── Fold-out group / More buttons ────────────────────────────────────────
+
+    def _make_fold_btn(self, item, plan, orientation, show_tips):
+        icon_sz = plan.icon_size
+        size = plan.button_size
+        btn = QtWidgets.QToolButton()
+        btn.setObjectName("atk_fold_" + item.id.replace(":", "_"))
+        btn.setAccessibleName(item.label)
+        if item.kind == "more":
+            btn.setIcon(atk_icons.make_more_icon(icon_sz))
+        else:
+            btn.setIcon(atk_icons.make_group_icon(item.group or "settings", icon_sz))
+        btn.setIconSize(QtCore.QSize(icon_sz, icon_sz))
+        label_px = _fold_label_px(plan, orientation)
+        if label_px:
+            btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+            btn.setText(btn.fontMetrics().elidedText(
+                item.label, QtCore.Qt.ElideRight, label_px - 8))
+        btn.setFixedSize(size + label_px, size)
+        btn.setStyleSheet(_BTN_STYLE_NORMAL
+                          + "QToolButton { color: #cccccc; font-size: 11px; text-align: left; }")
+        if show_tips:
+            btn.setToolTip("<b>{}</b><br>{} tools. Click to show them.".format(
+                item.label, len(item.tools)))
+        btn.clicked.connect(lambda checked=False, b=btn, it=item: self._toggle_popup(b, it))
+        btn.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        btn.customContextMenuRequested.connect(
+            lambda pos, b=btn, it=item: self._fold_context_menu(b, it, pos))
+        self._fold_buttons[item.id] = btn
+        return btn
+
+    def _toggle_popup(self, btn, item):
+        """Open the fold-out for a group / More button (a second click closes it)."""
+        last_id, last_time = self._popup_closed
+        # The click that closed the popup also reaches the button: don't
+        # reopen straight away.
+        if last_id == item.id and time.monotonic() - last_time < 0.3:
+            self._popup_closed = (None, 0.0)
+            return
+        self._close_popup()
+        popup = _FoldPopup(self, item, self._plan, self._current_orientation,
+                           _show_tooltips(), btn)
+        self._popup = popup
+        popup.show_beside(btn)
+
+    def _popup_hidden(self, item_id):
+        self._popup_closed = (item_id, time.monotonic())
+
+    def _close_popup(self):
+        popup, self._popup = self._popup, None
+        if popup is None:
+            return
+        try:
+            if shiboken.isValid(popup):
+                popup.close()
+        except Exception:
+            pass
+
+    def _fold_context_menu(self, btn, item, pos):
+        menu = QtWidgets.QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        menu.addAction("Show Tools", lambda: self._toggle_popup(btn, item))
+        if item.kind == "group":
+            menu.addAction("Unfold on the Bar", lambda: _set_fold_open(item, True))
+        menu.addSeparator()
+        menu.addAction("Layout Settings...", self._open_layout_settings)
+        menu.exec(btn.mapToGlobal(pos))
+        menu.deleteLater()
+
+    def _open_layout_settings(self):
+        atk_settings.show(rebuild_callback=self.rebuild, tab="Layout")
+
     def _add_settings_btn(self, layout, icon_sz, show_tips, orientation):
         btn = QtWidgets.QToolButton()
-        btn.setFixedSize(icon_sz + 8, icon_sz + 8)
+        btn.setFixedSize(icon_sz + self._button_pad, icon_sz + self._button_pad)
         btn.setIcon(atk_icons.make_settings_icon(icon_sz))
         btn.setIconSize(QtCore.QSize(icon_sz, icon_sz))
         btn.setStyleSheet(_BTN_STYLE_SETTINGS)
@@ -1113,10 +1374,10 @@ class ATKToolbarWidget(QtWidgets.QWidget):
     def _add_logo_btn(self, layout, icon_sz, show_tips, orientation):
         """ATK 'A•T' logo button — opens the Shepstone website."""
         btn = QtWidgets.QToolButton()
-        btn.setFixedSize(icon_sz + 8, icon_sz + 8)
+        btn.setFixedSize(icon_sz + self._button_pad, icon_sz + self._button_pad)
         # Render the logo larger than the tool glyphs: fill the whole button
         # footprint (no padding) so the mark is clearly visible.
-        logo_px = icon_sz + 8
+        logo_px = icon_sz + self._button_pad
         btn.setIcon(atk_icons.make_logo_icon(logo_px))
         btn.setIconSize(QtCore.QSize(logo_px, logo_px))
         btn.setStyleSheet(_BTN_STYLE_LOGO)
@@ -1148,11 +1409,15 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         else:
             layout.addWidget(slider)
 
-    def _make_tick_palette(self, tool, icon_sz, show_tips):
-        """Three direct colour strips and a menu arrow in one icon-sized slot."""
+    def _make_tick_palette(self, tool, icon_sz, show_tips, on_done=None):
+        """Three direct colour strips and a menu arrow in one icon-sized slot.
+
+        ``on_done`` runs after a strip click or a menu choice (fold-outs use
+        it to close themselves).
+        """
         palette = QtWidgets.QWidget(self)
         palette.setObjectName("timeline_ticks_palette")
-        palette.setFixedSize(icon_sz + 8, icon_sz + 8)
+        palette.setFixedSize(icon_sz + self._button_pad, icon_sz + self._button_pad)
         row = QtWidgets.QHBoxLayout(palette)
         row.setContentsMargins(2, 3, 2, 3)
         row.setSpacing(2)
@@ -1176,10 +1441,12 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             btn.clicked.connect(
                 lambda checked=False, tid=tool["id"], fn=fn_name:
                     atk_loader.launch_tool_fn(tid, fn))
+            if on_done is not None:
+                btn.clicked.connect(lambda checked=False: on_done())
             btn.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
             btn.customContextMenuRequested.connect(
                 lambda pos, t=tool, b=btn, ok=installed:
-                    self._tool_context_menu(t, b, pos, ok))
+                    self._tool_context_menu(t, b, pos, ok, on_done))
             colors.addWidget(btn, 1)
         arrow = QtWidgets.QToolButton(palette)
         arrow.setObjectName("timeline_ticks_menu")
@@ -1189,16 +1456,22 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         arrow.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
         arrow.setStyleSheet(_BTN_STYLE_NORMAL + "QToolButton::menu-indicator {image:none;}")
         arrow.setToolTip("Timeline Ticks: colours, key classifications and full window")
-        arrow.setMenu(self._tool_menu(tool, installed))
+        arrow.setMenu(self._tool_menu(tool, installed, on_done))
         arrow.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         row.addWidget(arrow)
         return palette
 
-    def _make_tool_btn(self, tool, icon_sz, show_tips):
+    def _make_tool_btn(self, tool, icon_sz, show_tips, on_done=None):
+        """One tool's button: icon, tooltip, left-click and right-click menu.
+
+        ``on_done`` runs after a left-click or a right-click menu choice.
+        """
         if tool.get("palette_colors"):
-            return self._make_tick_palette(tool, icon_sz, show_tips)
+            return self._make_tick_palette(tool, icon_sz, show_tips, on_done)
         btn = QtWidgets.QToolButton()
-        btn.setFixedSize(icon_sz + 8, icon_sz + 8)
+        btn.setObjectName("atk_tool_" + tool["id"])
+        btn.setAccessibleName(tool["label"])
+        btn.setFixedSize(icon_sz + self._button_pad, icon_sz + self._button_pad)
 
         installed = atk_loader.is_tool_installed(tool["id"])
         if installed:
@@ -1232,15 +1505,18 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 )
             else:
                 btn.clicked.connect(lambda checked=False, tid=tool["id"]: atk_loader.launch_tool(tid))
+            if on_done is not None:
+                btn.clicked.connect(lambda checked=False: on_done())
 
         # Right-click context menu
         btn.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         btn.customContextMenuRequested.connect(
-            lambda pos, t=tool, b=btn, inst=installed: self._tool_context_menu(t, b, pos, inst)
+            lambda pos, t=tool, b=btn, inst=installed:
+                self._tool_context_menu(t, b, pos, inst, on_done)
         )
         return btn
 
-    def _make_tangent_quick_buttons(self, icon_sz, show_tips):
+    def _make_tangent_quick_buttons(self, icon_sz, show_tips, on_done=None):
         tangents = (
             ("auto_legacy", "AutoSpline.png", "Auto Spline (Legacy)"),
             ("linear", "Linear.png", "Linear"),
@@ -1250,7 +1526,8 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         buttons = []
         for kind, icon_file, label in tangents:
             btn = QtWidgets.QToolButton()
-            btn.setFixedSize(icon_sz + 8, icon_sz + 8)
+            btn.setObjectName("atk_tangent_" + kind)
+            btn.setFixedSize(icon_sz + self._button_pad, icon_sz + self._button_pad)
             if installed:
                 icon = atk_icons.load_or_generate_icon(
                     icon_file, "tween", "timing", icon_sz
@@ -1259,6 +1536,8 @@ class ATKToolbarWidget(QtWidgets.QWidget):
                 btn.clicked.connect(
                     lambda checked=False, tangent_kind=kind: self._set_tangent_quick(tangent_kind)
                 )
+                if on_done is not None:
+                    btn.clicked.connect(lambda checked=False: on_done())
             else:
                 icon = atk_icons.make_warning_icon(icon_sz)
                 btn.setStyleSheet(_BTN_STYLE_NORMAL + "QToolButton { opacity: 0.5; }")
@@ -1275,6 +1554,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
     @staticmethod
     def _set_tangent_quick(kind):
+        atk_loader.record_usage("tangent_tools")
         try:
             core = importlib.import_module("tangent_tools.core")
             core.set_tangent_type(kind)
@@ -1312,11 +1592,9 @@ class ATKToolbarWidget(QtWidgets.QWidget):
 
     def _settings_context_menu(self, btn, pos):
         menu = QtWidgets.QMenu(self)
-        menu.setStyleSheet(
-            "QMenu { background:#3c3c3c; color:#cccccc; border:1px solid #555; }"
-            "QMenu::item:selected { background:#4FC3F7; color:#000; }"
-        )
+        menu.setStyleSheet(_MENU_STYLE)
         menu.addAction("Open Settings", lambda: atk_settings.show(rebuild_callback=self.rebuild))
+        self._add_layout_menu(menu)
         menu.addSeparator()
 
         # Dock / float toggle — grey out the option that already matches current state
@@ -1338,17 +1616,40 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         menu.addAction("About Animation Tool Kit", self._show_about)
         menu.exec(btn.mapToGlobal(pos))
 
-    def _tool_context_menu(self, tool, btn, pos, installed):
-        menu = self._tool_menu(tool, installed)
-        menu.exec(btn.mapToGlobal(pos))
-        menu.deleteLater()
+    def _add_layout_menu(self, menu):
+        """Layout submenu: quick preset and expert switches."""
+        settings = atk_loader.get_layout_settings()
+        sub = menu.addMenu("Layout")
+        sub.setStyleSheet(_MENU_STYLE)
+        group = QtGui.QActionGroup(sub) if hasattr(QtGui, "QActionGroup") \
+            else QtWidgets.QActionGroup(sub)
+        for preset in atk_layout.PRESETS:
+            act = sub.addAction(atk_layout.PRESET_LABELS[preset])
+            act.setCheckable(True)
+            act.setChecked(settings["preset"] == preset)
+            group.addAction(act)
+            act.triggered.connect(lambda checked=False, p=preset: _set_layout_field("preset", p))
+        sub.addSeparator()
+        expert = sub.addAction("Expert Mode")
+        expert.setCheckable(True)
+        expert.setChecked(settings["expert"])
+        expert.triggered.connect(lambda checked=False: _set_layout_field("expert", checked))
+        sub.addSeparator()
+        sub.addAction("Layout Settings...", self._open_layout_settings)
+        return sub
 
-    def _tool_menu(self, tool, installed):
+    def _tool_context_menu(self, tool, btn, pos, installed, on_done=None):
+        menu = self._tool_menu(tool, installed)
+        chosen = menu.exec(btn.mapToGlobal(pos))
+        menu.deleteLater()
+        if chosen is not None and on_done is not None:
+            on_done()
+
+    def _tool_menu(self, tool, installed, on_done=None):
         menu = QtWidgets.QMenu(self)
-        menu.setStyleSheet(
-            "QMenu { background:#3c3c3c; color:#cccccc; border:1px solid #555; }"
-            "QMenu::item:selected { background:#4FC3F7; color:#000; }"
-        )
+        menu.setStyleSheet(_MENU_STYLE)
+        if on_done is not None:
+            menu.triggered.connect(lambda action: on_done())
         open_act = menu.addAction("Open {}".format(tool["label"]))
         if installed:
             open_act.triggered.connect(lambda: atk_loader.launch_tool(tool["id"]))

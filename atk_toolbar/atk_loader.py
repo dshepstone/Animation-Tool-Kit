@@ -16,6 +16,14 @@ except Exception:                       # never let the window fix block a launc
     import contextlib as _contextlib
     _watch_launch = _contextlib.nullcontext
 
+try:
+    from . import atk_layout
+except ImportError:                     # loaded by file path (tests)
+    _layout_spec = importlib.util.spec_from_file_location(
+        "atk_layout", os.path.join(os.path.dirname(os.path.abspath(__file__)), "atk_layout.py"))
+    atk_layout = importlib.util.module_from_spec(_layout_spec)
+    _layout_spec.loader.exec_module(atk_layout)
+
 # ---------------------------------------------------------------------------
 # Tool Registry
 # ---------------------------------------------------------------------------
@@ -506,7 +514,7 @@ def start_tool_services():
     load_tool_plugins()
     for tool in TOOL_REGISTRY:
         if tool.get("startup_fn") and is_tool_installed(tool["id"]):
-            launch_tool_fn(tool["id"], tool["startup_fn"])
+            launch_tool_fn(tool["id"], tool["startup_fn"], track=False)
 
 
 # ---------------------------------------------------------------------------
@@ -515,42 +523,128 @@ def start_tool_services():
 
 def is_tool_visible(tool_id):
     """Return True if the tool should appear on the toolbar."""
-    opt = _OPT_HIDDEN_PREFIX + tool_id
-    if cmds.optionVar(exists=opt):
-        return not bool(cmds.optionVar(q=opt))
-    return True  # visible by default
+    return tool_id not in get_layout_settings()["hidden"]
 
 
 def set_tool_visible(tool_id, visible):
-    """Persist tool visibility in a Maya optionVar."""
-    opt = _OPT_HIDDEN_PREFIX + tool_id
-    cmds.optionVar(iv=(opt, 0 if visible else 1))
+    """Show or hide a tool (saved in the layout data)."""
+    settings = get_layout_settings()
+    hidden = [t for t in settings["hidden"] if t != tool_id]
+    if not visible:
+        hidden.append(tool_id)
+    settings["hidden"] = hidden
+    save_layout_settings(settings)
 
 
 def get_visible_tools():
     """Return the subset of TOOL_REGISTRY entries that should be shown."""
-    return [t for t in TOOL_REGISTRY if is_tool_visible(t["id"])]
+    hidden = set(get_layout_settings()["hidden"])
+    return [t for t in TOOL_REGISTRY if t["id"] not in hidden]
+
+
+# ---------------------------------------------------------------------------
+# Layout data and usage counts (versioned JSON optionVars, see atk_layout)
+# ---------------------------------------------------------------------------
+OPT_LAYOUT = "atk_toolbar_layout"
+OPT_USAGE  = "atk_toolbar_usage"
+
+
+def _legacy_hidden_ids():
+    """Tools hidden by the per-tool optionVars ATK used before 1.1.17."""
+    hidden = []
+    for tool in TOOL_REGISTRY:
+        opt = _OPT_HIDDEN_PREFIX + tool["id"]
+        try:
+            if cmds.optionVar(exists=opt) and bool(cmds.optionVar(q=opt)):
+                hidden.append(tool["id"])
+        except Exception:
+            pass
+    return hidden
+
+
+def _read_string_var(key):
+    """The optionVar's string value, None when it does not exist."""
+    try:
+        if not cmds.optionVar(exists=key):
+            return None
+        value = cmds.optionVar(q=key)
+    except Exception:
+        return None
+    return value if isinstance(value, str) else ""
+
+
+def get_layout_settings():
+    """The toolbar layout settings (defaults when missing or unreadable).
+
+    On first use the old ``atk_hidden_<id>`` preferences are migrated.
+    """
+    raw = _read_string_var(OPT_LAYOUT)
+    legacy = _legacy_hidden_ids() if raw is None else ()
+    return atk_layout.load_settings(raw, TOOL_REGISTRY, legacy, GROUP_ORDER)
+
+
+def save_layout_settings(settings):
+    """Store the layout settings.
+
+    The hidden tools are also written to the old per-tool optionVars, so
+    going back to an older ATK still hides the same tools.
+    """
+    settings = atk_layout.normalize_settings(settings, TOOL_REGISTRY, GROUP_ORDER)
+    cmds.optionVar(sv=(OPT_LAYOUT, atk_layout.encode_settings(settings)))
+    hidden = set(settings["hidden"])
+    for tool in TOOL_REGISTRY:
+        cmds.optionVar(iv=(_OPT_HIDDEN_PREFIX + tool["id"], 1 if tool["id"] in hidden else 0))
+    return settings
+
+
+def reset_layout_settings():
+    """Back to the default Full layout with every tool shown."""
+    return save_layout_settings(atk_layout.default_settings(TOOL_REGISTRY, GROUP_ORDER))
+
+
+def get_usage():
+    """Launch counts per tool id."""
+    return atk_layout.decode_usage(_read_string_var(OPT_USAGE))
+
+
+def record_usage(tool_id):
+    """Count one launch of a tool.  Never raises."""
+    try:
+        if _tool_by_id(tool_id) is None:
+            return
+        counts = atk_layout.bump_usage(get_usage(), tool_id)
+        cmds.optionVar(sv=(OPT_USAGE, atk_layout.encode_usage(counts)))
+    except Exception:
+        pass
+
+
+def reset_usage():
+    """Forget every launch count."""
+    cmds.optionVar(sv=(OPT_USAGE, atk_layout.encode_usage({})))
 
 
 # ---------------------------------------------------------------------------
 # Tool launching
 # ---------------------------------------------------------------------------
 
-def launch_tool(tool_id):
+def launch_tool(tool_id, track=True):
     """Import the tool module and call its launch function.
 
     Errors are caught and reported via cmds.warning so the toolbar stays alive
     even if an individual tool fails to load.
     """
-    launch_tool_fn(tool_id)
+    launch_tool_fn(tool_id, track=track)
 
 
-def launch_tool_fn(tool_id, fn_name=None):
+def launch_tool_fn(tool_id, fn_name=None, track=True):
     """Import a tool module and call a named function on it.
 
     ``fn_name`` defaults to the tool's registered ``launch_fn``.  Used by the
     toolbar for quick-action buttons and context-menu actions (e.g. AnimSnap's
     left-click snap) that call functions other than the window launcher.
+
+    Every call counts as one use of the tool for the Most used layout,
+    unless ``track`` is False (startup services, reopening after a reload).
 
     Errors are caught and reported via cmds.warning so the toolbar stays alive
     even if an individual tool fails to load.
@@ -559,6 +653,8 @@ def launch_tool_fn(tool_id, fn_name=None):
     if tool is None:
         cmds.warning("ATK Toolbar: unknown tool id '{}'".format(tool_id))
         return
+    if track:
+        record_usage(tool_id)
 
     module_name = tool["module"]
     if fn_name is None:

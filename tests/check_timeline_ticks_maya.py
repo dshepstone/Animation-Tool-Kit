@@ -180,7 +180,9 @@ def main():
             assert label in actions
         actions["Colour Blue"].trigger()
         launch.assert_called_with("timeline_ticks", "apply_blue")
-    with patch.object(toolbar.atk_loader, "get_visible_tools", return_value=[tool]):
+    only_ticks = toolbar.atk_layout.default_settings(toolbar.atk_loader.TOOL_REGISTRY)
+    only_ticks["hidden"] = [t["id"] for t in toolbar.atk_loader.TOOL_REGISTRY if t is not tool]
+    with patch.object(toolbar.atk_loader, "get_layout_settings", return_value=only_ticks):
         assert toolbar._count_layout_items()[0] == 3  # one palette slot, gear, logo
     # Rebuild the same slot at each supported icon size (also used vertically).
     for size in (24, 32, 48):

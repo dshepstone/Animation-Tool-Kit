@@ -2,13 +2,14 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.16** adds **Animation Tweaker** to the rigging group. It sculpts
-corrections and polish onto animated meshes after the skin, keys them as
-static, pulse or pose-to-pose tweaks, and bakes Smooth Motion, Stick to Surface,
-Push Out and Pin to World effects. It also has a surface-riding soft-modification
-handle and cache versions. It keeps everything from 1.1.15, including the
-toolkit-wide bug fixes, Key Cleanup and Stagger Keys.
-See [release notes](Animation_Tool_Kit_v1.1.16_Release_Notes.md).
+Version **1.1.17** adds **toolbar layouts** so the bar fits your screen. In
+**Settings → Layout** pick **Full** (the usual bar, still the default), **Most
+used** (your top tools and a **More** button), **Custom** (your own tools and
+order) or **Grouped** (one folding button per group), and add **Expert mode**
+for smaller icons. You can also use 1–3 rows or columns, set the alignment and
+icon size, make your own groups, and export or import a layout. It keeps
+everything from 1.1.16, including **Animation Tweaker** in the rigging group.
+See [release notes](Animation_Tool_Kit_v1.1.17_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.
@@ -16,6 +17,28 @@ output**, or choose a different filename. Failed encoding preserves the old vide
 Video export requires an FFmpeg build with the chosen codec; **libx264** is the
 recommended H.264 software fallback on Windows, macOS, and Linux. Choose the
 executable in Settings. Maya itself and a working viewport are required to capture.
+
+## Toolbar layouts
+
+Open the toolbar's **Settings → Layout** tab. Changes show on the toolbar
+straight away.
+
+- **Full**: every tool, as in earlier versions. This is the default.
+- **Most used**: the tools you use most (10 by default) and a **More** button
+  with the rest. ATK counts tool clicks, quick actions, right-click actions and
+  Timeline Ticks colours. **Reset usage** clears the counts.
+- **Custom**: tick the tools to show and drag them into your order.
+- **Grouped**: one button per group that opens a small strip of its tools.
+  Tick a group to keep its tools on the bar instead.
+- **Expert mode** (with any preset): smaller icons, tighter spacing, no
+  separators. Tooltips stay.
+- **My groups**: your own named groups of tools, for Custom and Grouped.
+- **Rows / columns**: 1–3 rows on a top or bottom bar, columns on a side bar.
+- **Alignment** and **Icon size**.
+- **Export… / Import…** a layout file, and **Reset layout** to go back to Full.
+
+The gear button's right-click menu also has a **Layout** submenu for quick
+switching.
 
 ## What the installer does
 
