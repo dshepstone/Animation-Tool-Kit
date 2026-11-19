@@ -11,7 +11,7 @@ into Maya's user scripts directory. No separate install is needed.
 - **Sculpt and commit.** Sculpt a copy of the mesh as it is on the current
   frame; Commit stores the difference as a tweak. Static, Pulse (0-1-0) and
   Sequence (pose-to-pose on independent levels) keying, Blank and Hold poses,
-  sculpt-from-zero muting, Refine, Amplify, Rename, Paint mask and Delete.
+  muting tweaks while sculpting, Refine, Amplify, Rename, Paint mask and Delete.
 - **Sculpt brushes.** Maya's sculpting brushes (Shape, Detail, Mask), symmetry,
   brush settings and Select on the Sculpt tab. Picking a brush selects the
   sculpt copy first.

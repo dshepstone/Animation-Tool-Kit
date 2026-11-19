@@ -224,7 +224,7 @@ class Panel(QtWidgets.QWidget):
         self.highlight.setChecked(True)
         self.hide_original = QtWidgets.QCheckBox("Hide original")
         self.hide_original.setChecked(True)
-        inner.addWidget(_row("Sculpt from zero", self.mute))
+        inner.addWidget(_row("Mute while sculpting", self.mute))
         inner.addWidget(_row(self.highlight, self.hide_original, None))
         inner.addWidget(_row(_button("Sculpt", self.start_sculpt, "Copy the mesh as it is on this frame"),
                              _button("Commit", self.commit, "Store the sculpt as a tweak"),

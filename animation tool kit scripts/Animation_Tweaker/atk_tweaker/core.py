@@ -40,7 +40,7 @@ KIND_PUSH = "push_out"
 KIND_PIN = "pin"
 EFFECT_KINDS = (KIND_SMOOTH, KIND_STICK, KIND_PUSH, KIND_PIN)
 
-# Sculpt-from-zero choices: which existing tweaks are muted while sculpting.
+# Mute-while-sculpting choices: which existing tweaks are switched off.
 MUTE_NONE = "none"
 MUTE_ALL = "all"
 MUTE_STATIC = "static"
@@ -675,7 +675,7 @@ def find_sequence_target(meta, layer, frame):
 
 
 def targets_to_mute(meta, mute_mode, layer=""):
-    """Which tweaks sculpt-from-zero switches off while you sculpt."""
+    """Which tweaks are switched off while you sculpt."""
     if mute_mode == MUTE_NONE:
         return []
     out = []

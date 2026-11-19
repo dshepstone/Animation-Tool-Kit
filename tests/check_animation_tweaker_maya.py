@@ -123,7 +123,7 @@ def check_engine():
     assert cmds.getAttr(engine.weight_plug(node, index)) == 0.0
     engine.cancel_sculpt(mesh)
     assert cmds.getAttr(engine.weight_plug(node, index)) == 1.0 and not cmds.objExists(sculpt)
-    step("cancel and sculpt-from-zero restore")
+    step("cancel restores the mesh and muted tweaks")
 
     # Sequence poses crossfade.
     with engine.undo_chunk("poses"):

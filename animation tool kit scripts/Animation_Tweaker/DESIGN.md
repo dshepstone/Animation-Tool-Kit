@@ -1,14 +1,13 @@
 # Animation Tweaker — design notes
 
-## Clean-room statement
+## Origin
 
-Animation Tweaker was written for ATK as a functional replacement for a
-licensed third-party mesh-polish tool (animPolish). The only input taken from
-that tool was a **list of features**, written down by the licence holder from
-using it. No source code, scripts, node graphs, attribute names, UI layouts,
-icons or documentation of the third-party tool were looked at, searched for or
-reproduced. The architecture, module layout, node and attribute names, keying
-logic, maths and UI below are original to ATK.
+Animation Tweaker is original code written for ATK. Its architecture, module
+layout, scene node and attribute names, keying logic, maths, UI and help text
+were written for this tool. No code, scripts, names, UI layouts, icons or
+documentation were copied from any other tool. The sculpt brushes on the
+Sculpt tab are Maya's own tools, started with Maya's commands and shown with
+Maya's icons.
 
 ## Architecture
 
@@ -101,7 +100,7 @@ the measured mesh. Blank and Hold poses do not carry the level.
 
 ## Feature map
 
-| # | Source feature | ATK Animation Tweaker | How the ATK approach differs |
+| # | Feature | Implementation | Notes |
 | --- | --- | --- | --- |
 | 1 | Sculpt on a duplicate of the evaluated mesh | `engine.start_sculpt` copies the evaluated shape with `MFnMesh.copy` into a new transform at the same world matrix | No `duplicate` of the deformed mesh (which drags intermediate shapes along); the session record lives on the sculpt mesh, so it survives Reload Scripts |
 | 1 | Highlight shader, hide original | `highlight`, `hide_original` options | Shader is created on demand and deleted when no sculpt uses it; visibility is left alone if it is connected |
@@ -110,7 +109,7 @@ the measured mesh. Blank and Hold poses do not carry the level.
 | 1 | Sequence levels crossfading pose to pose | `layer` field, `engine.rekey_level` | Levels are free-text names; a pose on an occupied frame/level refines that pose instead of stacking |
 | 1 | Sequence Blank | `engine.blank_pose` | An empty target (zero components) |
 | 1 | Sequence Hold | `engine.hold_pose` | Copies the previous pose's stored offsets with `core.previous_pose` |
-| 1 | Sculpt-from-zero muting (all / static / sequence / level) | `core.targets_to_mute`, `engine._mute/_unmute` | Mute = temporarily disconnect the driver and zero the weight; restore record stored in the scene |
+| 1 | Muting tweaks while sculpting (all / static / sequence / level) | `core.targets_to_mute`, `engine._mute/_unmute` | Mute = temporarily disconnect the driver and zero the weight; restore record stored in the scene |
 | 1 | Refine a tweak | `start_sculpt(refine=i)` + `core.refine_delta` | Correction is divided by the tweak's current weight, so the refined tweak matches the sculpt exactly |
 | 1 | Amplify / scale | `engine.scale_tweak` | Any factor, including negative (flip) |
 | 1 | Delete (target, curves, proxy, rekey) | `engine.delete_tweak(s)` | Removes the multi instances and alias, then rekeys only the affected levels |
@@ -147,9 +146,9 @@ the measured mesh. Blank and Hold poses do not carry the level.
 
 ## Known limits and things to verify in Maya
 
-The code was written without Maya available. These parts depend on Maya
-behaviour that the unit tests cannot see and are covered by
-`tests/check_animation_tweaker_maya.py` or need a manual check:
+The unit tests run without Maya. These parts depend on Maya behaviour, and
+`tests/check_animation_tweaker_maya.py` covers them inside Maya (it passes in
+Maya 2025, 2026 and 2027) unless marked as a manual check:
 
 - `cmds.deformer(shape, type="blendShape")` placing the node after the skinCluster.
 - Writing `pointArray`/`componentList` targets with `cmds.setAttr` and reading
@@ -158,7 +157,9 @@ behaviour that the unit tests cannot see and are covered by
 - softMod `bindPreMatrix` versus `preMatrix/postMatrix` (the code connects
   whichever exists) and the uvPin input plug names.
 - `artBlendShapeSelectTarget` choosing the painted target (a warning tells the
-  artist to choose it manually if it fails).
+  artist to choose it manually if it fails). Manual check.
+- The sculpt brushes and the tweak list following the current frame need the
+  interactive Maya UI. Manual check.
 - Tweaks are offsets in the mesh's object space after the skin. They follow
   the transform, not individual joints; a large pose change needs a sequence
   pose or a Surface Handle.

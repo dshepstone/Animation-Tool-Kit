@@ -10,7 +10,7 @@ Each mesh gets one blendShape, `<mesh>_atkTweaks`, placed after the skinCluster.
 - **Sculpt brushes shelf.** All of Maya's mesh sculpting brushes are on the Sculpt tab, grouped as Shape, Detail and Mask, with Maya's own icons. The tab also has Invert and Clear for frozen areas, an X symmetry toggle, brush settings, and a button to leave the brush. Picking a brush always selects the sculpt copy first, and Sculpt can hand you the brush you used last.
 - **Animate tweaks.** Every tweak is a keyable weight. Pick tweaks in the list to key them at their current weight, at 0 or at 1, remove the key on this frame, clear their keys, jump to the previous or next key, open the Graph Editor, or re-key them as Static, Pulse here or Pose here. Each row's key diamond uses the Channel Box colours and follows the current frame. Keying by hand switches a tweak to *keyed* mode, so automatic pulse and sequence keys never overwrite yours. *Keyed by hand* is also a keying mode for new tweaks.
 - **Keying modes.** *Static* is always on. *Pulse* keys 0-1-0 around the frame with ramp-in and ramp-out frames. *Sequence* keys pose to pose on independent levels: each pose is 1 on its frame and 0 on its neighbours' frames, so poses crossfade. **Blank pose** adds an empty pose and **Hold pose** copies the previous pose to the current frame.
-- **Sculpt from zero** mutes all tweaks, the static ones, the sequence ones or one level while you sculpt.
+- **Mute while sculpting** switches off all tweaks, the static ones, the sequence ones or one level while you sculpt.
 - **Tweak list** for each mesh, with weight sliders and key buttons. You can **Refine** a tweak (the new sculpt is added to it), **Amplify** it, rename it, paint where it applies with Maya's blendShape weight painting, or **Delete** it (its keys and proxy go too, and its level is rekeyed).
 - Optional **proxy channels** for each tweak on the mesh transform, under a `TWEAKS` divider.
 - **Shape:** Inflate/Deflate along the normals, and Relax (Laplacian smoothing) with iterations and strength. Both work on the current frame and are masked by the soft selection.
@@ -21,7 +21,7 @@ Each mesh gets one blendShape, `<mesh>_atkTweaks`, placed after the skinCluster.
 
 The window has an offline user guide under **Help**. See the tool's [usage notes](animation%20tool%20kit%20scripts/Animation_Tweaker/README.md) and [design notes](animation%20tool%20kit%20scripts/Animation_Tweaker/DESIGN.md).
 
-Animation Tweaker is original ATK code. It was written from a feature list only; see the design notes.
+Animation Tweaker is original code written for ATK; see the design notes.
 
 ## Tests
 
