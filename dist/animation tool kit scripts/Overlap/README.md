@@ -1,6 +1,6 @@
 # Overlap for ATK
 
-Overlap 0.5.0 is included in the Animation Tool Kit animation/timing group.
+Overlap 0.5.1 is included in the Animation Tool Kit animation/timing group.
 Click its pendulum icon to open the tool. No separate installation or download
 is required. The standard ATK installer copies the full `atk_overlap` package,
 including its HTML guide, icon, and licence, into Maya's user scripts directory.
@@ -9,6 +9,8 @@ The bundle provides per-axis spring overlap, offset pivot support, deterministic
 locator previews, and an optimized bake that keys the controls directly. The
 bake leaves no animation layer, blend node or other Overlap node connected, and
 one Undo reverts it. Layers baked by 0.4.0 and earlier can still be deleted.
+Reload selected starts a fresh pass on the current selection and playback
+range; Reset clears the control list and restores default settings.
 File and Help menus provide presets, a shelf launcher, the offline reference,
 suggested settings/examples, and About/licence details.
 

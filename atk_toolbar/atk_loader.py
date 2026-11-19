@@ -143,7 +143,7 @@ TOOL_REGISTRY = [
         "icon_file": "overlap_32.png",
         "icon_key":  "overlap",
         "group":     "timing",
-        "version":   "0.5.0",
+        "version":   "0.5.1",
     },
     {
         "id":        "xform_copy_paste",
