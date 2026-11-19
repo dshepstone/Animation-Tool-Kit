@@ -216,7 +216,9 @@ def _maya_main_window():
 
 # Tangent Tools carries three quick tangent buttons beside its own button.
 _EXTRA_SLOTS = {"tangent_tools": 3}
-_FOLD_LABEL_W = 60   # text label of a group / More button on a horizontal bar
+# Text label of a group / More button on a horizontal bar (outside expert).
+_FOLD_LABEL_MIN, _FOLD_LABEL_MAX = 48, 96
+_FOLD_FONT_PX = 11
 _GRIP_PX = 10
 
 
@@ -239,9 +241,31 @@ def _layout_plan(orientation=None):
         group_order=atk_loader.GROUP_ORDER, extra_slots=_EXTRA_SLOTS)
 
 
+def _fold_font():
+    font = QtGui.QFont(QtWidgets.QApplication.font())
+    font.setPixelSize(_FOLD_FONT_PX)
+    return font
+
+
 def _fold_label_px(plan, orientation):
-    """Extra width a group / More button's label takes (icons only otherwise)."""
-    return _FOLD_LABEL_W if orientation == "horizontal" and not plan.expert else 0
+    """Extra width a group / More button's label takes (icons only otherwise).
+
+    Measured with the real font so labels fit on every platform; the same
+    width is used by every fold button so the bar's size can be computed
+    before the widgets exist.
+    """
+    if orientation != "horizontal" or plan.expert:
+        return 0
+    labels = [item.label for line in plan.lines for item in line
+              if item.kind in ("group", "more")]
+    if not labels:
+        return 0
+    try:
+        metrics = QtGui.QFontMetrics(_fold_font())
+        widest = max(metrics.horizontalAdvance(label) for label in labels)
+    except Exception:
+        return _FOLD_LABEL_MAX
+    return max(_FOLD_LABEL_MIN, min(_FOLD_LABEL_MAX, widest + 12))
 
 
 def _head_separator(plan):
@@ -1296,11 +1320,12 @@ class ATKToolbarWidget(QtWidgets.QWidget):
         label_px = _fold_label_px(plan, orientation)
         if label_px:
             btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-            btn.setText(btn.fontMetrics().elidedText(
+            btn.setFont(_fold_font())
+            btn.setText(QtGui.QFontMetrics(_fold_font()).elidedText(
                 item.label, QtCore.Qt.ElideRight, label_px - 8))
         btn.setFixedSize(size + label_px, size)
         btn.setStyleSheet(_BTN_STYLE_NORMAL
-                          + "QToolButton { color: #cccccc; font-size: 11px; text-align: left; }")
+                          + "QToolButton { color: #cccccc; text-align: left; }")
         if show_tips:
             btn.setToolTip("<b>{}</b><br>{} tools. Click to show them.".format(
                 item.label, len(item.tools)))

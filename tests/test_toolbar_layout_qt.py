@@ -244,7 +244,11 @@ class ToolbarLayoutWidgetTests(_FakeMayaCase):
     def test_grouped_popup_holds_the_group_tools_with_their_actions(self):
         w = self.build("horizontal", preset="grouped")
         btn = w._fold_buttons["group:viewport"]
-        self.assertTrue(btn.text().startswith("Viewport"))
+        # The label space is measured with the real font, so built-in group
+        # names fit whole on every platform.
+        self.assertEqual(btn.accessibleName(), "Viewport")
+        self.assertEqual(btn.text(), "Viewport")
+        self.assertIn("Viewport", btn.toolTip())
         btn.click()
         self.app.processEvents()
         popup = w._popup
