@@ -2,14 +2,13 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.17** adds **toolbar layouts** so the bar fits your screen. In
-**Settings → Layout** pick **Full** (the usual bar, still the default), **Most
-used** (your top tools and a **More** button), **Custom** (your own tools and
-order) or **Grouped** (one folding button per group), and add **Expert mode**
-for smaller icons. You can also use 1–3 rows or columns, set the alignment and
-icon size, make your own groups, and export or import a layout. It keeps
-everything from 1.1.16, including **Animation Tweaker** in the rigging group.
-See [release notes](Animation_Tool_Kit_v1.1.17_Release_Notes.md).
+Version **1.1.18** updates the **Noise Generator** to 1.2.0. A new **Presets**
+tab adds a camera shake, handheld drift, impact, skid to a stop, settle wobble
+or rumble between two keys in one click. The **Inbetweens** tab bakes between
+two keys without moving them, adds **Pin Noise** that fades into the start and
+end keys, and re-times with **Ease In** / **Ease Out**. It keeps everything from
+1.1.17, including **toolbar layouts** (Settings → Layout).
+See [release notes](Animation_Tool_Kit_v1.1.18_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.
