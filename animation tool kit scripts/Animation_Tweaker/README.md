@@ -56,6 +56,9 @@ effects.smooth_motion("body", 1, 120, sigma=2.0)
 - `atk_tweaker/effects.py`, `surface_handle.py`, `utilities.py`, `cache_versions.py`
 - `atk_tweaker/ui.py` – dockable window (`ATKAnimationTweakerWindow`)
 - `atk_tweaker/resources/help.html` – offline guide (Help menu)
+- `guide/animation_tweaker_guide.html` – interactive guide: click any control to see
+  how to use it, plus step-by-step workflows. Also online at
+  https://shepstone.ca/software/maya-tool-kit/animation-tweaker-guide/
 - `DESIGN.md` – design notes and the feature map
 
 Tests: `python -m unittest discover -s tests -p "test_animation_tweaker.py"`

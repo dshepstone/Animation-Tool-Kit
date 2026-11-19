@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animation Tweaker Guide</title>
+<meta name="description" content="Interactive guide to Animation Tweaker in the Animation Tool Kit for Maya: click any control to learn what it does, or follow step-by-step workflows for shot fixes and polish.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: an interactive copy of the tool window on the left, the explanation of
+   whatever is selected on the right; step-by-step workflows underneath.
+   Single dark theme on purpose: it matches Maya, where the tool lives. */
+:root {
+  --bg: #1d1f22;
+  --panel: #26292d;
+  --raised: #2f3338;
+  --line: #3b4046;
+  --ink: #ebe8e2;
+  --muted: #a5a9ae;
+  --accent: #f2a52b;
+  --accent-ink: #1d1f22;
+  --accent-soft: rgba(242, 165, 43, 0.14);
+  --font-display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  /* Maya's own greys for the window copy */
+  --maya-win: #444444;
+  --maya-group: #4b4b4b;
+  --maya-btn: #5d5d5d;
+  --maya-btn-hi: #6b6b6b;
+  --maya-field: #2b2b2b;
+  --maya-ink: #dcdcdc;
+  --maya-dim: #9a9a9a;
+  --key-none: #6b6b6b;
+  --key-anim: #d9897a;
+  --key-on: #e04848;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; letter-spacing: 0.005em; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 20px; }
+
+/* Header */
+header.top { border-bottom: 1px solid var(--line); background: var(--panel); }
+header.top .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: end; justify-content: space-between; padding-top: 28px; padding-bottom: 22px; }
+.back { display: inline-block; font-size: 14px; color: var(--muted); text-decoration: none; margin: 0 0 14px; }
+.back:hover { color: var(--accent); }
+.kicker { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin: 0 0 6px; }
+h1 { font-size: clamp(2rem, 4vw, 2.75rem); line-height: 1.05; margin: 0 0 8px; font-weight: 700; }
+.lede { margin: 0; color: var(--muted); max-width: 62ch; }
+.search { position: relative; width: min(340px, 100%); }
+.search label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.search input {
+  width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); font: inherit; font-size: 15px;
+}
+.results {
+  position: absolute; z-index: 20; top: 100%; left: 0; right: 0; margin: 6px 0 0; padding: 6px;
+  list-style: none; background: var(--raised); border: 1px solid var(--line); border-radius: 8px;
+  max-height: 320px; overflow-y: auto; box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+}
+.results[hidden] { display: none; }
+.results button {
+  width: 100%; text-align: left; background: none; border: 0; color: var(--ink); font: inherit;
+  font-size: 14px; padding: 7px 9px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px;
+}
+.results button:hover, .results button:focus-visible { background: var(--accent-soft); }
+.results small { color: var(--muted); white-space: nowrap; }
+
+/* Quick start strip */
+.quick { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 22px 0 6px; padding: 0; list-style: none; counter-reset: q; }
+.quick li { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 14px; color: var(--muted); counter-increment: q; }
+.quick li::before { content: counter(q); display: block; font-family: var(--font-display); font-weight: 700; font-size: 22px; color: var(--accent); line-height: 1; margin-bottom: 6px; }
+.quick b { color: var(--ink); font-weight: 600; }
+@media (max-width: 900px) { .quick { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .quick { grid-template-columns: 1fr; } }
+
+/* Main two-column area */
+.main { display: grid; grid-template-columns: minmax(0, 480px) minmax(0, 1fr); gap: 28px; align-items: start; margin: 22px auto 40px; }
+@media (max-width: 980px) { .main { grid-template-columns: 1fr; } }
+.hint { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+
+/* ---- The Maya window copy ---- */
+.maya {
+  background: var(--maya-win); color: var(--maya-ink); border: 1px solid #262626; border-radius: 6px;
+  font-family: "Segoe UI", Tahoma, var(--font-body); font-size: 12px; line-height: 1.3; overflow: hidden;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+}
+.titlebar { display: flex; align-items: center; gap: 8px; background: #f3f3f3; color: #1a1a1a; padding: 7px 10px; font-size: 13px; }
+.titlebar .m { width: 18px; height: 18px; border-radius: 3px; background: #1f8ac9; color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 11px; }
+.titlebar .spacer { flex: 1; }
+.titlebar .wc { letter-spacing: 14px; color: #333; font-size: 13px; }
+.menubar { display: flex; gap: 14px; padding: 5px 10px; background: var(--maya-win); border-bottom: 1px solid #3a3a3a; }
+.mbody { padding: 8px 10px 10px; }
+.row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+.row > .grow { flex: 1; min-width: 0; }
+.lab { color: var(--maya-ink); white-space: nowrap; }
+.dim { color: var(--maya-dim); }
+.mb, .ms, .mi, .mcheck, .mtool, .sw {
+  cursor: pointer; font: inherit; color: var(--maya-ink);
+}
+.mb {
+  background: var(--maya-btn); border: 0; border-radius: 3px; padding: 6px 8px; min-height: 26px;
+  flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mb.fit { flex: 0 0 auto; }
+.mb:hover { background: var(--maya-btn-hi); }
+.mi, .ms {
+  background: var(--maya-field); border: 1px solid #222; border-radius: 2px; padding: 4px 6px; min-height: 24px;
+  color: var(--maya-ink); min-width: 0;
+}
+.mi { width: 100%; }
+.ms { appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, #bbb 50%), linear-gradient(135deg, #bbb 50%, transparent 50%); background-position: calc(100% - 12px) 50%, calc(100% - 7px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 22px; background-color: #555; border-color: #3a3a3a; }
+.num { width: 76px; text-align: left; font-variant-numeric: tabular-nums; }
+.num.short { width: 60px; }
+.mcheck { display: inline-flex; align-items: center; gap: 5px; background: none; border: 0; padding: 2px; }
+.box { width: 13px; height: 13px; border: 1px solid #222; background: var(--maya-field); border-radius: 2px; display: grid; place-items: center; font-size: 10px; line-height: 1; }
+.mcheck[aria-checked="true"] .box::after { content: "\2713"; color: #eee; }
+.tabs { display: flex; gap: 2px; margin-top: 8px; border-bottom: 1px solid #353535; }
+.tab {
+  background: #3d3d3d; color: var(--maya-dim); border: 1px solid #353535; border-bottom: 0; border-radius: 3px 3px 0 0;
+  padding: 4px 12px; font: inherit; cursor: pointer;
+}
+.tab[aria-selected="true"] { background: var(--maya-group); color: var(--maya-ink); }
+.page { background: var(--maya-win); border: 1px solid #353535; border-top: 0; padding: 6px; }
+.page[hidden] { display: none; }
+.grp { background: var(--maya-group); border-radius: 3px; padding: 6px 8px 8px; margin: 6px 0; }
+.grp > .gt { color: var(--maya-ink); margin: 0 0 4px; font-size: 12px; }
+.note { color: var(--maya-ink); margin: 4px 2px 6px; }
+.brushrow { display: flex; align-items: center; gap: 3px; margin: 3px 0; flex-wrap: wrap; }
+.brushrow .cap { width: 40px; color: var(--maya-dim); font-size: 10px; }
+.mtool {
+  width: 27px; height: 27px; border: 0; border-radius: 50%; padding: 0;
+  background: radial-gradient(circle at 35% 30%, #f6b26b, #d97b26 70%); color: #3b1d05;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.02em; display: grid; place-items: center;
+}
+.mtool.text { width: auto; height: auto; border-radius: 3px; background: none; color: var(--maya-ink); font-size: 12px; font-weight: 400; padding: 4px 6px; }
+.mtool.text:hover { background: #555; }
+.tree { background: var(--maya-field); border: 1px solid #222; min-height: 150px; }
+.th, .tr { display: grid; grid-template-columns: 62px 52px 56px 44px 38px 1fr; align-items: center; }
+.th { background: #3f3f3f; }
+.th span { padding: 3px 5px; border-right: 1px solid #2b2b2b; }
+.tr { padding: 4px 0; cursor: pointer; }
+.tr span { padding: 0 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr.sel { background: #5285a6; }
+.wcell { display: flex; align-items: center; gap: 6px; padding-right: 6px !important; overflow: visible !important; }
+.wcell input[type=range] { flex: 1; min-width: 40px; accent-color: #9fb7c9; height: 14px; }
+.wval { width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
+.dia { border: 0; background: none; padding: 0 2px; font-size: 14px; line-height: 1; cursor: pointer; }
+.dia.none { color: var(--key-none); }
+.dia.anim { color: var(--key-anim); }
+.dia.key { color: var(--key-on); }
+.swatches { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.sw { width: 22px; height: 22px; border: 1px solid #222; padding: 0; border-radius: 1px; }
+.sw.q { background: none; border: 0; color: var(--maya-ink); width: auto; padding: 0 4px; }
+.vlist { background: var(--maya-field); border: 1px solid #222; min-height: 120px; padding: 4px; }
+.vlist .vi { padding: 3px 5px; color: var(--maya-ink); }
+.vlist .vi.on { background: #5285a6; }
+.mstatus { margin: 6px 2px 0; color: var(--maya-ink); min-height: 1.3em; }
+
+/* Selection highlight on the copy */
+[data-h].on { outline: 2px solid var(--accent); outline-offset: 1px; box-shadow: 0 0 0 5px rgba(242,165,43,0.25); position: relative; z-index: 1; }
+[data-h].pulse { animation: pulse 1.1s ease-out 2; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(242,165,43,0.7); } 100% { box-shadow: 0 0 0 10px rgba(242,165,43,0); } }
+@media (prefers-reduced-motion: reduce) { [data-h].pulse { animation: none; } html { scroll-behavior: auto; } }
+
+/* ---- Explainer ---- */
+.explain { position: sticky; top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px 24px; }
+@media (max-width: 980px) { .explain { position: static; } }
+.crumb { font-family: var(--font-mono); font-size: 12px; color: var(--muted); letter-spacing: 0.04em; margin: 0 0 4px; }
+.explain h2 { font-size: 1.9rem; line-height: 1.1; margin: 0 0 10px; font-weight: 700; }
+.what { font-size: 1.05rem; margin: 0 0 16px; max-width: 65ch; }
+.explain h3 { font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin: 18px 0 8px; font-weight: 600; }
+.steps { margin: 0; padding-left: 0; list-style: none; counter-reset: s; display: grid; gap: 8px; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 28px 1fr; gap: 8px; max-width: 65ch; }
+.steps li::before { content: counter(s); width: 24px; height: 24px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.tips { margin: 0; padding-left: 18px; color: var(--muted); max-width: 65ch; }
+.tips li { margin: 4px 0; }
+.tips li::marker { color: var(--accent); }
+.rel { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { background: var(--raised); border: 1px solid var(--line); color: var(--ink); border-radius: 999px; padding: 4px 11px; font: inherit; font-size: 13px; cursor: pointer; }
+.chip:hover { border-color: var(--accent); }
+.modes { width: 100%; border-collapse: collapse; font-size: 14px; margin: 6px 0 2px; }
+.modes th, .modes td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.modes th { color: var(--muted); font-weight: 500; }
+
+/* ---- Workflows ---- */
+section.flows { border-top: 1px solid var(--line); padding: 34px 0 56px; }
+section.flows h2 { font-size: 1.9rem; margin: 0 0 6px; }
+section.flows > .wrap > p { color: var(--muted); margin: 0 0 18px; max-width: 70ch; }
+.flowgrid { display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: 22px; align-items: start; }
+@media (max-width: 860px) { .flowgrid { grid-template-columns: 1fr; } }
+.flowlist { display: grid; gap: 8px; }
+.flowbtn { text-align: left; background: var(--panel); border: 1px solid var(--line); color: var(--ink); border-radius: 10px; padding: 12px 14px; font: inherit; cursor: pointer; }
+.flowbtn b { display: block; font-weight: 600; }
+.flowbtn span { color: var(--muted); font-size: 14px; }
+.flowbtn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.flowpanel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; }
+.flowpanel h3 { margin: 0 0 4px; font-size: 1.5rem; }
+.flowpanel .why { color: var(--muted); margin: 0 0 14px; max-width: 70ch; }
+.fsteps { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 6px; }
+.fsteps li button {
+  width: 100%; text-align: left; display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: start;
+  background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--ink); font: inherit; padding: 8px; cursor: pointer;
+}
+.fsteps li button:hover { border-color: var(--line); }
+.fsteps li button[aria-current="step"] { background: var(--accent-soft); border-color: var(--accent); }
+.fsteps .n { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--raised); color: var(--muted); font-weight: 600; font-size: 13px; }
+.fsteps button[aria-current="step"] .n { background: var(--accent); color: var(--accent-ink); }
+.fnav { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.btn { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px; padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+.btn.ghost { background: var(--raised); color: var(--ink); border: 1px solid var(--line); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.fcount { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+
+footer { border-top: 1px solid var(--line); padding: 20px 0 34px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div>
+      <a class="back" href="https://shepstone.ca/software/maya-tool-kit/">&#8592; Animation Tool Kit for Maya</a>
+      <p class="kicker">ATK 1.1.16 · Animation Tweaker 1.1.0</p>
+      <h1>Animation Tweaker guide</h1>
+      <p class="lede">Click any button, field or brush in the window below to see what it does and how to use it. Or pick a workflow at the bottom and step through it; the window shows you where to click.</p>
+    </div>
+    <div class="search">
+      <label for="find">Find a control</label>
+      <input id="find" type="search" placeholder="e.g. Commit, pulse, push out" autocomplete="off" aria-controls="results">
+      <ul id="results" class="results" hidden></ul>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <ol class="quick" aria-label="Quick start">
+    <li>Select the character mesh and click <b>Use selected</b>.</li>
+    <li>Go to the frame you want to fix and pick a keying <b>Mode</b>.</li>
+    <li>Click <b>Sculpt</b>. A blue copy of the mesh replaces it in the viewport.</li>
+    <li>Shape the copy with a <b>brush</b> from the Sculpt brushes shelf.</li>
+    <li>Click <b>Commit</b>. The fix is stored as a tweak and keyed.</li>
+  </ol>
+</div>
+
+<div class="wrap main">
+  <div>
+    <p class="hint">Interactive copy of the tool window. Tabs work, and every control explains itself.</p>
+    <div class="maya" id="maya">
+      <div class="titlebar"><span class="m">M</span><span>Animation Tweaker 1.1.0</span><span class="spacer"></span><span class="wc" aria-hidden="true">&#8212;&#9633;&#10005;</span></div>
+      <div class="menubar"><button class="mtool text" data-h="menu-file">File</button><button class="mtool text" data-h="menu-help">Help</button></div>
+      <div class="mbody">
+        <div class="row">
+          <span class="lab">Mesh</span>
+          <input class="mi grow" data-h="mesh-field" value="|ball:rig|ball:models|ball:render_grp|ball:Body_geo" readonly aria-label="Mesh">
+          <button class="mb fit" data-h="use-selected">Use selected</button>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Tool tabs">
+          <button class="tab" role="tab" id="t-sculpt" aria-controls="p-sculpt" aria-selected="true" data-tab="sculpt">Sculpt</button>
+          <button class="tab" role="tab" id="t-shape" aria-controls="p-shape" aria-selected="false" data-tab="shape">Shape</button>
+          <button class="tab" role="tab" id="t-effects" aria-controls="p-effects" aria-selected="false" data-tab="effects">Effects</button>
+          <button class="tab" role="tab" id="t-handle" aria-controls="p-handle" aria-selected="false" data-tab="handle">Handle</button>
+          <button class="tab" role="tab" id="t-utilities" aria-controls="p-utilities" aria-selected="false" data-tab="utilities">Utilities</button>
+          <button class="tab" role="tab" id="t-cache" aria-controls="p-cache" aria-selected="false" data-tab="cache">Cache</button>
+        </div>
+
+        <!-- SCULPT -->
+        <div class="page" id="p-sculpt" role="tabpanel" aria-labelledby="t-sculpt">
+          <div class="grp"><p class="gt">Keying</p>
+            <div class="row"><span class="lab grow">Mode</span>
+              <select class="ms" data-h="mode" aria-label="Keying mode" style="width:58%">
+                <option>Static (always on)</option><option>Pulse (0-1-0 around frame)</option><option>Sequence (pose to pose)</option><option>Keyed by hand (one key at 1)</option>
+              </select></div>
+            <div class="row"><span class="lab">Level</span><input class="mi num short" data-h="level" value="L1" aria-label="Level">
+              <span class="lab">Ramp in</span><input class="mi num" data-h="ramp" value="3.0" aria-label="Ramp in">
+              <span class="lab">out</span><input class="mi num" data-h="ramp" value="3.0" aria-label="Ramp out"></div>
+          </div>
+          <div class="grp"><p class="gt">Sculpt</p>
+            <div class="row"><span class="lab grow">Mute while sculpting</span>
+              <select class="ms" data-h="mute" aria-label="Mute while sculpting" style="width:52%">
+                <option>Off: sculpt on top of every tweak</option><option>Mute all tweaks</option><option>Mute static and pulse tweaks</option><option>Mute sequence tweaks</option><option>Mute this level only</option>
+              </select></div>
+            <div class="row">
+              <button class="mcheck" role="checkbox" aria-checked="true" data-h="highlight"><span class="box"></span>Highlight shader</button>
+              <button class="mcheck" role="checkbox" aria-checked="true" data-h="hide-original"><span class="box"></span>Hide original</button>
+            </div>
+            <div class="row"><button class="mb" data-h="sculpt">Sculpt</button><button class="mb" data-h="commit">Commit</button><button class="mb" data-h="cancel">Cancel</button></div>
+            <div class="row"><button class="mb" data-h="blank-pose">Blank pose</button><button class="mb" data-h="hold-pose">Hold pose</button></div>
+          </div>
+          <div class="grp"><p class="gt"><button class="mtool text" data-h="brush-shelf" style="padding:0">Sculpt brushes</button></p>
+            <div class="brushrow" id="row-shape"><span class="cap">Shape</span></div>
+            <div class="brushrow" id="row-detail"><span class="cap">Detail</span></div>
+            <div class="brushrow" id="row-mask"><span class="cap">Mask</span>
+              <button class="mtool" data-h="brush-freeze" title="Freeze">Fz</button>
+              <button class="mtool text" data-h="freeze-invert">Invert</button>
+              <button class="mtool text" data-h="freeze-clear">Clear</button>
+              <button class="mtool text" data-h="sym-x">Sym X</button>
+              <button class="mtool text" data-h="brush-settings">Settings</button>
+              <button class="mtool text" data-h="brush-select">Select</button>
+            </div>
+            <div class="row"><button class="mcheck" role="checkbox" aria-checked="true" data-h="auto-brush"><span class="box"></span>Pick up the last brush when a sculpt starts</button></div>
+          </div>
+          <div class="grp"><p class="gt">Tweaks on this mesh</p>
+            <div class="tree" data-h="tweak-list" role="listbox" aria-label="Tweaks on this mesh">
+              <div class="th"><span>Tweak</span><span>Kind</span><span>Mode</span><span>Frame</span><span>Level</span><span>Weight</span></div>
+              <div class="tr sel" data-h="tweak-row"><span>cheek_fix</span><span>sculpt</span><span>static</span><span></span><span></span>
+                <span class="wcell"><input type="range" min="0" max="100" value="100" data-h="weight-slider" aria-label="cheek_fix weight"><span class="wval">1.00</span><button class="dia none" data-h="key-diamond" aria-label="Key cheek_fix">&#9670;</button></span></div>
+              <div class="tr" data-h="tweak-row"><span>contact_f12</span><span>sculpt</span><span>pulse</span><span>12</span><span></span>
+                <span class="wcell"><input type="range" min="0" max="100" value="33" data-h="weight-slider" aria-label="contact_f12 weight"><span class="wval">0.33</span><button class="dia anim" data-h="key-diamond" aria-label="Key contact_f12">&#9670;</button></span></div>
+              <div class="tr" data-h="tweak-row"><span>brow_L1_f10</span><span>sculpt</span><span>keyed</span><span>10</span><span></span>
+                <span class="wcell"><input type="range" min="0" max="100" value="63" data-h="weight-slider" aria-label="brow_L1_f10 weight"><span class="wval">0.63</span><button class="dia key" data-h="key-diamond" aria-label="Key brow_L1_f10">&#9670;</button></span></div>
+            </div>
+            <div class="row" style="margin-top:6px"><button class="mb" data-h="refresh">Refresh</button><button class="mb" data-h="refine">Refine</button><button class="mb" data-h="rename">Rename</button><button class="mb" data-h="paint-mask">Paint mask</button></div>
+            <div class="row"><button class="mb fit" data-h="amplify">Amplify &#215;</button><input class="mi num short" data-h="amplify" value="1.25" aria-label="Amplify factor"><button class="mb fit" data-h="delete" style="padding:6px 22px">Delete</button></div>
+            <div class="row"><button class="mcheck" role="checkbox" aria-checked="false" data-h="proxies"><span class="box"></span>Proxy channels on mesh</button></div>
+          </div>
+          <div class="grp"><p class="gt">Animate selected tweaks</p>
+            <div class="row"><button class="mb" data-h="key-prev">&#9664; Key</button><button class="mb" data-h="key-now">Key</button><button class="mb" data-h="key-0">Key 0</button><button class="mb" data-h="key-1">Key 1</button><button class="mb" data-h="key-remove">Remove</button><button class="mb" data-h="key-next">Key &#9654;</button></div>
+            <div class="row"><button class="mb fit" data-h="clear-keys">Clear keys</button><button class="mb fit" data-h="graph-editor">Graph Editor</button></div>
+            <div class="row"><span class="lab">Re-key as</span><button class="mb fit" data-h="rekey-static">Static</button><button class="mb fit" data-h="rekey-pulse">Pulse here</button><button class="mb fit" data-h="rekey-pose">Pose here</button></div>
+            <p class="note dim" style="font-size:10.5px">&#9670; grey: not animated · salmon: animated · red: key on this frame.</p>
+          </div>
+        </div>
+
+        <!-- SHAPE -->
+        <div class="page" id="p-shape" role="tabpanel" aria-labelledby="t-shape" hidden>
+          <p class="note">Works on the current frame. Select vertices (soft selection sets the falloff) to mask the effect. The result is stored as a tweak with the Sculpt tab's keying mode.</p>
+          <div class="grp"><p class="gt">Inflate / Deflate</p>
+            <div class="row"><span class="lab">Distance</span><input class="mi num" data-h="inflate-distance" value="0.100" aria-label="Distance"><button class="mb" data-h="inflate">Inflate</button><button class="mb" data-h="deflate">Deflate</button></div></div>
+          <div class="grp"><p class="gt">Relax</p>
+            <div class="row"><span class="lab">Iterations</span><input class="mi num short" data-h="relax-iterations" value="5" aria-label="Iterations"><span class="lab">Strength</span><input class="mi num short" data-h="relax-strength" value="0.50" aria-label="Strength"><button class="mb" data-h="relax">Relax</button></div></div>
+        </div>
+
+        <!-- EFFECTS -->
+        <div class="page" id="p-effects" role="tabpanel" aria-labelledby="t-effects" hidden>
+          <p class="note">Each effect bakes one sequence pose per frame on its own level. Running it again replaces the previous result. The selected vertices (with soft selection) are the mask.</p>
+          <div class="grp"><p class="gt">Frames</p>
+            <div class="row"><span class="lab">Start</span><input class="mi num short" data-h="fx-range" value="1" aria-label="Start"><span class="lab">End</span><input class="mi num short" data-h="fx-range" value="24" aria-label="End"><button class="mb" data-h="fx-playback">Playback range</button></div>
+            <div class="row"><span class="lab">Bind frame</span><input class="mi num short" data-h="fx-bind" value="1" aria-label="Bind frame"><button class="mb fit" data-h="fx-current">Current</button></div></div>
+          <div class="grp"><p class="gt">Smooth Motion</p>
+            <div class="row"><span class="lab">Smoothing (frames)</span><input class="mi num short" data-h="fx-sigma" value="2.00" aria-label="Smoothing in frames"><button class="mcheck" role="checkbox" aria-checked="true" data-h="fx-world"><span class="box"></span>World space</button><button class="mb" data-h="fx-smooth">Smooth</button></div></div>
+          <div class="grp"><p class="gt">Driver surface</p>
+            <div class="row"><span class="lab">Driver</span><input class="mi grow" data-h="fx-driver" value="" placeholder="" readonly aria-label="Driver mesh"><button class="mb fit" data-h="fx-driver">Use selected</button></div>
+            <div class="row"><button class="mb" data-h="fx-stick">Stick to surface</button><span class="lab">Skin offset</span><input class="mi num short" data-h="fx-offset" value="0.100" aria-label="Skin offset"><button class="mb" data-h="fx-push">Push out</button></div></div>
+          <div class="grp"><p class="gt">Pin</p><div class="row"><button class="mb fit" data-h="fx-pin">Pin to world</button></div></div>
+          <div class="grp"><p class="gt">Remove</p>
+            <div class="row"><select class="ms grow" data-h="fx-remove" aria-label="Effect to remove"><option>Smooth Motion</option><option>Stick to Surface</option><option>Push Out</option><option>Pin to World</option></select><button class="mb" data-h="fx-remove">Remove effect</button></div></div>
+        </div>
+
+        <!-- HANDLE -->
+        <div class="page" id="p-handle" role="tabpanel" aria-labelledby="t-handle" hidden>
+          <div class="grp"><p class="gt">Create</p>
+            <div class="row"><span class="lab">Radius</span><input class="mi num" data-h="handle-radius" value="0.000" aria-label="Radius"><button class="mb" data-h="handle-create">Create on selected vertex</button></div></div>
+          <div class="grp"><p class="gt">Selected handle</p>
+            <div class="row"><span class="lab">Radius</span><button class="mb" data-h="handle-set-radius">Set</button><span class="lab">Mode</span><select class="ms" data-h="handle-mode" aria-label="Falloff mode"><option>Volume</option><option>Surface</option></select><button class="mb" data-h="handle-mode">Set</button></div>
+            <div class="row"><span class="lab">Falloff shape</span><select class="ms grow" data-h="handle-shape" aria-label="Falloff shape"><option>Smooth</option><option>Linear</option><option>Sharp</option><option>Dome</option><option>Plateau</option></select><button class="mb" data-h="handle-shape">Apply</button></div>
+            <div class="row"><button class="mcheck" role="checkbox" aria-checked="true" data-h="handle-sphere"><span class="box"></span>Show falloff sphere</button><button class="mb fit" data-h="handle-colour">Colour&#8230;</button></div>
+            <div class="row"><button class="mcheck" role="checkbox" aria-checked="false" data-h="handle-orient"><span class="box"></span>Orient to world</button><button class="mb" data-h="handle-aim">Aim at selected</button><button class="mb" data-h="handle-clear-aim">Clear aim</button></div>
+            <div class="row"><button class="mb" data-h="handle-geo">Add geometry</button><button class="mb" data-h="handle-geo">Remove geometry</button><button class="mb" data-h="handle-delete">Delete handle</button></div></div>
+          <p class="note">Select the handle first, then (for Aim and geometry) the other objects.</p>
+        </div>
+
+        <!-- UTILITIES -->
+        <div class="page" id="p-utilities" role="tabpanel" aria-labelledby="t-utilities" hidden>
+          <div class="grp"><p class="gt">Bake over the playback range</p>
+            <div class="row"><span class="lab">Size</span><input class="mi num" data-h="follow-size" value="1.000" aria-label="Size"><button class="mb" data-h="follow-locator">Locator on vertex</button><button class="mb" data-h="follow-card">Card on vertex</button></div>
+            <div class="row"><button class="mb fit" data-h="bake-transforms">Bake mesh transforms</button></div></div>
+          <div class="grp"><p class="gt">View</p>
+            <div class="row"><button class="mb" data-h="smooth-preview">Smooth preview</button><button class="mb" data-h="next-camera">Next camera</button><button class="mcheck" role="checkbox" aria-checked="true" data-h="next-camera"><span class="box"></span>Skip ortho cameras</button></div></div>
+          <div class="grp"><p class="gt">Colour materials</p>
+            <div class="swatches" id="swatches"><button class="sw q" data-h="colours" aria-label="Random colour">?</button></div></div>
+          <div class="grp"><p class="gt">Channels</p>
+            <div class="row"><button class="mb fit" data-h="copy-values">Copy values</button><button class="mb fit" data-h="paste-values">Paste values</button></div></div>
+          <div class="grp"><p class="gt">Geometry</p>
+            <div class="row"><button class="mb fit" data-h="extract-faces">Extract faces (live copy)</button></div></div>
+        </div>
+
+        <!-- CACHE -->
+        <div class="page" id="p-cache" role="tabpanel" aria-labelledby="t-cache" hidden>
+          <p class="note">Export the polished meshes to Alembic, bring caches back as versions, and attach the active version onto the originals.</p>
+          <div class="row"><button class="mb fit" data-h="cache-export">Export selected&#8230;</button><button class="mb fit" data-h="cache-import">Import version&#8230;</button></div>
+          <div class="vlist" data-h="cache-list" aria-label="Cache versions">
+            <div class="vi">ball_v001 &#183; 2 meshes</div><div class="vi on">ball_v002 &#183; 2 meshes &#183; attached</div>
+          </div>
+          <div class="row"><button class="mb" data-h="cache-attach">Attach</button><button class="mb" data-h="cache-swap">Swap to selected</button><button class="mb" data-h="cache-detach">Detach</button><button class="mb" data-h="cache-delete">Delete version</button></div>
+          <div class="row"><button class="mb fit" data-h="cache-refresh">Refresh</button></div>
+        </div>
+
+        <p class="mstatus" data-h="status-line">Sculpt stored as a tweak.</p>
+      </div>
+    </div>
+  </div>
+
+  <aside class="explain" id="explain" aria-live="polite">
+    <p class="crumb" id="x-crumb"></p>
+    <h2 id="x-title"></h2>
+    <p class="what" id="x-what"></p>
+    <div id="x-extra"></div>
+    <div id="x-steps-wrap"><h3>How to use it</h3><ol class="steps" id="x-steps"></ol></div>
+    <div id="x-tips-wrap"><h3>Good to know</h3><ul class="tips" id="x-tips"></ul></div>
+    <div id="x-rel-wrap"><h3>Related</h3><div class="rel" id="x-rel"></div></div>
+  </aside>
+</div>
+
+<section class="flows" id="workflows">
+  <div class="wrap">
+    <h2>Workflows</h2>
+    <p>Real shot problems, solved step by step. Pick one, then use Next or click any step; the window above highlights the control for that step.</p>
+    <div class="flowgrid">
+      <div class="flowlist" id="flowlist"></div>
+      <div class="flowpanel" id="flowpanel" aria-live="polite">
+        <h3 id="f-title"></h3>
+        <p class="why" id="f-why"></p>
+        <ol class="fsteps" id="f-steps"></ol>
+        <div class="fnav">
+          <button class="btn ghost" id="f-prev">Previous</button>
+          <button class="btn" id="f-next">Next step</button>
+          <span class="fcount" id="f-count"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">Animation Tweaker is part of the Animation Tool Kit for Maya by David Shepstone. Every button in the tool is a single Undo. The full reference is under Help &#8250; User guide in the tool window. <a href="https://shepstone.ca/software/maya-tool-kit/">Download the Animation Tool Kit</a>.</div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var BRUSHES = {
+    shape: [
+      ["sculpt", "Sculpt", "Sc", "Pushes the surface out along its normal. Hold Ctrl to push in."],
+      ["smooth", "Smooth", "Sm", "Evens out bumps and dents."],
+      ["relax", "Relax", "Rx", "Evens out the vertex spacing while keeping the shape."],
+      ["grab", "Grab", "Gr", "Drags an area of the surface around. The usual choice for moving flesh and cloth."],
+      ["pinch", "Pinch", "Pi", "Pulls vertices together into a crease."],
+      ["flatten", "Flatten", "Fl", "Flattens the surface onto a plane."],
+      ["bulge", "Bulge", "Bu", "Swells the surface outward."],
+      ["amplify", "Amplify", "Am", "Exaggerates the surface detail that is already there."],
+      ["smear", "Smear", "Sr", "Slides vertices along the surface."]
+    ],
+    detail: [
+      ["foamy", "Foamy", "Fo", "Soft, build-up sculpting."],
+      ["wax", "Wax", "Wx", "Adds volume, like laying on wax."],
+      ["scrape", "Scrape", "Sp", "Shaves down high points."],
+      ["fill", "Fill", "Fi", "Fills in low points."],
+      ["knife", "Knife", "Kn", "Cuts fine creases."],
+      ["spray", "Spray", "Sy", "Sprays a stamp in random spots."],
+      ["repeat", "Repeat", "Rp", "Repeats a stamp along the stroke."],
+      ["imprint", "Imprint", "Im", "Presses a stamp into the surface."]
+    ]
+  };
+  var PALETTE = ["#d9534f", "#f0ad4e", "#f5d76e", "#5cb85c", "#5bc0de", "#428bca", "#9b59b6", "#e98fb4", "#c7c7c7", "#5a5a5a"];
+
+  /* ---- Help content: id -> {tab, group, t, what, steps, tips, rel, extra} ---- */
+  var H = {
+    "menu-file": { tab: "Window", group: "Menu", t: "File menu",
+      what: "Refresh the window, cancel every open sculpt in the scene, or close the tool.",
+      steps: ["Click File.", "Pick Cancel every open sculpt to clear any sculpt copies you forgot to commit or cancel, on any mesh."],
+      tips: ["Sculpts in progress are saved in the scene, so they survive closing the window, Reload Scripts and saving the file."] },
+    "menu-help": { tab: "Window", group: "Menu", t: "Help menu",
+      what: "Opens the offline user guide, the keying-modes reference and the About box inside Maya.",
+      steps: ["Click Help, then User guide or Keying modes."] },
+    "mesh-field": { tab: "Window", group: "Mesh", t: "Mesh field",
+      what: "Shows the mesh the tool is working on. Everything on the Sculpt tab and the tweak list applies to this mesh.",
+      steps: ["Select the character's mesh in the viewport or Outliner.", "Click Use selected. The full path appears here."],
+      tips: ["The field is read-only; change the mesh with Use selected.", "Pick the render mesh that is skinned, not a proxy or a control curve."],
+      rel: ["use-selected", "sculpt"] },
+    "use-selected": { tab: "Window", group: "Mesh", t: "Use selected",
+      what: "Makes the selected mesh the one you tweak, and lists its tweaks.",
+      steps: ["Select one polygon mesh (a vertex or face on it also works).", "Click Use selected."],
+      tips: ["The window remembers nothing between meshes: tweaks live on each mesh, so switching back lists them again."],
+      rel: ["mesh-field", "tweak-list"] },
+
+    mode: { tab: "Sculpt", group: "Keying", t: "Keying mode",
+      what: "Decides how a new tweak is keyed when you Commit it. It also applies to Inflate, Deflate and Relax on the Shape tab.",
+      extra: "modes",
+      steps: ["Choose the mode before you click Sculpt.", "Sculpt and Commit. The tweak is keyed in that mode straight away."],
+      tips: ["You can change a tweak's mode later with Re-key as.", "Keying a tweak by hand always switches it to keyed, so automatic keys never overwrite yours."],
+      rel: ["level", "ramp", "rekey-static", "key-now"] },
+    level: { tab: "Sculpt", group: "Keying", t: "Level",
+      what: "The track a Sequence pose goes on. Each level is its own pose-to-pose track, so poses only crossfade with poses on the same level.",
+      steps: ["Type a level name, such as L1, cheek or cloth.", "Set Mode to Sequence and sculpt a pose on each key frame.", "Use a different level for each part you animate separately."],
+      tips: ["Level names are free text. A pose on the wrong level is the usual reason two poses do not blend.", "Pose here, Blank pose, Hold pose and Mute this level only all use this level."],
+      rel: ["mode", "blank-pose", "hold-pose", "rekey-pose"] },
+    ramp: { tab: "Sculpt", group: "Keying", t: "Ramp in / out",
+      what: "For Pulse tweaks: how many frames the tweak takes to fade in before its frame and fade out after it.",
+      steps: ["Set Mode to Pulse.", "Set Ramp in and Ramp out in frames, e.g. 3 and 3.", "Sculpt and Commit on the contact frame. The tweak is keyed 0 at frame minus ramp in, 1 on the frame and 0 at frame plus ramp out."],
+      tips: ["Use 1 and 1 for a one-frame fix. Longer ramps hide the fix more smoothly.", "Pulse here (Re-key as) uses these values too."],
+      rel: ["mode", "rekey-pulse"] },
+    mute: { tab: "Sculpt", group: "Sculpt", t: "Mute while sculpting",
+      what: "Switches some existing tweaks off while you sculpt, so the new tweak is measured against the mesh without them.",
+      extra: "mute",
+      steps: ["Pick what to mute before clicking Sculpt.", "Sculpt and Commit. The muted tweaks come back with their keys intact, and also on Cancel."],
+      tips: ["Leave it Off to sculpt on top of what is already there, which is what you want most of the time."],
+      rel: ["sculpt", "level"] },
+    highlight: { tab: "Sculpt", group: "Sculpt", t: "Highlight shader",
+      what: "Gives the sculpt copy a light blue material, so you can see at a glance that you are working on the copy.",
+      steps: ["Leave it ticked, then click Sculpt."], tips: ["The material is removed when no sculpt uses it."], rel: ["sculpt", "hide-original"] },
+    "hide-original": { tab: "Sculpt", group: "Sculpt", t: "Hide original",
+      what: "Hides the real mesh while you sculpt the copy, so the two don't overlap in the viewport.",
+      steps: ["Leave it ticked, then click Sculpt. The original comes back on Commit or Cancel."],
+      tips: ["Untick it to see the original through the copy, for example in X-Ray.", "A mesh whose visibility is driven by the rig is left alone."], rel: ["sculpt", "highlight"] },
+    sculpt: { tab: "Sculpt", group: "Sculpt", t: "Sculpt",
+      what: "Makes a copy of the mesh exactly as it looks on this frame, after the skin and every tweak, and selects it ready to sculpt.",
+      steps: ["Pick the mesh with Use selected and go to the frame you want to fix.", "Choose a keying Mode.", "Click Sculpt. With Pick up the last brush ticked, your last brush is ready.", "Shape the copy with brushes, soft selection or by moving vertices.", "Click Commit to keep it, or Cancel to throw it away."],
+      tips: ["Don't add or delete faces on the copy: the vertex count has to match.", "You can scrub the timeline while sculpting; the fix is measured against the frame you started on.", "Each step is one Undo."],
+      rel: ["commit", "cancel", "mode", "brush-grab"] },
+    commit: { tab: "Sculpt", group: "Sculpt", t: "Commit",
+      what: "Stores the difference between the copy and the mesh as a new tweak, keys it in the chosen mode and deletes the copy.",
+      steps: ["Finish sculpting the copy.", "Click Commit. The new tweak appears in the list, and you are back on the Select tool."],
+      tips: ["If nothing changed, nothing is stored and the status line tells you.", "Committing a Sequence pose on a frame that already has one on that level adds to that pose."],
+      rel: ["sculpt", "cancel", "tweak-list"] },
+    cancel: { tab: "Sculpt", group: "Sculpt", t: "Cancel",
+      what: "Throws the sculpt copy away and restores the mesh, its visibility and any muted tweaks. Nothing is stored.",
+      steps: ["Click Cancel while a sculpt is open."], tips: ["File > Cancel every open sculpt does this for every mesh at once."], rel: ["sculpt", "commit", "menu-file"] },
+    "blank-pose": { tab: "Sculpt", group: "Sculpt", t: "Blank pose",
+      what: "Adds an empty pose on this frame on the current Level, so the previous pose fades out to nothing by here.",
+      steps: ["Go to the frame where the shape should be gone.", "Check the Level.", "Click Blank pose."],
+      tips: ["The first pose of a level stays on before its frame and the last stays on after it. Use a Blank pose to end a track."],
+      rel: ["level", "hold-pose", "rekey-pose"] },
+    "hold-pose": { tab: "Sculpt", group: "Sculpt", t: "Hold pose",
+      what: "Copies the previous pose on this level to the current frame, so the shape holds still until here and then moves on to the next pose.",
+      steps: ["Go to the frame where the hold should end.", "Check the Level.", "Click Hold pose."], rel: ["level", "blank-pose"] },
+
+    "brush-shelf": { tab: "Sculpt", group: "Sculpt brushes", t: "Sculpt brushes",
+      what: "Maya's own mesh sculpting brushes, so you never need the Sculpting shelf.",
+      steps: ["Click Sculpt first.", "Click a brush. The sculpt copy is selected for you, so the brush never touches the animated mesh.", "Sculpt in the viewport. Hold B and drag to change the brush size."],
+      rel: ["brush-settings", "sym-x", "brush-freeze", "auto-brush"] },
+    "brush-freeze": { tab: "Sculpt", group: "Sculpt brushes · Mask", t: "Freeze brush",
+      what: "Paints areas that the other brushes must not move, such as the lips while you work on the cheek.",
+      steps: ["Pick Freeze and paint over the area to protect.", "Switch to another brush and sculpt; the frozen area stays put."],
+      tips: ["Invert swaps frozen and free areas. Clear unfreezes everything."], rel: ["freeze-invert", "freeze-clear"] },
+    "freeze-invert": { tab: "Sculpt", group: "Sculpt brushes · Mask", t: "Invert freeze",
+      what: "Swaps the frozen and free areas of the sculpt copy.",
+      steps: ["Freeze the part you want to work on.", "Click Invert. Now everything except that part is frozen."], rel: ["brush-freeze", "freeze-clear"] },
+    "freeze-clear": { tab: "Sculpt", group: "Sculpt brushes · Mask", t: "Clear freeze",
+      what: "Unfreezes the whole mesh.", steps: ["Click Clear."], rel: ["brush-freeze"] },
+    "sym-x": { tab: "Sculpt", group: "Sculpt brushes", t: "Sym X",
+      what: "Mirrors brush strokes across the mesh's X axis, in the mesh's own space.",
+      steps: ["Turn Sym X on.", "Sculpt one side; the other side follows."],
+      tips: ["It mirrors across the mesh, not the pose: an asymmetrical pose can make the mirrored stroke land in an odd place. Turn it off for shot fixes on one side."],
+      rel: ["brush-shelf"] },
+    "brush-settings": { tab: "Sculpt", group: "Sculpt brushes", t: "Brush settings",
+      what: "Opens Maya's Tool Settings for the current brush: size, strength, falloff and stamps.",
+      steps: ["Pick a brush.", "Click Settings."], rel: ["brush-shelf"] },
+    "brush-select": { tab: "Sculpt", group: "Sculpt brushes", t: "Select (leave the brush)",
+      what: "Puts down the brush and returns to the Select tool.",
+      steps: ["Click Select."], tips: ["Commit and Cancel do this for you."], rel: ["commit"] },
+    "auto-brush": { tab: "Sculpt", group: "Sculpt brushes", t: "Pick up the last brush",
+      what: "When ticked, Sculpt and Refine hand you the brush you used last, so you can start sculpting at once.",
+      steps: ["Leave it ticked.", "Click Sculpt. The last brush, or Grab the first time, is active on the copy."], rel: ["sculpt", "refine"] },
+
+    "tweak-list": { tab: "Sculpt", group: "Tweaks on this mesh", t: "Tweak list",
+      what: "Every tweak on the mesh: its name, kind (sculpt, inflate, relax, effect), mode, frame, level and weight on the current frame.",
+      steps: ["Click a row to select a tweak; Ctrl or Shift click to select several.", "Use the buttons below, or right-click a row for the same commands."],
+      tips: ["The sliders and key diamonds follow the timeline as you scrub.", "Each tweak is a target on one blendShape per mesh, named <mesh>_atkTweaks."],
+      rel: ["weight-slider", "key-diamond", "refresh"] },
+    "tweak-row": { tab: "Sculpt", group: "Tweaks on this mesh", t: "A tweak",
+      what: "One stored fix. Select it to refine, rename, paint, amplify, delete or key it.",
+      steps: ["Click the row.", "Pick an action below, or right-click for the menu."], rel: ["tweak-list", "refine", "key-now"] },
+    "weight-slider": { tab: "Sculpt", group: "Tweaks on this mesh", t: "Weight slider",
+      what: "How much of the tweak shows on this frame, from 0 (off) to 1 (fully on). Dragging shows the result live in the viewport.",
+      steps: ["Drag to try a value.", "Click the key diamond to key it on this frame."],
+      tips: ["On an animated tweak, a value you don't key is lost when the frame changes, just as in the Channel Box."],
+      rel: ["key-diamond", "key-now"] },
+    "key-diamond": { tab: "Sculpt", group: "Tweaks on this mesh", t: "Key diamond",
+      what: "Keys this tweak's weight on the current frame. Its colour shows the key state, using the Channel Box colours.",
+      extra: "diamonds",
+      steps: ["Set the weight with the slider.", "Click the diamond."],
+      tips: ["Keying by hand switches the tweak to keyed mode."], rel: ["weight-slider", "key-now"] },
+    refresh: { tab: "Sculpt", group: "Tweaks on this mesh", t: "Refresh",
+      what: "Reads the tweaks from the scene again, for example after an Undo or after editing keys in the Graph Editor.", steps: ["Click Refresh."] },
+    refine: { tab: "Sculpt", group: "Tweaks on this mesh", t: "Refine",
+      what: "Adds a correction to an existing tweak instead of making a new one.",
+      steps: ["Select one tweak.", "Go to a frame where it is on (weight above 0).", "Click Refine and sculpt the correction.", "Click Commit. The correction is added to that tweak."],
+      tips: ["If the tweak is half on, the correction is scaled so the result looks exactly like your sculpt."],
+      rel: ["sculpt", "commit", "amplify"] },
+    rename: { tab: "Sculpt", group: "Tweaks on this mesh", t: "Rename",
+      what: "Changes the tweak's label and the name of its weight channel.", steps: ["Select one tweak.", "Click Rename and type a name, e.g. cheek_squash."] },
+    "paint-mask": { tab: "Sculpt", group: "Tweaks on this mesh", t: "Paint mask",
+      what: "Opens Maya's Paint Blend Shape Weights tool on the tweak, so you can paint where it applies.",
+      steps: ["Select one tweak.", "Click Paint mask.", "Paint with value 0 to remove the tweak from an area, 1 to restore it."],
+      tips: ["If the tool paints the wrong target, pick the tweak's name in the tool's target list."], rel: ["refine"] },
+    amplify: { tab: "Sculpt", group: "Tweaks on this mesh", t: "Amplify ×",
+      what: "Scales the selected tweaks' offsets by the number beside it.",
+      steps: ["Select one or more tweaks.", "Type a factor: 1.25 is 25% stronger, 0.5 is half, and -1 flips the tweak.", "Click Amplify ×."], rel: ["refine"] },
+    "delete": { tab: "Sculpt", group: "Tweaks on this mesh", t: "Delete",
+      what: "Removes the selected tweaks with their keys and proxy channels. Sequence levels they were on are rekeyed.",
+      steps: ["Select the tweaks.", "Click Delete."], tips: ["Undo brings them back. Deleting <mesh>_atkTweaks removes Animation Tweaker from a mesh completely."] },
+    proxies: { tab: "Sculpt", group: "Tweaks on this mesh", t: "Proxy channels on mesh",
+      what: "Puts a keyable copy of every tweak weight on the mesh transform, under a TWEAKS divider in the Channel Box.",
+      steps: ["Tick it. Existing keys move onto the proxies.", "Key the tweaks from the Channel Box, see them on the timeline, or add them to character sets.", "Untick it to move the keys back."],
+      rel: ["key-now", "graph-editor"] },
+
+    "key-prev": { tab: "Sculpt", group: "Animate selected tweaks", t: "Previous key",
+      what: "Jumps the timeline to the previous key of the selected tweaks, or of every tweak when none is selected.", steps: ["Select tweaks (optional).", "Click ◀ Key."], rel: ["key-next"] },
+    "key-next": { tab: "Sculpt", group: "Animate selected tweaks", t: "Next key",
+      what: "Jumps the timeline to the next key of the selected tweaks, or of every tweak when none is selected.", steps: ["Select tweaks (optional).", "Click Key ▶."], rel: ["key-prev"] },
+    "key-now": { tab: "Sculpt", group: "Animate selected tweaks", t: "Key",
+      what: "Keys each selected tweak on this frame at the weight it shows now.",
+      steps: ["Select tweaks.", "Set their weights with the sliders.", "Click Key."],
+      tips: ["The tweaks switch to keyed mode, so automatic pulse and sequence keys never overwrite yours.", "A sequence pose you key by hand leaves its level, and the rest of the level is rekeyed without it."],
+      rel: ["key-0", "key-1", "weight-slider"] },
+    "key-0": { tab: "Sculpt", group: "Animate selected tweaks", t: "Key 0",
+      what: "Keys the selected tweaks off on this frame.", steps: ["Select tweaks.", "Go to the frame where they should be off.", "Click Key 0."], rel: ["key-1", "key-now"] },
+    "key-1": { tab: "Sculpt", group: "Animate selected tweaks", t: "Key 1",
+      what: "Keys the selected tweaks fully on on this frame.", steps: ["Select tweaks.", "Go to the frame where they should be fully on.", "Click Key 1."], rel: ["key-0", "key-now"] },
+    "key-remove": { tab: "Sculpt", group: "Animate selected tweaks", t: "Remove key",
+      what: "Deletes the selected tweaks' keys on this frame.", steps: ["Select tweaks.", "Go to a frame with a red diamond.", "Click Remove."], rel: ["clear-keys"] },
+    "clear-keys": { tab: "Sculpt", group: "Animate selected tweaks", t: "Clear keys",
+      what: "Deletes all keys on the selected tweaks and holds each one at the weight it shows now.", steps: ["Go to a frame where the weights look right.", "Select tweaks.", "Click Clear keys."], rel: ["key-remove", "rekey-static"] },
+    "graph-editor": { tab: "Sculpt", group: "Animate selected tweaks", t: "Graph Editor",
+      what: "Selects the node that holds the selected tweaks' weights and opens the Graph Editor, so you can shape their curves.",
+      steps: ["Select tweaks.", "Click Graph Editor.", "Pick the tweak channels (tw_...) on the left."], tips: ["With proxy channels on, the curves are on the mesh transform."], rel: ["proxies"] },
+    "rekey-static": { tab: "Sculpt", group: "Animate selected tweaks · Re-key as", t: "Re-key as Static",
+      what: "Removes the selected tweaks' keys and sets them always fully on.", steps: ["Select tweaks.", "Click Static."], rel: ["mode"] },
+    "rekey-pulse": { tab: "Sculpt", group: "Animate selected tweaks · Re-key as", t: "Re-key as Pulse here",
+      what: "Replaces the selected tweaks' keys with a 0-1-0 pulse around the current frame, using Ramp in and out.",
+      steps: ["Go to the frame the fix belongs to.", "Set Ramp in and out at the top.", "Select tweaks and click Pulse here."], rel: ["ramp", "mode"] },
+    "rekey-pose": { tab: "Sculpt", group: "Animate selected tweaks · Re-key as", t: "Re-key as Pose here",
+      what: "Makes the selected tweak a sequence pose on this frame, on the Level at the top, and rekeys that level.",
+      steps: ["Select one tweak.", "Go to its frame and set the Level.", "Click Pose here."],
+      tips: ["Works on one tweak at a time, on a frame that has no pose on that level yet."], rel: ["level", "blank-pose"] },
+
+    "inflate-distance": { tab: "Shape", group: "Inflate / Deflate", t: "Distance",
+      what: "How far Inflate and Deflate move each vertex along its normal, in scene units.", steps: ["Type a small value first, e.g. 0.05, and increase it."], rel: ["inflate", "deflate"] },
+    inflate: { tab: "Shape", group: "Inflate / Deflate", t: "Inflate",
+      what: "Pushes the selected vertices outward along their normals by Distance and stores the result as a tweak.",
+      steps: ["Select vertices on the mesh. Turn on soft selection for a soft falloff.", "Set the keying Mode on the Sculpt tab.", "Set Distance and click Inflate."],
+      tips: ["With soft selection on, the falloff becomes the strength.", "Nothing selected means the whole mesh."], rel: ["deflate", "relax", "mode"] },
+    deflate: { tab: "Shape", group: "Inflate / Deflate", t: "Deflate",
+      what: "Pulls the selected vertices inward along their normals by Distance, stored as a tweak.",
+      steps: ["Select vertices (soft selection for falloff).", "Set Distance and click Deflate."], rel: ["inflate"] },
+    "relax-iterations": { tab: "Shape", group: "Relax", t: "Iterations", what: "How many smoothing passes Relax runs. More passes smooth further.", steps: ["Start at 5; raise it for stronger smoothing."], rel: ["relax"] },
+    "relax-strength": { tab: "Shape", group: "Relax", t: "Strength", what: "How far each pass moves a vertex toward the average of its neighbours, from 0 to 1.", steps: ["0.5 is a good start."], rel: ["relax"] },
+    relax: { tab: "Shape", group: "Relax", t: "Relax",
+      what: "Smooths lumps and pinching on the current frame, for example at a bent elbow, and stores the result as a tweak.",
+      steps: ["Select the vertices to smooth (soft selection for falloff).", "Set Iterations and Strength.", "Click Relax."],
+      tips: ["Unselected vertices stay put, so the relaxed area blends into the rest."], rel: ["inflate", "mode"] },
+
+    "fx-range": { tab: "Effects", group: "Frames", t: "Start / End", what: "The frame range an effect is baked over.", steps: ["Type the first and last frame, or click Playback range."], rel: ["fx-playback"] },
+    "fx-playback": { tab: "Effects", group: "Frames", t: "Playback range", what: "Copies the timeline's playback range into Start and End.", steps: ["Set the timeline range in Maya.", "Click Playback range."], rel: ["fx-range"] },
+    "fx-bind": { tab: "Effects", group: "Frames", t: "Bind frame",
+      what: "The frame Stick to Surface and Pin to World measure from. On this frame, the mesh is left exactly as it is.",
+      steps: ["Go to a frame where the area looks right.", "Click Current, or type the frame."], rel: ["fx-current", "fx-stick", "fx-pin"] },
+    "fx-current": { tab: "Effects", group: "Frames", t: "Current", what: "Sets the bind frame to the current frame.", steps: ["Click Current."], rel: ["fx-bind"] },
+    "fx-sigma": { tab: "Effects", group: "Smooth Motion", t: "Smoothing (frames)", what: "The width of the smoothing over time, in frames. Larger values remove more jitter but soften real motion too.", steps: ["Start at 2 and adjust."], rel: ["fx-smooth"] },
+    "fx-world": { tab: "Effects", group: "Smooth Motion", t: "World space",
+      what: "When ticked, smooths each vertex's path in the scene. Untick it to smooth only the deformation relative to the mesh's transform.",
+      steps: ["Untick it when the character travels fast and you only want to calm the flesh or cloth."], rel: ["fx-smooth"] },
+    "fx-smooth": { tab: "Effects", group: "Smooth Motion", t: "Smooth Motion",
+      what: "Averages each masked vertex's path over time, to calm jitter and popping in skinning, cloth or simulation.",
+      steps: ["Select the jittery vertices (soft selection for falloff).", "Set Start and End.", "Set Smoothing and World space.", "Click Smooth."],
+      tips: ["The result is one pose per frame on its own level (fx_smooth_motion), so it shows in the tweak list.", "Running it again replaces the earlier result. Remove effect takes it out."], rel: ["fx-sigma", "fx-remove"] },
+    "fx-driver": { tab: "Effects", group: "Driver surface", t: "Driver",
+      what: "The mesh that Stick to Surface follows and Push Out pushes away from, such as the body under a shirt.",
+      steps: ["Select the driver mesh.", "Click Use selected next to Driver."], tips: ["Push Out needs the driver's normals to point outward."], rel: ["fx-stick", "fx-push"] },
+    "fx-stick": { tab: "Effects", group: "Driver surface", t: "Stick to surface",
+      what: "Keeps masked vertices in the same place relative to the driver mesh as on the bind frame. Good for a hand resting on a thigh, or a strap on a shoulder.",
+      steps: ["Set the Driver.", "Go to a frame where the contact looks right and click Current for the bind frame.", "Select the vertices that should stick.", "Set the frame range and click Stick to surface."], rel: ["fx-driver", "fx-bind"] },
+    "fx-offset": { tab: "Effects", group: "Driver surface", t: "Skin offset", what: "For Push Out: how far outside the driver's surface vertices are kept.", steps: ["Use a small value such as 0.05 for cloth on skin."], rel: ["fx-push"] },
+    "fx-push": { tab: "Effects", group: "Driver surface", t: "Push out",
+      what: "Fixes poke-through. Wherever a masked vertex is inside the driver mesh, or closer than Skin offset, it is pushed out along the driver's surface.",
+      steps: ["Set the Driver (e.g. the body).", "Select the vertices that poke through (e.g. the shirt).", "Set Skin offset and the frame range.", "Click Push out."], rel: ["fx-driver", "fx-offset"] },
+    "fx-pin": { tab: "Effects", group: "Pin", t: "Pin to world",
+      what: "Holds the masked vertices exactly where they were in the world on the bind frame, such as feet that slide or a hand on a table.",
+      steps: ["Set the bind frame.", "Select the vertices to hold.", "Set the frame range and click Pin to world."], rel: ["fx-bind"] },
+    "fx-remove": { tab: "Effects", group: "Remove", t: "Remove effect", what: "Deletes every pose an effect baked on this mesh.", steps: ["Pick the effect in the list.", "Click Remove effect."] },
+
+    "handle-radius": { tab: "Handle", group: "Create", t: "Radius",
+      what: "The falloff radius for a new handle, or for Set on the selected handle. 0 means 15% of the mesh's size.", steps: ["Leave 0 for a sensible default, or type a radius in scene units."], rel: ["handle-create", "handle-set-radius"] },
+    "handle-create": { tab: "Handle", group: "Create", t: "Create on selected vertex",
+      what: "Makes a soft-modification handle that rides the skin: it follows the mesh as it animates, and moving or keying the handle pushes the surface around it.",
+      steps: ["Select one vertex where you want the handle.", "Set Radius (0 for automatic).", "Click Create on selected vertex.", "Move, rotate or scale the handle and key it."],
+      tips: ["The mesh needs UVs at that vertex for the handle to ride the surface. Without them it is placed there and stays put, with a warning."], rel: ["handle-radius", "handle-shape"] },
+    "handle-set-radius": { tab: "Handle", group: "Selected handle", t: "Set radius", what: "Gives the selected handle the radius typed in the Create box.", steps: ["Select the handle.", "Type the radius under Create.", "Click Set."], tips: ["You can also change and key falloffRadius in the Channel Box."], rel: ["handle-radius"] },
+    "handle-mode": { tab: "Handle", group: "Selected handle", t: "Falloff mode",
+      what: "Volume moves everything inside the falloff sphere. Surface spreads along the mesh, so it won't jump to a nearby lip or finger.", steps: ["Select the handle.", "Pick Volume or Surface and click Set."], rel: ["handle-shape"] },
+    "handle-shape": { tab: "Handle", group: "Selected handle", t: "Falloff shape",
+      what: "How strength fades from the centre: Smooth, Linear, Sharp, Dome or Plateau.", steps: ["Select the handle.", "Pick a shape and click Apply."], rel: ["handle-mode"] },
+    "handle-sphere": { tab: "Handle", group: "Selected handle", t: "Show falloff sphere", what: "Shows or hides the sphere that marks the handle's reach.", steps: ["Select the handle and toggle the box."], rel: ["handle-colour"] },
+    "handle-colour": { tab: "Handle", group: "Selected handle", t: "Colour…", what: "Sets the falloff sphere's colour, handy when several handles overlap.", steps: ["Select the handle.", "Click Colour… and pick a colour."] },
+    "handle-orient": { tab: "Handle", group: "Selected handle", t: "Orient to world",
+      what: "When ticked, the handle keeps world orientation instead of turning with the surface. It is keyable.", steps: ["Select the handle and tick Orient to world."], rel: ["handle-aim"] },
+    "handle-aim": { tab: "Handle", group: "Selected handle", t: "Aim at selected", what: "Points the handle's axes at another object, so pulling along one axis always heads toward it.", steps: ["Select the handle, then the object to aim at.", "Click Aim at selected."], rel: ["handle-clear-aim"] },
+    "handle-clear-aim": { tab: "Handle", group: "Selected handle", t: "Clear aim", what: "Removes the aim from the selected handle.", steps: ["Select the handle and click Clear aim."], rel: ["handle-aim"] },
+    "handle-geo": { tab: "Handle", group: "Selected handle", t: "Add / Remove geometry", what: "Lets one handle deform several meshes, such as skin and the shirt over it.", steps: ["Select the handle, then the other meshes.", "Click Add geometry, or Remove geometry to take them off."] },
+    "handle-delete": { tab: "Handle", group: "Selected handle", t: "Delete handle", what: "Deletes the selected handle and every node it made.", steps: ["Select the handle and click Delete handle."] },
+
+    "follow-size": { tab: "Utilities", group: "Bake over the playback range", t: "Size", what: "The display size of the locators or cards Locator / Card on vertex makes.", steps: ["Set it before baking."] },
+    "follow-locator": { tab: "Utilities", group: "Bake over the playback range", t: "Locator on vertex",
+      what: "Bakes a locator onto each selected vertex over the playback range, following its position. Use it as a constraint target or a reference.",
+      steps: ["Select one or more vertices.", "Click Locator on vertex."], rel: ["follow-card"] },
+    "follow-card": { tab: "Utilities", group: "Bake over the playback range", t: "Card on vertex",
+      what: "Bakes a small card onto each selected vertex, following its position and orientation. Good for attaching props, decals or particles to skin.", steps: ["Select vertices.", "Set Size.", "Click Card on vertex."], rel: ["follow-locator"] },
+    "bake-transforms": { tab: "Utilities", group: "Bake over the playback range", t: "Bake mesh transforms", what: "Bakes the selected objects' translate, rotate and scale to a key on every frame and removes their constraints.", steps: ["Select the objects.", "Click Bake mesh transforms."] },
+    "smooth-preview": { tab: "Utilities", group: "View", t: "Smooth preview", what: "Toggles smooth-mesh preview on every mesh under the selection, to check a fix as it will render.", steps: ["Select the character's top group.", "Click Smooth preview; click again to turn it off."] },
+    "next-camera": { tab: "Utilities", group: "View", t: "Next camera", what: "Makes the active viewport look through the next camera in the scene. With Skip ortho cameras ticked, top, front and side are skipped.", steps: ["Click in the viewport to make it active.", "Click Next camera to cycle."] },
+    colours: { tab: "Utilities", group: "Colour materials", t: "Colour materials", what: "Gives the selected meshes or faces a flat colour, to tell parts apart while you work. ? picks a random colour.", steps: ["Select meshes or faces.", "Click a swatch, or ? for a random colour."], tips: ["Materials are shared by colour and named atkColour_<rrggbb>."] },
+    "copy-values": { tab: "Utilities", group: "Channels", t: "Copy values",
+      what: "Copies the keyable channel values of the selection, or only the channels highlighted in the Channel Box.", steps: ["Select the source object(s).", "Optionally highlight channels in the Channel Box.", "Click Copy values."], rel: ["paste-values"] },
+    "paste-values": { tab: "Utilities", group: "Channels", t: "Paste values",
+      what: "Pastes copied values onto the selection. One source goes onto every target; several sources are matched by name, then by order.", steps: ["Select the targets.", "Click Paste values."], tips: ["With Auto Key on, pasted channels are keyed.", "The values are kept in Maya's preferences as plain data, so they survive a restart."], rel: ["copy-values"] },
+    "extract-faces": { tab: "Utilities", group: "Geometry", t: "Extract faces (live copy)", what: "Makes a separate mesh from the selected faces that keeps following the original, including skinning and tweaks.", steps: ["Select faces.", "Click Extract faces (live copy)."], tips: ["Useful for a quick prop, a cloth panel to simulate, or isolating an area to review."] },
+
+    "cache-export": { tab: "Cache", group: "Versions", t: "Export selected…", what: "Writes the selected meshes to an Alembic file. Each mesh is tagged with its own path, so the cache can find it again.", steps: ["Select the polished meshes.", "Click Export selected… and pick a file name, e.g. ball_v001.abc."], rel: ["cache-import"] },
+    "cache-import": { tab: "Cache", group: "Versions", t: "Import version…", what: "Brings an Alembic cache back as a version under the ATK_TweakCache_CTL group.", steps: ["Click Import version… and pick the file."], rel: ["cache-attach"] },
+    "cache-list": { tab: "Cache", group: "Versions", t: "Version list", what: "Every imported cache version. The attached one drives the original meshes.", steps: ["Click a version to select it for Attach, Swap or Delete."] },
+    "cache-attach": { tab: "Cache", group: "Versions", t: "Attach", what: "Drives the original meshes from the selected (or active) version. The control's envelope fades the cache in and out and can be keyed.", steps: ["Select a version.", "Click Attach."], rel: ["cache-swap", "cache-detach"] },
+    "cache-swap": { tab: "Cache", group: "Versions", t: "Swap to selected", what: "Switches the attached meshes to another version. Only the active version is shown.", steps: ["Select another version.", "Click Swap to selected."], rel: ["cache-attach"] },
+    "cache-detach": { tab: "Cache", group: "Versions", t: "Detach", what: "Removes the attach blendShapes, so the originals play their own animation again.", steps: ["Click Detach."] },
+    "cache-delete": { tab: "Cache", group: "Versions", t: "Delete version", what: "Deletes the selected version from the scene.", steps: ["Select a version.", "Click Delete version."] },
+    "cache-refresh": { tab: "Cache", group: "Versions", t: "Refresh", what: "Reads the versions from the scene again.", steps: ["Click Refresh."] },
+    "status-line": { tab: "Window", group: "Status", t: "Status line", what: "Says what the last action did, or what went wrong and how to fix it. Errors also appear in Maya's Script Editor.", steps: ["Read it after each click."] }
+  };
+
+  BRUSHES.shape.concat(BRUSHES.detail).forEach(function (b) {
+    H["brush-" + b[0]] = { tab: "Sculpt", group: "Sculpt brushes", t: b[1] + " brush",
+      what: b[3] + " A Maya sculpting brush; picking it while a sculpt is open selects the sculpt copy first.",
+      steps: ["Click Sculpt.", "Click " + b[1] + ".", "Stroke over the copy in the viewport. Hold B and drag to resize the brush."],
+      tips: ["Brush settings (size, strength, falloff) are under Settings."], rel: ["brush-settings", "sym-x", "commit"] };
+  });
+
+  var EXTRA = {
+    modes: '<table class="modes"><thead><tr><th>Mode</th><th>Keys it gets</th><th>Use it for</th></tr></thead><tbody>' +
+      '<tr><td>Static</td><td>No keys, always 1</td><td>A fix that should always show</td></tr>' +
+      '<tr><td>Pulse</td><td>0 at frame &#8722; ramp in, 1 on the frame, 0 at frame + ramp out</td><td>A one-off fix, e.g. an intersection on a contact frame</td></tr>' +
+      '<tr><td>Sequence</td><td>1 on its frame, 0 on the frames of the poses either side, same level</td><td>Pose-to-pose shape animation that crossfades</td></tr>' +
+      '<tr><td>Keyed by hand</td><td>One key at 1, then only your keys</td><td>Shapes you time yourself</td></tr></tbody></table>',
+    mute: '<table class="modes"><thead><tr><th>Choice</th><th>Switched off while you sculpt</th></tr></thead><tbody>' +
+      '<tr><td>Off</td><td>Nothing; you sculpt on top of everything</td></tr><tr><td>Mute all tweaks</td><td>Every tweak on the mesh</td></tr>' +
+      '<tr><td>Mute static and pulse</td><td>Static, pulse and keyed-by-hand tweaks</td></tr><tr><td>Mute sequence tweaks</td><td>All pose-to-pose tweaks on every level</td></tr>' +
+      '<tr><td>Mute this level only</td><td>Pose-to-pose tweaks on the Level above</td></tr></tbody></table>',
+    diamonds: '<table class="modes"><tbody><tr><td style="color:var(--key-none);font-size:18px">&#9670;</td><td>Grey: not animated</td></tr>' +
+      '<tr><td style="color:var(--key-anim);font-size:18px">&#9670;</td><td>Salmon: animated, no key on this frame</td></tr>' +
+      '<tr><td style="color:var(--key-on);font-size:18px">&#9670;</td><td>Red: there is a key on this frame</td></tr></tbody></table>'
+  };
+
+  var FLOWS = [
+    { id: "flow-contact", t: "Fix an intersection on one frame", s: "Pulse a fix around a contact frame",
+      why: "A hand sinks into the cheek on frame 12. Sculpt it out and fade the fix in and out over a few frames, so it never pops.",
+      steps: [["use-selected", "Select the face mesh and click Use selected."], ["mode", "Set Mode to Pulse."], ["ramp", "Set Ramp in and out, e.g. 2 and 2."], ["sculpt", "Go to frame 12 and click Sculpt."], ["brush-grab", "Pick Grab (or Smooth) and pull the cheek out from under the hand."], ["commit", "Click Commit. The fix is keyed 0-1-0 around frame 12."], ["key-diamond", "Scrub through: the diamond is salmon between keys and red on the keys."]] },
+    { id: "flow-p2p", t: "Animate a shape pose to pose", s: "Sequence poses that crossfade",
+      why: "Give a cheek a squash and stretch across a run: sculpt a pose on each key frame and let them blend.",
+      steps: [["mode", "Set Mode to Sequence."], ["level", "Type a level name for this track, e.g. cheek."], ["sculpt", "Go to the first key frame and click Sculpt."], ["commit", "Sculpt the squash and click Commit."], ["sculpt", "Go to the next key frame, Sculpt the stretch and Commit. The two poses now crossfade."], ["hold-pose", "To hold a shape, go to where the hold ends and click Hold pose."], ["blank-pose", "To end the track, go to where the shape should be gone and click Blank pose."]] },
+    { id: "flow-hand", t: "Time a tweak by hand", s: "Your own keys and the Graph Editor",
+      why: "You have a static fix but want it to ease on over a few frames, on your own timing.",
+      steps: [["tweak-row", "Select the tweak in the list."], ["key-0", "Go to where it should be off and click Key 0."], ["key-1", "Go to where it should be fully on and click Key 1. The tweak is now keyed."], ["weight-slider", "For an in-between value, drag the slider and click the diamond."], ["key-next", "Step between keys with ◀ Key and Key ▶."], ["graph-editor", "Click Graph Editor to shape the ease."]] },
+    { id: "flow-elbow", t: "Smooth a pinched elbow", s: "Relax with soft selection",
+      why: "Skinning pinches the inside of the elbow on a deep bend.",
+      steps: [["mode", "On the Sculpt tab, set Mode to Pulse so the fix only appears around the bend."], ["relax-iterations", "On the Shape tab, select the pinched vertices with soft selection on."], ["relax", "Set Iterations and Strength, then click Relax. The fix is stored as a tweak."], ["amplify", "Too strong? Select the tweak and Amplify × 0.5."]] },
+    { id: "flow-cloth", t: "Fix shirt poke-through", s: "Push Out against the body",
+      why: "The body pokes through the shirt during a twist. Push the shirt out over the shot.",
+      steps: [["use-selected", "Select the shirt mesh and click Use selected."], ["fx-driver", "On the Effects tab, select the body and click Use selected next to Driver."], ["fx-range", "Set Start and End, or click Playback range."], ["fx-offset", "Set Skin offset, e.g. 0.05."], ["fx-push", "Select the shirt vertices that poke through and click Push out."], ["fx-remove", "Not happy? Pick Push Out under Remove and click Remove effect."]] },
+    { id: "flow-jitter", t: "Calm jittery cloth", s: "Smooth Motion over a range",
+      why: "Simulated or skinned cloth buzzes from frame to frame.",
+      steps: [["fx-range", "Set the frame range."], ["fx-sigma", "Set Smoothing, e.g. 2 frames."], ["fx-world", "Untick World space if the character travels fast."], ["fx-smooth", "Select the cloth vertices (soft selection) and click Smooth."]] },
+    { id: "flow-handle", t: "Add a bulge that rides the skin", s: "Surface Handle",
+      why: "A bicep should flex when the arm curls, and the bulge has to follow the arm.",
+      steps: [["handle-radius", "On the Handle tab, leave Radius at 0 for automatic, or type one."], ["handle-create", "Select a vertex on the bicep and click Create on selected vertex."], ["handle-mode", "Set Mode to Surface so the falloff doesn't jump to the chest."], ["handle-shape", "Pick a Falloff shape and click Apply."], ["handle-sphere", "Scale or move the handle and key it as the arm curls."]] },
+    { id: "flow-cache", t: "Round-trip a polished cache", s: "Alembic versions",
+      why: "Hand a polished version to lighting, then compare it with the next version.",
+      steps: [["cache-export", "Select the polished meshes and click Export selected…"], ["cache-import", "Click Import version… and pick the file."], ["cache-attach", "Select the version and click Attach."], ["cache-swap", "Import the next version, select it and click Swap to selected."], ["cache-detach", "Click Detach to go back to the live rig."]] }
+  ];
+
+  /* ---- Build brushes and swatches ---- */
+  function brushButtons(rowId, list) {
+    var row = document.getElementById(rowId);
+    list.forEach(function (b) {
+      var el = document.createElement("button");
+      el.className = "mtool"; el.textContent = b[2]; el.title = b[1];
+      el.setAttribute("aria-label", b[1] + " brush"); el.dataset.h = "brush-" + b[0];
+      row.appendChild(el);
+    });
+  }
+  brushButtons("row-shape", BRUSHES.shape);
+  brushButtons("row-detail", BRUSHES.detail);
+  var sw = document.getElementById("swatches");
+  PALETTE.forEach(function (c) {
+    var el = document.createElement("button");
+    el.className = "sw"; el.style.background = c; el.dataset.h = "colours";
+    el.setAttribute("aria-label", "Colour " + c);
+    sw.insertBefore(el, sw.lastElementChild);
+  });
+
+  /* ---- Tabs ---- */
+  var TAB_OF = { Sculpt: "sculpt", Shape: "shape", Effects: "effects", Handle: "handle", Utilities: "utilities", Cache: "cache" };
+  function showTab(name) {
+    document.querySelectorAll(".tab").forEach(function (t) {
+      var on = t.dataset.tab === name;
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      document.getElementById("p-" + t.dataset.tab).hidden = !on;
+    });
+  }
+  document.querySelectorAll(".tab").forEach(function (t) {
+    t.addEventListener("click", function () { showTab(t.dataset.tab); });
+  });
+
+  /* ---- Explainer ---- */
+  var current = null;
+  function el(id) { return document.getElementById(id); }
+  function select(id, opts) {
+    var h = H[id];
+    if (!h) return;
+    opts = opts || {};
+    current = id;
+    if (TAB_OF[h.tab]) showTab(TAB_OF[h.tab]);
+    document.querySelectorAll("[data-h].on").forEach(function (n) { n.classList.remove("on", "pulse"); });
+    var targets = document.querySelectorAll('[data-h="' + id + '"]');
+    targets.forEach(function (n) { n.classList.add("on"); if (opts.pulse) { void n.offsetWidth; n.classList.add("pulse"); } });
+    if (opts.scroll && targets[0]) {
+      var r = targets[0].getBoundingClientRect();
+      if (r.top < 0 || r.bottom > window.innerHeight) targets[0].scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    }
+    el("x-crumb").textContent = h.tab + " › " + h.group;
+    el("x-title").textContent = h.t;
+    el("x-what").textContent = h.what;
+    el("x-extra").innerHTML = h.extra ? EXTRA[h.extra] : "";
+    fill("x-steps", h.steps); el("x-steps-wrap").hidden = !(h.steps && h.steps.length);
+    fill("x-tips", h.tips); el("x-tips-wrap").hidden = !(h.tips && h.tips.length);
+    var rel = el("x-rel"); rel.innerHTML = "";
+    (h.rel || []).forEach(function (r) {
+      if (!H[r]) return;
+      var c = document.createElement("button");
+      c.className = "chip"; c.textContent = H[r].t;
+      c.addEventListener("click", function () { select(r, { pulse: true, scroll: true }); setHash(r); });
+      rel.appendChild(c);
+    });
+    el("x-rel-wrap").hidden = !rel.children.length;
+  }
+  function fill(listId, items) {
+    var l = el(listId); l.innerHTML = "";
+    (items || []).forEach(function (s) { var li = document.createElement("li"); li.textContent = s; l.appendChild(li); });
+  }
+  function setHash(id) {
+    try { history.replaceState(null, "", "#" + id); } catch (e) { /* hash routing is optional */ }
+  }
+
+  /* Clicks inside the window copy select a control instead of acting on it. */
+  el("maya").addEventListener("click", function (e) {
+    var t = e.target.closest("[data-h]");
+    if (!t || e.target.closest(".tab")) return;
+    if (t.matches(".mcheck")) t.setAttribute("aria-checked", t.getAttribute("aria-checked") === "true" ? "false" : "true");
+    if (t.matches(".tr")) {
+      document.querySelectorAll(".tr").forEach(function (r) { r.classList.toggle("sel", r === t); });
+    }
+    select(t.dataset.h); setHash(t.dataset.h);
+  });
+  el("maya").addEventListener("focusin", function (e) {
+    var t = e.target.closest("select[data-h], input[data-h]");
+    if (t && current !== t.dataset.h) { select(t.dataset.h); setHash(t.dataset.h); }
+  });
+  el("maya").addEventListener("input", function (e) {
+    if (e.target.type === "range") e.target.nextElementSibling.textContent = (e.target.value / 100).toFixed(2);
+  });
+
+  /* ---- Search ---- */
+  var find = el("find"), results = el("results");
+  find.addEventListener("input", function () {
+    var q = find.value.trim().toLowerCase();
+    results.innerHTML = "";
+    if (!q) { results.hidden = true; return; }
+    var hits = Object.keys(H).filter(function (k) {
+      var h = H[k];
+      return (h.t + " " + h.what + " " + h.group).toLowerCase().indexOf(q) !== -1;
+    }).sort(function (a, b) {
+      return (H[a].t.toLowerCase().indexOf(q) === -1) - (H[b].t.toLowerCase().indexOf(q) === -1);
+    }).slice(0, 12);
+    if (!hits.length) {
+      var li0 = document.createElement("li");
+      li0.innerHTML = '<button disabled>No control matches. Try another word.</button>';
+      results.appendChild(li0);
+    }
+    hits.forEach(function (k) {
+      var li = document.createElement("li"), b = document.createElement("button");
+      b.innerHTML = "<span></span><small></small>";
+      b.firstChild.textContent = H[k].t; b.lastChild.textContent = H[k].tab;
+      b.addEventListener("click", function () { results.hidden = true; find.value = ""; select(k, { pulse: true, scroll: true }); setHash(k); });
+      li.appendChild(b); results.appendChild(li);
+    });
+    results.hidden = false;
+  });
+  find.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { var f = results.querySelector("button:not([disabled])"); if (f) f.click(); }
+    if (e.key === "Escape") { results.hidden = true; }
+  });
+  document.addEventListener("click", function (e) { if (!e.target.closest(".search")) results.hidden = true; });
+
+  /* ---- Workflows ---- */
+  var flow = null, stepIx = 0;
+  var list = el("flowlist");
+  FLOWS.forEach(function (f) {
+    var b = document.createElement("button");
+    b.className = "flowbtn"; b.dataset.flow = f.id; b.setAttribute("aria-pressed", "false");
+    b.innerHTML = "<b></b><span></span>";
+    b.firstChild.textContent = f.t; b.lastChild.textContent = f.s;
+    b.addEventListener("click", function () { openFlow(f.id, 0, true); setHash(f.id); });
+    list.appendChild(b);
+  });
+  function openFlow(id, ix, highlight) {
+    flow = FLOWS.filter(function (f) { return f.id === id; })[0];
+    if (!flow) return;
+    stepIx = ix;
+    document.querySelectorAll(".flowbtn").forEach(function (b) { b.setAttribute("aria-pressed", b.dataset.flow === id ? "true" : "false"); });
+    el("f-title").textContent = flow.t;
+    el("f-why").textContent = flow.why;
+    var ol = el("f-steps"); ol.innerHTML = "";
+    flow.steps.forEach(function (s, i) {
+      var li = document.createElement("li"), b = document.createElement("button");
+      b.innerHTML = '<span class="n"></span><span></span>';
+      b.firstChild.textContent = i + 1; b.lastChild.textContent = s[1];
+      b.addEventListener("click", function () { go(i); });
+      li.appendChild(b); ol.appendChild(li);
+    });
+    paintStep(highlight);
+  }
+  function paintStep(highlight) {
+    el("f-steps").querySelectorAll("button").forEach(function (b, i) {
+      if (i === stepIx) b.setAttribute("aria-current", "step"); else b.removeAttribute("aria-current");
+    });
+    el("f-prev").disabled = stepIx === 0;
+    el("f-next").textContent = stepIx === flow.steps.length - 1 ? "Done" : "Next step";
+    el("f-count").textContent = "Step " + (stepIx + 1) + " of " + flow.steps.length;
+    if (highlight) select(flow.steps[stepIx][0], { pulse: true, scroll: true });
+  }
+  function go(i) { stepIx = Math.max(0, Math.min(flow.steps.length - 1, i)); paintStep(true); }
+  el("f-prev").addEventListener("click", function () { go(stepIx - 1); });
+  el("f-next").addEventListener("click", function () {
+    if (stepIx === flow.steps.length - 1) { el("workflows").scrollIntoView({ block: "start" }); return; }
+    go(stepIx + 1);
+  });
+
+  /* ---- Start state and hash ---- */
+  function route() {
+    var id = (location.hash || "").slice(1);
+    if (H[id]) { select(id, { pulse: true }); return; }
+    if (id.indexOf("flow-") === 0) { openFlow(id, 0, true); el("workflows").scrollIntoView(); return; }
+  }
+  openFlow("flow-contact", 0, false);
+  select("sculpt");
+  route();
+  window.addEventListener("hashchange", route);
+})();
+</script>
+</body>
+</html>
