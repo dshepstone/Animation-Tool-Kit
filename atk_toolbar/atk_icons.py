@@ -111,6 +111,62 @@ def make_warning_icon(size=32):
     return _generate_icon("warning", "settings", size)
 
 
+def make_group_icon(group, size=32):
+    """Fold-out group button: four tiles in the group colour and a small arrow."""
+    accent = GROUP_COLORS.get(group, GROUP_COLORS["settings"])
+    pixmap, painter = _begin_pixmap(size)
+    _draw_background(painter, size)
+    m, gap = size * 0.2, size * 0.08
+    tile = (size - 2 * m - gap) / 2.0
+    painter.setPen(QtCore.Qt.NoPen)
+    for row in range(2):
+        for col in range(2):
+            color = QtGui.QColor(accent)
+            if (row + col) % 2:
+                color.setAlpha(150)
+            painter.setBrush(color)
+            painter.drawRoundedRect(QtCore.QRectF(m + col * (tile + gap), m * 0.85 + row * (tile + gap),
+                                                  tile, tile), size * 0.04, size * 0.04)
+    _draw_fold_arrow(painter, size)
+    painter.end()
+    return QtGui.QIcon(pixmap)
+
+
+def make_more_icon(size=32):
+    """The More button: three dots and a small arrow."""
+    pixmap, painter = _begin_pixmap(size)
+    _draw_background(painter, size)
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(_FG_COLOR)
+    r = size * 0.075
+    for i in (-1, 0, 1):
+        painter.drawEllipse(QtCore.QPointF(size / 2.0 + i * size * 0.22, size * 0.44), r, r)
+    _draw_fold_arrow(painter, size)
+    painter.end()
+    return QtGui.QIcon(pixmap)
+
+
+def _begin_pixmap(size):
+    pixmap = QtGui.QPixmap(size, size)
+    pixmap.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    return pixmap, painter
+
+
+def _draw_fold_arrow(painter, size):
+    """Small down-pointing triangle in the bottom-right corner."""
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(_FG_COLOR)
+    s = size * 0.16
+    x, y = size * 0.82, size * 0.84
+    painter.drawPolygon(QtGui.QPolygonF([
+        QtCore.QPointF(x - s / 2.0, y - s / 3.0),
+        QtCore.QPointF(x + s / 2.0, y - s / 3.0),
+        QtCore.QPointF(x, y + s / 3.0),
+    ]))
+
+
 # ---------------------------------------------------------------------------
 # Internal — icon generation
 # ---------------------------------------------------------------------------
