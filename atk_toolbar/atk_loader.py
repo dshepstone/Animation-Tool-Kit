@@ -126,13 +126,13 @@ TOOL_REGISTRY = [
     {
         "id":        "noise",
         "label":     "Noise Generator",
-        "tooltip":   "Add noise, easing and scaling effects to animation curves",
+        "tooltip":   "Bake inbetweens, add pinned noise, ease, and one-click shake/skid presets",
         "module":    "noise_generator_1_0_0",
         "launch_fn": "launch",
         "icon_file": "noise_generator_icon.png",
         "icon_key":  "noise",
         "group":     "timing",
-        "version":   "1.1.1",
+        "version":   "1.2.0",
     },
     {
         "id":        "overlap",
