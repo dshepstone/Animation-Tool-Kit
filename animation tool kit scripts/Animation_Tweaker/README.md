@@ -12,6 +12,13 @@ into Maya's user scripts directory. No separate install is needed.
   frame; Commit stores the difference as a tweak. Static, Pulse (0-1-0) and
   Sequence (pose-to-pose on independent levels) keying, Blank and Hold poses,
   sculpt-from-zero muting, Refine, Amplify, Rename, Paint mask and Delete.
+- **Sculpt brushes.** Maya's sculpting brushes (Shape, Detail, Mask), symmetry,
+  brush settings and Select on the Sculpt tab. Picking a brush selects the
+  sculpt copy first.
+- **Animate tweaks.** Key selected tweaks (current weight, 0 or 1), remove or
+  clear keys, jump between keys, open the Graph Editor, or re-key as Static,
+  Pulse or Pose. Hand keys switch a tweak to *keyed* mode so automatic keys
+  never overwrite them.
 - **Shape.** Inflate/Deflate along normals and Laplacian Relax, masked by the
   soft selection.
 - **Effects** baked per frame: Smooth Motion, Stick to Surface, Push Out and

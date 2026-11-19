@@ -26,7 +26,8 @@ METADATA_VERSION = 1
 MODE_STATIC = "static"
 MODE_PULSE = "pulse"
 MODE_SEQUENCE = "sequence"
-MODES = (MODE_STATIC, MODE_PULSE, MODE_SEQUENCE)
+MODE_MANUAL = "manual"        # keyed by hand; never rekeyed automatically
+MODES = (MODE_STATIC, MODE_PULSE, MODE_SEQUENCE, MODE_MANUAL)
 
 KIND_SCULPT = "sculpt"
 KIND_BLANK = "blank"
@@ -567,6 +568,22 @@ def sequence_plan(entries, fade_ends=False):
     return plan
 
 
+def adjacent_time(times, current, direction, tol=1e-4):
+    """The nearest key time after (``direction`` > 0) or before ``current``, or None."""
+    if direction > 0:
+        later = [t for t in times if t > current + tol]
+        return min(later) if later else None
+    earlier = [t for t in times if t < current - tol]
+    return max(earlier) if earlier else None
+
+
+def key_state(times, current, tol=1e-4):
+    """Channel Box style state: "none", "animated" or "key" (a key on this frame)."""
+    if not times:
+        return "none"
+    return "key" if any(abs(t - current) < tol for t in times) else "animated"
+
+
 def evaluate_linear(keys, frame):
     """Value of linear keys with constant extrapolation (matches Maya's default)."""
     if not keys:
@@ -665,7 +682,7 @@ def targets_to_mute(meta, mute_mode, layer=""):
     for t, e in sorted(meta["targets"].items()):
         if mute_mode == MUTE_ALL:
             out.append(t)
-        elif mute_mode == MUTE_STATIC and e["mode"] in (MODE_STATIC, MODE_PULSE):
+        elif mute_mode == MUTE_STATIC and e["mode"] in (MODE_STATIC, MODE_PULSE, MODE_MANUAL):
             out.append(t)
         elif mute_mode == MUTE_SEQUENCE and e["mode"] == MODE_SEQUENCE:
             out.append(t)

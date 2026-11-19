@@ -5,7 +5,8 @@ from functools import partial
 from maya import cmds
 from maya.app.general.mayaMixin import MayaQWidgetDockableMixin
 
-from . import __version__, cache_versions, core, effects, engine, surface_handle, utilities
+from . import (__version__, cache_versions, core, effects, engine, sculpt_brushes,
+               surface_handle, utilities)
 from .engine import TweakError
 from .help_view import icon_path, show_help
 from .qt_compat import QtCore, QtGui, QtWidgets
@@ -15,7 +16,14 @@ WORKSPACE_NAME = WINDOW_NAME + "WorkspaceControl"
 
 MODE_LABELS = (("Static (always on)", core.MODE_STATIC),
                ("Pulse (0-1-0 around frame)", core.MODE_PULSE),
-               ("Sequence (pose to pose)", core.MODE_SEQUENCE))
+               ("Sequence (pose to pose)", core.MODE_SEQUENCE),
+               ("Keyed by hand (one key at 1)", core.MODE_MANUAL))
+MODE_SHORT = {core.MODE_STATIC: "static", core.MODE_PULSE: "pulse",
+              core.MODE_SEQUENCE: "sequence", core.MODE_MANUAL: "keyed"}
+# Channel Box colours: grey = not animated, salmon = animated, red = key on this frame.
+KEY_COLOURS = {"none": "#6b6b6b", "animated": "#d9897a", "key": "#e04848"}
+KEY_TIPS = {"none": "Not animated", "animated": "Animated (no key on this frame)",
+            "key": "Key on this frame"}
 MUTE_LABELS = (("Off: sculpt on top of every tweak", core.MUTE_NONE),
                ("Mute all tweaks", core.MUTE_ALL),
                ("Mute static and pulse tweaks", core.MUTE_STATIC),
@@ -66,33 +74,53 @@ def _group(title):
 
 
 class WeightCell(QtWidgets.QWidget):
-    """Slider + key button for one tweak row."""
+    """Weight slider, value and a Channel Box style key button for one tweak."""
 
-    def __init__(self, panel, index, weight, keyed):
+    def __init__(self, panel, row):
         super().__init__()
-        self.panel, self.index = panel, index
+        self.panel, self.index = panel, row["index"]
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(4)
         self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.slider.setRange(0, 100)
-        self.slider.setValue(int(round(max(0.0, min(1.0, weight)) * 100)))
-        self.slider.setToolTip("Weight on this frame: %.2f" % weight)
-        self.slider.sliderReleased.connect(self.apply)
-        key = QtWidgets.QToolButton()
-        key.setText("Key" if not keyed else "Key*")
-        key.setToolTip("Key this weight on the current frame" + (" (already animated)" if keyed else ""))
-        key.clicked.connect(self.key)
+        self.slider.setMinimumWidth(70)
+        self.slider.valueChanged.connect(self._changed)
+        self.label = QtWidgets.QLabel()
+        self.label.setFixedWidth(36)
+        self.label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.key = QtWidgets.QToolButton()
+        self.key.setText(u"\u25c6")
+        self.key.setAutoRaise(True)
+        self.key.setFixedWidth(24)
+        self.key.clicked.connect(lambda *_a: self.panel.key_one(self.index, self.value()))
         layout.addWidget(self.slider, 1)
-        layout.addWidget(key)
+        layout.addWidget(self.label)
+        layout.addWidget(self.key)
+        self.update_from(row)
 
     def value(self):
         return self.slider.value() / 100.0
 
-    def apply(self):
-        self.panel.run(engine.set_weight, self.panel.mesh(), self.index, self.value(), refresh=False)
+    def update_from(self, row):
+        weight = max(0.0, min(1.0, row["weight"]))
+        self.slider.blockSignals(True)
+        self.slider.setValue(int(round(weight * 100)))
+        self.slider.blockSignals(False)
+        self.label.setText("%.2f" % weight)
+        state = row.get("key_state", "animated" if row.get("keyed") else "none")
+        self.key.setStyleSheet("QToolButton { color: %s; font-size: 14px; }" % KEY_COLOURS[state])
+        keys = row.get("keys", 0)
+        self.key.setToolTip("%s%s. Click to key this weight on the current frame." % (
+            KEY_TIPS[state], " (%d keys)" % keys if keys else ""))
 
-    def key(self):
-        self.panel.run(engine.key_weight, self.panel.mesh(), self.index, self.value())
+    def _changed(self, value):
+        # Live preview while dragging; a keyed weight holds it until the frame changes.
+        self.label.setText("%.2f" % (value / 100.0))
+        try:
+            engine.set_weight(self.panel.mesh(), self.index, value / 100.0)
+        except Exception as error:   # keep dragging responsive; report once
+            self.panel.status.setText(str(error))
 
 
 class Panel(QtWidgets.QWidget):
@@ -115,6 +143,13 @@ class Panel(QtWidgets.QWidget):
         self.status = QtWidgets.QLabel("Select a mesh and click Use selected.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.cells = {}
+        self._time_job = None
+        if not cmds.about(batch=True):     # scriptJobs need the interactive UI
+            try:
+                self._time_job = cmds.scriptJob(event=["timeChanged", self.sync_keys])
+            except Exception:
+                traceback.print_exc()
         try:
             self.mesh_field.setText(engine.selected_mesh())
             self.refresh()
@@ -198,13 +233,17 @@ class Panel(QtWidgets.QWidget):
                              _button("Hold pose", self.hold, "Copy the previous pose on this level here")))
         layout.addWidget(box)
 
+        layout.addWidget(self._brush_shelf())
+
         box, inner = _group("Tweaks on this mesh")
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setHeaderLabels(["Tweak", "Kind", "Mode", "Frame", "Level", "Weight"])
         self.tree.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.tree.setRootIsDecorated(False)
-        self.tree.setMinimumHeight(220)
+        self.tree.setMinimumHeight(200)
         self.tree.header().setStretchLastSection(True)
+        self.tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._tree_menu)
         inner.addWidget(self.tree, 1)
         self.factor = _spin(1.25, -10, 10, 0.05)
         self.proxies = QtWidgets.QCheckBox("Proxy channels on mesh")
@@ -213,16 +252,254 @@ class Panel(QtWidgets.QWidget):
         inner.addWidget(_row(_button("Refresh", self.refresh), _button("Refine", self.refine,
                              "Sculpt a correction and add it to the selected tweak"),
                              _button("Rename", self.rename), _button("Paint mask", self.paint)))
-        inner.addWidget(_row(_button("Amplify ×", self.amplify, "Scale the selected tweaks' offsets"),
+        inner.addWidget(_row(_button("Amplify \u00d7", self.amplify, "Scale the selected tweaks' offsets"),
                              self.factor, _button("Delete", self.delete), None))
         inner.addWidget(self.proxies)
         layout.addWidget(box, 1)
+
+        layout.addWidget(self._animate_box())
         return page
+
+    # -- brush shelf ----------------------------------------------------------
+
+    def _brush_shelf(self):
+        """Maya's sculpt brushes as a compact icon shelf, grouped Shape / Detail / Mask."""
+        box, inner = _group("Sculpt brushes")
+        inner.setSpacing(2)
+        self.brush_group = QtWidgets.QButtonGroup(box)
+        self.brush_group.setExclusive(True)
+        self.brush_buttons = {}
+        for title, brushes in sculpt_brushes.GROUPS:
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(2)
+            caption = QtWidgets.QLabel(title)
+            caption.setFixedWidth(42)
+            caption.setStyleSheet("color: #9a9a9a; font-size: 10px;")
+            row.addWidget(caption)
+            for brush_id, label, _command, icon, tip in brushes:
+                button = self._tool_button(label, icon, "<b>%s</b><br>%s" % (label, tip), checkable=True)
+                button.clicked.connect(partial(self.pick_brush, brush_id))
+                self.brush_group.addButton(button)
+                self.brush_buttons[brush_id] = button
+                row.addWidget(button)
+            if title == "Mask":
+                for action_id, label, _command, _icon, tip in sculpt_brushes.MASK_ACTIONS:
+                    button = self._tool_button(label, "", tip)
+                    button.clicked.connect(partial(self.brush_action, action_id))
+                    row.addWidget(button)
+                row.addSpacing(10)
+                self.symmetry = self._tool_button("Sym X", "", "Mirror brush strokes across the "
+                                                  "mesh's X axis (object space)", checkable=True)
+                self.symmetry.toggled.connect(self.toggle_symmetry)
+                row.addWidget(self.symmetry)
+                row.addWidget(self._tool_button("Settings", "", "Brush size, strength and falloff "
+                                                "(Tool Settings)", slot=self.brush_settings))
+                row.addWidget(self._tool_button("Select", "", "Leave the brush (Select tool)",
+                                                slot=self.leave_brush))
+            row.addStretch(1)
+            inner.addLayout(row)
+        self.auto_brush = QtWidgets.QCheckBox("Pick up the last brush when a sculpt starts")
+        self.auto_brush.setChecked(True)
+        inner.addWidget(self.auto_brush)
+        try:
+            self.symmetry.blockSignals(True)
+            self.symmetry.setChecked(sculpt_brushes.symmetry_enabled())
+            self.symmetry.blockSignals(False)
+        except Exception:
+            pass
+        return box
+
+    def _tool_button(self, label, icon, tip, checkable=False, slot=None):
+        button = QtWidgets.QToolButton()
+        button.setToolTip(tip)
+        button.setCheckable(checkable)
+        button.setAutoRaise(True)
+        qicon = QtGui.QIcon(":/" + icon) if icon else QtGui.QIcon()
+        if not qicon.isNull() and qicon.availableSizes():
+            button.setIcon(qicon)
+            button.setIconSize(QtCore.QSize(26, 26))
+            button.setFixedSize(32, 32)
+        else:
+            # Maya's icons are missing (batch mode): fall back to short text.
+            button.setText(label if not icon else label[:4])
+            button.setMinimumHeight(26)
+        if slot:
+            button.clicked.connect(lambda *_a: slot())
+        return button
+
+    def pick_brush(self, brush_id, *_args):
+        mesh = self.mesh_field.text() or None
+        sculpt = self.run(sculpt_brushes.activate, brush_id, mesh, refresh=False,
+                          message=lambda target: "%s brush on %s" % (
+                              sculpt_brushes.brush(brush_id)[1],
+                              engine.short_name(target) if target else
+                              "the selection (click Sculpt first to work on a copy)"))
+        return sculpt
+
+    def brush_action(self, action_id, *_args):
+        self.run(sculpt_brushes.run_action, action_id, refresh=False)
+
+    def toggle_symmetry(self, enabled):
+        self.run(sculpt_brushes.set_symmetry, enabled, refresh=False,
+                 message="Symmetry %s" % ("on (object X)" if enabled else "off"))
+
+    def brush_settings(self):
+        self.run(sculpt_brushes.show_settings, refresh=False, message="Brush settings open")
+
+    def leave_brush(self):
+        checked = self.brush_group.checkedButton()
+        if checked:
+            self.brush_group.setExclusive(False)
+            checked.setChecked(False)
+            self.brush_group.setExclusive(True)
+        self.run(sculpt_brushes.exit_brush, refresh=False, message="Select tool")
+
+    # -- animate tweaks -------------------------------------------------------
+
+    def _animate_box(self):
+        box, inner = _group("Animate selected tweaks")
+        inner.addWidget(_row(
+            _button(u"\u25c0 Key", partial(self.jump, -1), "Previous key of the selected tweaks "
+                    "(all tweaks when none are selected)"),
+            _button("Key", self.key_selected, "Key the weight each selected tweak shows now"),
+            _button("Key 0", partial(self.key_selected, 0.0), "Key the selected tweaks off"),
+            _button("Key 1", partial(self.key_selected, 1.0), "Key the selected tweaks fully on"),
+            _button("Remove", self.remove_keys, "Remove the selected tweaks' keys on this frame"),
+            _button(u"Key \u25b6", partial(self.jump, 1), "Next key of the selected tweaks "
+                    "(all tweaks when none are selected)")))
+        inner.addWidget(_row(
+            _button("Clear keys", self.clear_keys, "Delete all keys, holding the current weight"),
+            _button("Graph Editor", self.graph_editor, "Show the selected tweaks' curves"),
+            None))
+        inner.addWidget(_row(
+            "Re-key as",
+            _button("Static", partial(self.set_mode, core.MODE_STATIC), "Always on, no keys"),
+            _button("Pulse here", partial(self.set_mode, core.MODE_PULSE),
+                    "0-1-0 around this frame, with the Ramp in/out above"),
+            _button("Pose here", partial(self.set_mode, core.MODE_SEQUENCE),
+                    "A sequence pose on this frame, on the Level above (one tweak)"),
+            None))
+        note = QtWidgets.QLabel(u"\u25c6 grey: not animated \u00b7 salmon: animated \u00b7 red: key "
+                                u"on this frame. Keying by hand switches a tweak to <i>keyed</i>, so "
+                                u"automatic pulse/sequence keys never overwrite yours.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #9a9a9a; font-size: 10px;")
+        inner.addWidget(note)
+        return box
+
+    def _need_selection(self, what):
+        indices = self.selected_indices()
+        if not indices:
+            self.status.setText("Select tweaks in the list to %s" % what)
+        return indices
+
+    def key_one(self, index, value):
+        self.run(engine.key_tweaks, self.mesh(), [index], value,
+                 message="Keyed %.2f on frame %g" % (value, cmds.currentTime(query=True)))
+
+    def key_selected(self, value=None, *_args):
+        indices = self._need_selection("key them")
+        if indices:
+            self.run(engine.key_tweaks, self.mesh(), indices, value,
+                     message=lambda n: "Keyed %d tweak%s on frame %g" % (
+                         n, "" if n == 1 else "s", cmds.currentTime(query=True)))
+
+    def remove_keys(self):
+        indices = self._need_selection("remove their keys")
+        if indices:
+            self.run(engine.remove_tweak_keys, self.mesh(), indices,
+                     message=lambda n: "Removed %d key%s on this frame" % (n, "" if n == 1 else "s"))
+
+    def clear_keys(self):
+        indices = self._need_selection("clear their keys")
+        if indices:
+            self.run(engine.clear_tweak_keys, self.mesh(), indices,
+                     message="Keys cleared; weights held where they were")
+
+    def set_mode(self, mode, *_args):
+        indices = self._need_selection("re-key them")
+        if indices:
+            k = self.keying()
+            self.run(engine.set_tweak_mode, self.mesh(), indices, mode, None, k["layer"],
+                     k["ramp_in"], k["ramp_out"],
+                     message="Re-keyed as %s" % MODE_SHORT.get(mode, mode))
+
+    def jump(self, direction, *_args):
+        self.run(engine.jump_to_key, self.mesh(), self.selected_indices(), direction,
+                 refresh=False, message=lambda frame: "Frame %g" % frame)
+
+    def graph_editor(self):
+        indices = self.selected_indices()
+        def show():
+            node = engine.find_tweak_node(self.mesh())
+            plugs = [engine.driver_plug(node, i) for i in indices] if node else []
+            nodes = sorted({plug.split(".")[0] for plug in plugs}) or [self.mesh()]
+            cmds.select(nodes, replace=True)
+            cmds.GraphEditor()
+        self.run(show, refresh=False, message="Graph Editor: pick the tweak channels on the left")
+
+    def _tree_menu(self, point):
+        if not self.tree.itemAt(point):
+            return
+        menu = QtWidgets.QMenu(self)
+        # triggered() sends a 'checked' flag; call each slot without it.
+        for item in (("Key", self.key_selected),
+                            ("Key 0", partial(self.key_selected, 0.0)),
+                            ("Key 1", partial(self.key_selected, 1.0)),
+                            ("Remove key on this frame", self.remove_keys),
+                            ("Clear keys", self.clear_keys),
+                            None,
+                            ("Re-key as static", partial(self.set_mode, core.MODE_STATIC)),
+                            ("Re-key as pulse here", partial(self.set_mode, core.MODE_PULSE)),
+                            ("Re-key as pose here", partial(self.set_mode, core.MODE_SEQUENCE)),
+                            None,
+                            ("Refine", self.refine), ("Rename", self.rename),
+                            ("Paint mask", self.paint), ("Delete", self.delete)):
+            if item is None:
+                menu.addSeparator()
+                continue
+            label, slot = item
+            action = menu.addAction(label)
+            action.triggered.connect(lambda *_a, fn=slot: fn())
+        menu.exec_(self.tree.viewport().mapToGlobal(point))
+
+    def sync_keys(self):
+        """On frame change: update weights and key colours without rebuilding the list."""
+        try:
+            text = self.mesh_field.text()
+        except RuntimeError:          # the window is gone; stop listening
+            self.shutdown()
+            return
+        if not self.cells or not text or not cmds.objExists(text):
+            return
+        try:
+            rows = engine.list_tweaks(text)
+        except Exception:
+            return
+        if sorted(r["index"] for r in rows) != sorted(self.cells):
+            self.refresh()
+            return
+        for row in rows:
+            try:
+                self.cells[row["index"]].update_from(row)
+            except RuntimeError:
+                self.refresh()
+                return
+
+    def shutdown(self):
+        job, self._time_job = self._time_job, None
+        if job is not None:
+            try:
+                if cmds.scriptJob(exists=job):
+                    cmds.scriptJob(kill=job, force=True)
+            except Exception:
+                pass
 
     def selected_indices(self):
         return [item.data(0, QtCore.Qt.UserRole) for item in self.tree.selectedItems()]
 
     def refresh(self):
+        self.cells = {}
         self.tree.clear()
         text = self.mesh_field.text()
         if not text or not cmds.objExists(text):
@@ -236,28 +513,59 @@ class Panel(QtWidgets.QWidget):
         self.proxies.blockSignals(True)
         self.proxies.setChecked(bool(node) and engine.proxies_enabled(node))
         self.proxies.blockSignals(False)
+        self.cells = {}
         for row in rows:
             frame = "" if row["frame"] is None else "%g" % row["frame"]
-            item = QtWidgets.QTreeWidgetItem([row["label"], row["kind"], row["mode"], frame,
-                                              row["layer"], ""])
+            layer = row["layer"] if row["mode"] == core.MODE_SEQUENCE else ""
+            item = QtWidgets.QTreeWidgetItem([row["label"], row["kind"],
+                                              MODE_SHORT.get(row["mode"], row["mode"]), frame, layer, ""])
             item.setData(0, QtCore.Qt.UserRole, row["index"])
             item.setToolTip(0, "%s (weight[%d])" % (row["alias"], row["index"]))
             self.tree.addTopLevelItem(item)
-            self.tree.setItemWidget(item, 5, WeightCell(self, row["index"], row["weight"], row["keyed"]))
+            cell = WeightCell(self, row)
+            self.cells[row["index"]] = cell
+            self.tree.setItemWidget(item, 5, cell)
         for column in range(5):
             self.tree.resizeColumnToContents(column)
 
     def start_sculpt(self):
         k = self.keying()
-        self.run(engine.start_sculpt, self.mesh(), k["mode"], k["layer"], k["ramp_in"], k["ramp_out"],
-                 self.mute.currentData(), self.highlight.isChecked(), self.hide_original.isChecked(),
-                 message="Sculpt the blue copy with any tool, then click Commit.")
+        sculpt = self.run(engine.start_sculpt, self.mesh(), k["mode"], k["layer"], k["ramp_in"],
+                          k["ramp_out"], self.mute.currentData(), self.highlight.isChecked(),
+                          self.hide_original.isChecked(),
+                          message="Sculpt the copy with any brush, then click Commit.")
+        if sculpt and self.auto_brush.isChecked():
+            self._resume_brush()
+
+    def _resume_brush(self):
+        brush_id = sculpt_brushes.last_brush()
+        if self.run(sculpt_brushes.activate, brush_id, self.mesh_field.text() or None,
+                    refresh=False, message="%s brush on the sculpt copy. Commit when done." %
+                    sculpt_brushes.brush(brush_id)[1]) is not None:
+            button = self.brush_buttons.get(brush_id)
+            if button:
+                button.setChecked(True)
 
     def commit(self):
-        self.run(engine.commit_sculpt, self.mesh_field.text() or None, message="Sculpt stored as a tweak.")
+        if self.run(engine.commit_sculpt, self.mesh_field.text() or None,
+                    message="Sculpt stored as a tweak.") is not None:
+            self._drop_brush()
 
     def cancel(self):
         self.run(engine.cancel_sculpt, self.mesh_field.text() or None, message="Sculpt cancelled.")
+        self._drop_brush()
+
+    def _drop_brush(self):
+        """After commit/cancel the copy is gone: return to the Select tool."""
+        checked = self.brush_group.checkedButton()
+        if checked:
+            self.brush_group.setExclusive(False)
+            checked.setChecked(False)
+            self.brush_group.setExclusive(True)
+            try:
+                sculpt_brushes.exit_brush()
+            except Exception:
+                pass
 
     def blank(self):
         self.run(engine.blank_pose, self.mesh(), self.keying()["layer"])
@@ -270,9 +578,11 @@ class Panel(QtWidgets.QWidget):
         if len(indices) != 1:
             self.status.setText("Select one tweak to refine")
             return
-        self.run(engine.start_sculpt, self.mesh(), highlight=self.highlight.isChecked(),
-                 hide_original=self.hide_original.isChecked(), refine=indices[0],
-                 message="Sculpt the correction, then click Commit to add it to the tweak.")
+        sculpt = self.run(engine.start_sculpt, self.mesh(), highlight=self.highlight.isChecked(),
+                          hide_original=self.hide_original.isChecked(), refine=indices[0],
+                          message="Sculpt the correction, then click Commit to add it to the tweak.")
+        if sculpt and self.auto_brush.isChecked():
+            self._resume_brush()
 
     def amplify(self):
         for index in self.selected_indices():
@@ -682,6 +992,13 @@ class Window(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         scroll.setWidget(self.panel)
         layout.addWidget(scroll)
 
+    def closeEvent(self, event):
+        self.panel.shutdown()
+        super().closeEvent(event)
+
+    def dockCloseEventTriggered(self):
+        self.panel.shutdown()
+
 
 _window = None
 
@@ -690,6 +1007,9 @@ def _dispose(widget):
     """Hide, close and delete a window. The dockable mixin's close() may only
     close the workspace control, and it overrides hide(), so hide the
     dialog itself through QWidget."""
+    panel = getattr(widget, "panel", None)
+    if panel is not None:
+        panel.shutdown()
     QtWidgets.QWidget.hide(widget)
     widget.close()
     widget.deleteLater()

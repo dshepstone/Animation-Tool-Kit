@@ -61,7 +61,9 @@ Refine needs the tweak's weight to be above 0 on the current frame.</p>
 <tr><td>Pulse</td><td>0 at <i>frame − ramp in</i>, 1 on the frame, 0 at <i>frame + ramp out</i>.</td>
 <td>A one-off fix: an intersection on a contact frame, a smear.</td></tr>
 <tr><td>Sequence</td><td>1 on its own frame, 0 on the frames of the poses either side of it on the same level.</td>
-<td>Pose-to-pose shape animation: each sculpt crossfades into the next.</td></tr></table>
+<td>Pose-to-pose shape animation: each sculpt crossfades into the next.</td></tr>
+<tr><td>Keyed by hand</td><td>One key at 1 on the frame; after that, only the keys you set.</td>
+<td>Shapes you want to time yourself in the Graph Editor.</td></tr></table>
 <p>Sequence tweaks live on <b>levels</b> (L1, L2, ...). Each level is an independent pose-to-pose track, so you can run
 a cheek track and a cloth track without them affecting each other. Adding or deleting a pose rekeys its whole level.
 Sculpting on a frame that already has a pose on that level adds to that pose. A new pose between two others starts from the in-between shape the level shows on that frame, so what you sculpted is exactly what you get after Commit (unless you muted that level while sculpting).</p>
@@ -69,15 +71,46 @@ Sculpting on a frame that already has a pose on that level adds to that pose. A 
 <b>Blank pose</b>: an empty pose that the previous one fades into.</p>
 <p><b>Hold pose</b> copies the previous pose on the level to the current frame, so the shape holds and then moves on.</p>
 
+<h2><a name="brushes"></a>Sculpt brushes</h2>
+<p>The <b>Sculpt brushes</b> shelf on the Sculpt tab holds Maya's mesh sculpting brushes, so you never need the
+Sculpting shelf:</p>
+<ul>
+<li><b>Shape:</b> Sculpt, Smooth, Relax, Grab, Pinch, Flatten, Bulge, Amplify, Smear.</li>
+<li><b>Detail:</b> Foamy, Wax, Scrape, Fill, Knife, Spray, Repeat, Imprint.</li>
+<li><b>Mask:</b> Freeze, with <b>Invert</b> and <b>Clear</b> for the frozen area; <b>Sym X</b> mirrors strokes
+across the mesh's X axis; <b>Settings</b> opens the brush size, strength and falloff; <b>Select</b> leaves the brush.</li>
+</ul>
+<p>Picking a brush while a sculpt is open selects the sculpt copy first, so the brush always works on the copy,
+never on the animated mesh. With <b>Pick up the last brush when a sculpt starts</b> on, Sculpt and Refine hand you
+the brush you used last. Commit and Cancel return to the Select tool. Hold B and drag to change the brush size, as usual.</p>
+
 <h2><a name="list"></a>Tweak list</h2>
-<p>Lists every tweak on the mesh with its kind, mode, frame and level. Drag a weight slider to try a value
-and click <b>Key</b> to key it on the current frame (<b>Key*</b> means the weight is already animated).</p>
+<p>Lists every tweak on the mesh with its kind, mode, frame and level. Drag a weight slider to see the tweak at
+that weight, and click the diamond to key it on the current frame. The diamond uses the Channel Box colours:
+grey is not animated, salmon is animated, red means there is a key on this frame. The sliders and colours follow
+the current frame. Right-click a tweak for the keying and editing commands.</p>
 <ul>
 <li><b>Amplify ×</b> scales the selected tweaks' offsets: 1.25 is 25% stronger, 0.5 half, −1 flips them.</li>
 <li><b>Rename</b> changes the label and the weight's name.</li>
 <li><b>Paint mask</b> opens Maya's Paint Blend Shape Weights tool on that tweak, so you can paint where it applies.</li>
 <li><b>Delete</b> removes the target, its keys and its proxy channel, and rekeys its level.</li>
 </ul>
+
+<h2><a name="animate"></a>Animating tweaks</h2>
+<p>Every tweak is a keyable weight from 0 (off) to 1 (fully on), so tweaks can be animated like any channel. Pick
+tweaks in the list and use <b>Animate selected tweaks</b>:</p>
+<ul>
+<li><b>Key</b> keys the weight each tweak shows now; <b>Key 0</b> and <b>Key 1</b> key it off or fully on.</li>
+<li><b>Remove</b> deletes the key on this frame; <b>Clear keys</b> deletes them all and holds the current weight.</li>
+<li><b>&#9664; Key</b> and <b>Key &#9654;</b> jump to the previous or next key (of every tweak when none is selected).</li>
+<li><b>Graph Editor</b> opens the curves.</li>
+<li><b>Re-key as</b> Static, Pulse here or Pose here replaces the keys with that mode's automatic keys, using the
+Ramp and Level settings at the top.</li>
+</ul>
+<p>Keying a tweak by hand switches it to <i>keyed</i> mode, so its automatic pulse or sequence keys can never
+overwrite yours. A sequence pose you key by hand leaves its level, and the rest of the level is rekeyed without it.
+With <b>Proxy channels on mesh</b> on, the keys live on the mesh's TWEAKS channels instead, so they also show in the
+Channel Box and the timeline.</p>
 
 <h2><a name="shape"></a>Shape: inflate and relax</h2>
 <p>Both work on the mesh as it is on the current frame and are stored as tweaks with the Sculpt tab's keying mode.

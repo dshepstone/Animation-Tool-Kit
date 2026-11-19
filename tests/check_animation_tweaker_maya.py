@@ -19,9 +19,9 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 try:
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 except ImportError:
-    from PySide2 import QtWidgets
+    from PySide2 import QtCore, QtWidgets
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 import maya.standalone
 maya.standalone.initialize(name="python")
@@ -145,12 +145,58 @@ def check_engine():
     assert not cmds.attributeQuery("TWEAKS", node=xf, exists=True)
     step("proxy channels on and off")
 
+    check_keying(mesh, node)
+
     cmds.select(xf + ".vtx[40:60]")
     engine.relax(mesh, 3, 0.5)
     engine.inflate(mesh, 0.05)
     engine.scale_tweak(mesh, index, 2.0)
     step("relax, inflate, amplify")
     return mesh
+
+
+def check_keying(mesh, node):
+    """Hand keys, key navigation and re-keying a tweak's mode."""
+    from atk_tweaker import core, engine
+    with engine.undo_chunk("key test tweak"):
+        t = engine.commit_delta(mesh, {7: (0.1, 0, 0)}, core.MODE_STATIC, 1, label="hand")
+    plug = engine.driver_plug(node, t)
+    assert engine.key_times(plug) == []
+    engine.key_tweaks(mesh, [t], 0.0, frame=2)
+    engine.key_tweaks(mesh, [t], 1.0, frame=8)
+    assert engine.read_meta(node)["targets"][t]["mode"] == core.MODE_MANUAL
+    assert engine.key_times(plug) == [2.0, 8.0]
+    cmds.currentTime(5)
+    assert abs(cmds.getAttr(plug) - 0.5) < 1e-4
+    row = [r for r in engine.list_tweaks(mesh) if r["index"] == t][0]
+    assert row["key_state"] == "animated" and row["keys"] == 2
+    assert engine.jump_to_key(mesh, [t], 1) == 8.0
+    assert [r for r in engine.list_tweaks(mesh) if r["index"] == t][0]["key_state"] == "key"
+    assert engine.jump_to_key(mesh, [t], -1) == 2.0
+    assert engine.remove_tweak_keys(mesh, [t]) == 1 and engine.key_times(plug) == [8.0]
+    cmds.undo()
+    assert engine.key_times(plug) == [2.0, 8.0]
+    # Re-key as a pulse around frame 10, then as static; manual keys are replaced.
+    engine.set_tweak_mode(mesh, [t], core.MODE_PULSE, frame=10, ramp_in=2, ramp_out=2)
+    assert engine.key_times(plug) == [8.0, 10.0, 12.0]
+    assert engine.read_meta(node)["targets"][t]["mode"] == core.MODE_PULSE
+    engine.set_tweak_mode(mesh, [t], core.MODE_STATIC)
+    assert engine.key_times(plug) == [] and cmds.getAttr(plug) == 1.0
+    # A sequence pose keyed by hand leaves its level; the level rekeys without it.
+    with engine.undo_chunk("two poses"):
+        p1 = engine.commit_delta(mesh, {9: (0, 0.1, 0)}, core.MODE_SEQUENCE, 3, "K")
+        p2 = engine.commit_delta(mesh, {9: (0, 0.3, 0)}, core.MODE_SEQUENCE, 9, "K")
+    engine.key_tweaks(mesh, [p2], 0.25, frame=9)
+    meta = engine.read_meta(node)
+    assert meta["targets"][p2]["mode"] == core.MODE_MANUAL
+    assert core.level_entries(meta, "K") == [(p1, 3.0)]
+    # Clearing keys holds the weight the tweak shows now.
+    cmds.currentTime(9)
+    engine.clear_tweak_keys(mesh, [p2])
+    assert engine.key_times(engine.driver_plug(node, p2)) == []
+    assert abs(cmds.getAttr(engine.driver_plug(node, p2)) - 0.25) < 1e-4
+    engine.delete_tweaks(mesh, [t, p1, p2])
+    step("hand keys, key navigation, re-key as pulse/static, leave a level")
 
 
 def check_effects(mesh):
@@ -250,6 +296,11 @@ def check_cache(mesh, temp):
     step("Alembic export, import versions, attach, swap, delete")
 
 
+def engine_start(panel):
+    from atk_tweaker import engine
+    return engine.start_sculpt(panel.mesh())
+
+
 def check_ui_and_toolbar(scripts, icons):
     original_internal = cmds.internalVar
 
@@ -282,6 +333,31 @@ def check_ui_and_toolbar(scripts, icons):
             first.panel.commit()                      # nothing sculpted: warns, stores nothing
             first.panel.inflate(1.0)
             assert first.panel.tree.topLevelItemCount() == 1
+            panel = first.panel
+            # Brush shelf: every brush has a button; picking one with a sculpt
+            # open selects the copy first.
+            from atk_tweaker import sculpt_brushes
+            assert set(panel.brush_buttons) == {b[0] for b in sculpt_brushes.ALL_BRUSHES}
+            sculpt = engine_start(panel)
+            panel.pick_brush("smooth")
+            assert cmds.ls(selection=True, long=True) == [sculpt]
+            assert sculpt_brushes.last_brush() == "smooth"
+            panel.cancel()
+            # Animate box: key the selected tweak by hand, colours follow the frame.
+            item = panel.tree.topLevelItem(0)
+            item.setSelected(True)
+            cmds.currentTime(3)
+            panel.key_selected(0.0)
+            cmds.currentTime(9)
+            panel.tree.topLevelItem(0).setSelected(True)
+            panel.key_selected(1.0)
+            index = panel.tree.topLevelItem(0).data(0, QtCore.Qt.UserRole)
+            assert panel.tree.topLevelItem(0).text(2) == "keyed"
+            cmds.currentTime(6)
+            panel.sync_keys()
+            assert abs(panel.cells[index].value() - 0.5) < 0.011
+            # scriptJob needs the interactive Maya UI; mayapy batch mode has none.
+            assert cmds.about(batch=True) or cmds.scriptJob(exists=panel._time_job)
             ui.close()
             atk_loader.launch_tool("animation_tweaker")
             assert ui._window is not first

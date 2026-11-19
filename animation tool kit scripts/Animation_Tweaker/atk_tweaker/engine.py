@@ -368,6 +368,12 @@ def apply_keys(node, index, meta, mesh=None):
         cmds.setAttr(plug, 1.0)
     elif entry["mode"] == core.MODE_PULSE:
         _set_keys(plug, core.pulse_keys(entry["frame"], entry["ramp_in"], entry["ramp_out"]))
+    elif entry["mode"] == core.MODE_MANUAL:
+        # Hand-keyed tweaks keep their keys. A new one starts with one key at 1.
+        if not key_times(plug):
+            frame = entry["frame"] if entry["frame"] is not None else cmds.currentTime(query=True)
+            cmds.setKeyframe(plug, time=frame, value=1.0,
+                             inTangentType="linear", outTangentType="linear")
     else:
         rekey_level(node, entry["layer"], meta, mesh)
 
@@ -380,14 +386,150 @@ def rekey_level(node, layer, meta=None, mesh=None):
         _set_keys(driver_plug(node, index, mesh), keys)
 
 
-def key_weight(mesh, index, value=None):
-    """Key a tweak's weight (or proxy) on the current frame."""
+def key_times(plug):
+    """Times of the keys driving ``plug`` (empty when it is not animated)."""
+    if not cmds.listConnections(plug, source=True, destination=False, type="animCurve"):
+        return []
+    return sorted(cmds.keyframe(plug, query=True, timeChange=True) or [])
+
+
+def _take_over(node, meta, indices, xf):
+    """Hand-keying a tweak switches it to manual mode, so automatic keying
+    (pulse ramps, sequence rekeys) never overwrites the animator's keys.
+    A sequence pose that leaves its level drops out of that level's
+    crossfade, and the rest of the level is rekeyed."""
+    levels = set()
+    changed = False
+    for index in indices:
+        entry = meta["targets"].get(index)
+        if entry is None or entry["mode"] == core.MODE_MANUAL:
+            continue
+        if entry["mode"] == core.MODE_SEQUENCE:
+            levels.add(entry["layer"])
+        entry["mode"] = core.MODE_MANUAL
+        entry["layer"] = core.MODE_MANUAL
+        changed = True
+    if changed:
+        write_meta(node, meta)
+    for layer in levels:
+        rekey_level(node, layer, meta, xf)
+
+
+def key_tweaks(mesh, indices, value=None, frame=None):
+    """Key the weight of each tweak on ``frame`` (default: now).
+
+    ``value`` None keys the weight it shows now (including an unkeyed slider
+    change). The tweaks switch to manual mode.
+    """
     node = _require_node(mesh)
-    plug = driver_plug(node, index)
-    with undo_chunk("key weight"):
-        if value is not None:
-            cmds.setAttr(plug, value)
-        cmds.setKeyframe(plug, inTangentType="linear", outTangentType="linear")
+    xf = resolve_mesh(mesh)[0]
+    frame = cmds.currentTime(query=True) if frame is None else frame
+    with undo_chunk("key tweaks"):
+        values = {i: (cmds.getAttr(driver_plug(node, i, xf)) if value is None else value)
+                  for i in indices}
+        _take_over(node, read_meta(node), indices, xf)
+        for index in indices:
+            cmds.setKeyframe(driver_plug(node, index, xf), time=frame, value=values[index],
+                             inTangentType="linear", outTangentType="linear")
+    return len(indices)
+
+
+def remove_tweak_keys(mesh, indices, frame=None):
+    """Remove the key on ``frame`` (default: now). Returns how many keys went."""
+    node = _require_node(mesh)
+    xf = resolve_mesh(mesh)[0]
+    frame = cmds.currentTime(query=True) if frame is None else frame
+    with undo_chunk("remove tweak keys"):
+        hits = [i for i in indices
+                if core.key_state(key_times(driver_plug(node, i, xf)), frame) == "key"]
+        _take_over(node, read_meta(node), hits, xf)
+        for index in hits:
+            # cutKey(clear=True) reports 0 even when it removes a key, so count hits.
+            cmds.cutKey(driver_plug(node, index, xf), time=(frame, frame), clear=True)
+    return len(hits)
+
+
+def clear_tweak_keys(mesh, indices):
+    """Delete all keys, holding each tweak at the weight it shows now."""
+    node = _require_node(mesh)
+    xf = resolve_mesh(mesh)[0]
+    with undo_chunk("clear tweak keys"):
+        values = {i: cmds.getAttr(driver_plug(node, i, xf)) for i in indices}
+        _take_over(node, read_meta(node), indices, xf)
+        for index in indices:
+            plug = driver_plug(node, index, xf)
+            _delete_curves(plug)
+            cmds.setAttr(plug, values[index])
+    return len(indices)
+
+
+def set_tweak_mode(mesh, indices, mode, frame=None, layer="L1", ramp_in=3.0, ramp_out=3.0):
+    """Change how tweaks are keyed and rekey them.
+
+    Static: always 1. Pulse: 0-1-0 around ``frame``. Sequence: a pose on
+    ``layer`` at ``frame`` (one tweak, on a free frame). Manual: keep the keys.
+    """
+    if mode not in core.MODES:
+        raise TweakError("Unknown keying mode %r" % mode)
+    node = _require_node(mesh)
+    xf = resolve_mesh(mesh)[0]
+    frame = cmds.currentTime(query=True) if frame is None else float(frame)
+    layer = layer or "L1"
+    meta = read_meta(node)
+    if mode == core.MODE_SEQUENCE:
+        if len(indices) != 1:
+            raise TweakError("Move one tweak at a time into a sequence level")
+        taken = core.find_sequence_target(meta, layer, frame)
+        if taken is not None and taken != indices[0]:
+            raise TweakError("Level %s already has a pose on frame %g" % (layer, frame))
+    with undo_chunk("set tweak mode"):
+        levels = set()
+        for index in indices:
+            entry = meta["targets"].get(index) or core.make_entry(
+                alias_map(node).get(index, "tweak%d" % index))
+            if entry["mode"] == core.MODE_SEQUENCE:
+                levels.add(entry["layer"])
+            entry["mode"] = mode
+            if mode == core.MODE_STATIC:
+                entry["frame"], entry["layer"] = None, mode
+            elif mode == core.MODE_MANUAL:
+                entry["layer"] = mode
+            else:
+                entry["frame"] = frame
+                entry["layer"] = layer if mode == core.MODE_SEQUENCE else mode
+                if mode == core.MODE_PULSE:
+                    entry["ramp_in"], entry["ramp_out"] = float(ramp_in), float(ramp_out)
+            meta["targets"][index] = entry
+        write_meta(node, meta)
+        if mode == core.MODE_SEQUENCE:
+            levels.add(layer)
+        else:
+            for index in indices:
+                apply_keys(node, index, meta, xf)
+        for level in levels:
+            rekey_level(node, level, meta, xf)
+    return len(indices)
+
+
+def jump_to_key(mesh, indices, direction):
+    """Move the current time to the previous (-1) or next (+1) key of these
+    tweaks (all tweaks on the mesh when ``indices`` is empty)."""
+    node = _require_node(mesh)
+    xf = resolve_mesh(mesh)[0]
+    indices = list(indices) or target_indices(node)
+    times = set()
+    for index in indices:
+        times.update(key_times(driver_plug(node, index, xf)))
+    target = core.adjacent_time(sorted(times), cmds.currentTime(query=True), direction)
+    if target is None:
+        raise TweakError("No %s tweak key" % ("later" if direction > 0 else "earlier"))
+    cmds.currentTime(target)
+    return target
+
+
+def key_weight(mesh, index, value=None):
+    """Key a tweak's weight (or proxy) on the current frame (switches it to manual)."""
+    return key_tweaks(mesh, [index], value)
 
 
 def set_weight(mesh, index, value):
@@ -588,14 +730,15 @@ def list_tweaks(mesh):
         return []
     meta = read_meta(node)
     aliases = alias_map(node)
+    now = cmds.currentTime(query=True)
     rows = []
     for index in target_indices(node):
         entry = meta["targets"].get(index) or core.make_entry(aliases.get(index, "target%d" % index))
         plug = driver_plug(node, index)
+        times = key_times(plug)
         rows.append(dict(entry, index=index, alias=aliases.get(index, ""),
-                         weight=cmds.getAttr(plug),
-                         keyed=bool(cmds.listConnections(plug, source=True, destination=False,
-                                                         type="animCurve"))))
+                         weight=cmds.getAttr(plug), keyed=bool(times), keys=len(times),
+                         key_state=core.key_state(times, now)))
     return rows
 
 

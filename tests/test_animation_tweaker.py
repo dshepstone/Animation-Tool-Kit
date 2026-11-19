@@ -304,6 +304,26 @@ class KeyingTests(unittest.TestCase):
         self.assertEqual(core.targets_to_mute(meta, core.MUTE_SEQUENCE), [0, 1, 2])
         self.assertEqual(core.targets_to_mute(meta, core.MUTE_LEVEL, "L2"), [2])
 
+    def test_manual_mode_is_kept_and_muted_with_static(self):
+        meta = core.empty_metadata()
+        meta["targets"][0] = core.make_entry("hand", mode=core.MODE_MANUAL, frame=7)
+        meta["targets"][1] = core.make_entry("seq", mode=core.MODE_SEQUENCE, frame=9, layer="L1")
+        self.assertEqual(meta["targets"][0]["mode"], core.MODE_MANUAL)
+        self.assertEqual(core.targets_to_mute(meta, core.MUTE_STATIC), [0])
+        self.assertEqual(core.level_entries(meta, "L1"), [(1, 9.0)])
+        self.assertEqual(core.normalise_entry({"mode": "bogus"})["mode"], core.MODE_STATIC)
+
+    def test_adjacent_key_and_key_state(self):
+        times = [1.0, 5.0, 12.0]
+        self.assertEqual(core.adjacent_time(times, 5, 1), 12.0)
+        self.assertEqual(core.adjacent_time(times, 5, -1), 1.0)
+        self.assertEqual(core.adjacent_time(times, 6.5, -1), 5.0)
+        self.assertIsNone(core.adjacent_time(times, 12, 1))
+        self.assertIsNone(core.adjacent_time([], 3, -1))
+        self.assertEqual(core.key_state([], 4), "none")
+        self.assertEqual(core.key_state(times, 5.00001), "key")
+        self.assertEqual(core.key_state(times, 6), "animated")
+
 
 # ---------------------------------------------------------------------------
 # Metadata and names
