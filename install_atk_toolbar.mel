@@ -485,6 +485,24 @@ global proc atk__install()
     else
         warning("ATK Installer: Overlap package not found (skipped): " + $overlapSrc);
 
+    // Animation Tweaker ships as an isolated ATK package, including offline
+    // HTML help and its icon. It does not require a standalone install.
+    string $tweakerSrc = $toolsBase + "Animation_Tweaker/atk_tweaker";
+    if (`filetest -d $tweakerSrc`)
+    {
+        string $copyTweakerPy = "";
+        $copyTweakerPy += "import os, shutil\n";
+        $copyTweakerPy += "src = r\"" + $tweakerSrc + "\"\n";
+        $copyTweakerPy += "dst = os.path.join(r\"" + $scriptsDir + "\", 'atk_tweaker')\n";
+        $copyTweakerPy += "if os.path.exists(dst):\n";
+        $copyTweakerPy += "    shutil.rmtree(dst)\n";
+        $copyTweakerPy += "shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.pyo'))\n";
+        $copyTweakerPy += "print('  Copied package: atk_tweaker')\n";
+        python($copyTweakerPy);
+    }
+    else
+        warning("ATK Installer: Animation Tweaker package not found (skipped): " + $tweakerSrc);
+
     // Playblast Creator v2.0.4 - matches the standalone installer layout so
     // the plug-in file and UI resolve the same way whether the toolbar or
     // the drag-and-drop installer copied them in.
@@ -529,6 +547,7 @@ global proc atk__install()
         "Add-Remove-Inbetweens_1_0_1/add_Remove.png",
         "noise_generator_1_0_0/noise_generator_icon.png",
         "Overlap/atk_overlap/assets/overlap_32.png",
+        "Animation_Tweaker/atk_tweaker/assets/animation_tweaker_32.png",
         "onion-skin-tool_2_2_0/onionSkinIcon.png",
         "WireShape_Tool_1_0_0/Shape_Icon.png",
         "Reset_Tool_2_0_1/reset_icon.png",

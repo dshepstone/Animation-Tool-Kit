@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Animation Tweaker — User Guide</title>
+<style>
+body { background: #262d33; color: #e6ebe9; font-family: 'Segoe UI', sans-serif; font-size: 10pt; margin: 24px; line-height: 1.5; }
+h1 { color: #6fd3c0; font-size: 26pt; margin-bottom: 4px; }
+h2 { color: #6fd3c0; font-size: 17pt; margin-top: 28px; }
+h3 { color: #f1c56a; font-size: 12pt; margin-top: 18px; }
+a { color: #9de0d0; } p, li { margin-bottom: 8px; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+th, td { border: 1px solid #4d5d5c; padding: 7px; text-align: left; vertical-align: top; }
+th { background: #33474a; } .note { background: #323e3f; padding: 12px; }
+.muted { color: #b0bcb8; } code { color: #f1c56a; }
+</style></head><body>
+<h1>Animation Tweaker</h1><p class="muted">User guide · Version 1.0.0 · Offline reference</p>
+<p>Sculpt shot-specific corrections onto animated characters after the skin, then key them on and off.
+Every correction is stored as a target on one blendShape per mesh, so nothing else is added to your scene.</p>
+<p><a href="#start">Quick start</a> · <a href="#keying">Keying modes</a> · <a href="#effects">Effects</a> ·
+<a href="#handle">Surface Handle</a> · <a href="#troubleshooting">Troubleshooting</a></p>
+
+<h2><a name="start"></a>Getting started</h2>
+<ol>
+<li>Select the character mesh and click <b>Use selected</b>.</li>
+<li>Go to the frame you want to fix. Pick a keying mode on the <b>Sculpt</b> tab.</li>
+<li>Click <b>Sculpt</b>. A blue copy of the mesh, exactly as it looks on this frame, replaces the original in the viewport.</li>
+<li>Sculpt the copy with any Maya tool: sculpt brushes, soft selection, move vertices.</li>
+<li>Click <b>Commit</b>. The difference is stored as a tweak and keyed. The copy is deleted. <b>Cancel</b> throws the copy away and changes nothing.</li>
+</ol>
+<p class="note">Each button is a single Undo. A sculpt in progress is saved in the scene, so it survives
+<b>Reload Scripts</b> and reopening the window. <b>File &gt; Cancel every open sculpt</b> clears any you forgot.</p>
+
+<h2><a name="storage"></a>How tweaks are stored</h2>
+<p>The first tweak on a mesh creates a blendShape called <code>&lt;mesh&gt;_atkTweaks</code>, placed
+<i>after</i> the skinCluster and any other deformers. Each tweak is one target on it. The target holds the
+offsets in the mesh's object space; no target meshes are kept. Each weight gets a readable name such as
+<code>tw_sculpt_L1_f24</code>, and the tweak's label, kind, frame and level are saved as JSON on the node.</p>
+<p>Turn on <b>Proxy channels on mesh</b> to get a keyable copy of every weight on the mesh transform, under a
+<code>TWEAKS</code> divider in the Channel Box. Existing keys move onto the proxies. Turning it off moves them back.</p>
+<p>Deleting <code>&lt;mesh&gt;_atkTweaks</code> removes Animation Tweaker from a mesh completely.</p>
+
+<h2><a name="sculpt"></a>Sculpt and commit</h2>
+<h3>Highlight shader / Hide original</h3>
+<p>The sculpt copy gets a light blue material so it is easy to tell apart, and the original is hidden while you work.
+Both are restored on Commit or Cancel.</p>
+<h3>Mute while sculpting</h3>
+<p>Mutes some existing tweaks while you sculpt, so the new tweak is measured against the mesh without them:</p>
+<table><tr><th>Choice</th><th>Muted while sculpting</th></tr>
+<tr><td>Off</td><td>Nothing. You sculpt on top of everything.</td></tr>
+<tr><td>Mute all tweaks</td><td>Every tweak on the mesh.</td></tr>
+<tr><td>Mute static and pulse tweaks</td><td>Static and pulse tweaks only.</td></tr>
+<tr><td>Mute sequence tweaks</td><td>All pose-to-pose tweaks on every level.</td></tr>
+<tr><td>Mute this level only</td><td>Pose-to-pose tweaks on the level in the Level box.</td></tr></table>
+<p>Muted tweaks come back on Commit or Cancel, with their keys intact.</p>
+<h3>Refine</h3>
+<p>Select one tweak in the list and click <b>Refine</b>. Sculpt a correction; on Commit it is added to that tweak.
+If the tweak is half on (weight 0.5) on this frame, the correction is scaled so the result looks exactly like your sculpt.
+Refine needs the tweak's weight to be above 0 on the current frame.</p>
+
+<h2><a name="keying"></a>Keying modes</h2>
+<table><tr><th>Mode</th><th>Keys</th><th>Use it for</th></tr>
+<tr><td>Static</td><td>No keys, weight 1.</td><td>A fix that should always show, such as a model correction.</td></tr>
+<tr><td>Pulse</td><td>0 at <i>frame − ramp in</i>, 1 on the frame, 0 at <i>frame + ramp out</i>.</td>
+<td>A one-off fix: an intersection on a contact frame, a smear.</td></tr>
+<tr><td>Sequence</td><td>1 on its own frame, 0 on the frames of the poses either side of it on the same level.</td>
+<td>Pose-to-pose shape animation: each sculpt crossfades into the next.</td></tr>
+<tr><td>Keyed by hand</td><td>One key at 1 on the frame; after that, only the keys you set.</td>
+<td>Shapes you want to time yourself in the Graph Editor.</td></tr></table>
+<p>Sequence tweaks live on <b>levels</b> (L1, L2, ...). Each level is an independent pose-to-pose track, so you can run
+a cheek track and a cloth track without them affecting each other. Adding or deleting a pose rekeys its whole level.
+Sculpting on a frame that already has a pose on that level adds to that pose. A new pose between two others starts from the in-between shape the level shows on that frame, so what you sculpted is exactly what you get after Commit (unless you muted that level while sculpting).</p>
+<p>The first pose of a level stays on before its frame and the last stays on after it. To end a track, add a
+<b>Blank pose</b>: an empty pose that the previous one fades into.</p>
+<p><b>Hold pose</b> copies the previous pose on the level to the current frame, so the shape holds and then moves on.</p>
+
+<h2><a name="brushes"></a>Sculpt brushes</h2>
+<p>The <b>Sculpt brushes</b> shelf on the Sculpt tab holds Maya's mesh sculpting brushes, so you never need the
+Sculpting shelf:</p>
+<ul>
+<li><b>Shape:</b> Sculpt, Smooth, Relax, Grab, Pinch, Flatten, Bulge, Amplify, Smear.</li>
+<li><b>Detail:</b> Foamy, Wax, Scrape, Fill, Knife, Spray, Repeat, Imprint.</li>
+<li><b>Mask:</b> Freeze, with <b>Invert</b> and <b>Clear</b> for the frozen area; <b>Sym X</b> mirrors strokes
+across the mesh's X axis; <b>Settings</b> opens the brush size, strength and falloff; <b>Select</b> leaves the brush.</li>
+</ul>
+<p>Picking a brush while a sculpt is open selects the sculpt copy first, so the brush always works on the copy,
+never on the animated mesh. With <b>Pick up the last brush when a sculpt starts</b> on, Sculpt and Refine hand you
+the brush you used last. Commit and Cancel return to the Select tool. Hold B and drag to change the brush size, as usual.</p>
+
+<h2><a name="list"></a>Tweak list</h2>
+<p>Lists every tweak on the mesh with its kind, mode, frame and level. Drag a weight slider to see the tweak at
+that weight, and click the diamond to key it on the current frame. The diamond uses the Channel Box colours:
+grey is not animated, salmon is animated, red means there is a key on this frame. The sliders and colours follow
+the current frame. Right-click a tweak for the keying and editing commands.</p>
+<ul>
+<li><b>Amplify ×</b> scales the selected tweaks' offsets: 1.25 is 25% stronger, 0.5 half, −1 flips them.</li>
+<li><b>Rename</b> changes the label and the weight's name.</li>
+<li><b>Paint mask</b> opens Maya's Paint Blend Shape Weights tool on that tweak, so you can paint where it applies.</li>
+<li><b>Delete</b> removes the target, its keys and its proxy channel, and rekeys its level.</li>
+</ul>
+
+<h2><a name="animate"></a>Animating tweaks</h2>
+<p>Every tweak is a keyable weight from 0 (off) to 1 (fully on), so tweaks can be animated like any channel. Pick
+tweaks in the list and use <b>Animate selected tweaks</b>:</p>
+<ul>
+<li><b>Key</b> keys the weight each tweak shows now; <b>Key 0</b> and <b>Key 1</b> key it off or fully on.</li>
+<li><b>Remove</b> deletes the key on this frame; <b>Clear keys</b> deletes them all and holds the current weight.</li>
+<li><b>&#9664; Key</b> and <b>Key &#9654;</b> jump to the previous or next key (of every tweak when none is selected).</li>
+<li><b>Graph Editor</b> opens the curves.</li>
+<li><b>Re-key as</b> Static, Pulse here or Pose here replaces the keys with that mode's automatic keys, using the
+Ramp and Level settings at the top.</li>
+</ul>
+<p>Keying a tweak by hand switches it to <i>keyed</i> mode, so its automatic pulse or sequence keys can never
+overwrite yours. A sequence pose you key by hand leaves its level, and the rest of the level is rekeyed without it.
+With <b>Proxy channels on mesh</b> on, the keys live on the mesh's TWEAKS channels instead, so they also show in the
+Channel Box and the timeline.</p>
+
+<h2><a name="shape"></a>Shape: inflate and relax</h2>
+<p>Both work on the mesh as it is on the current frame and are stored as tweaks with the Sculpt tab's keying mode.
+Select vertices to limit them; with soft selection on, the falloff becomes the strength.</p>
+<p><b>Inflate / Deflate</b> moves vertices along their normals by <i>Distance</i>.
+<b>Relax</b> smooths the surface: each iteration moves every vertex part of the way (<i>Strength</i>) toward
+the average of its neighbours. Unselected vertices stay put, so the relaxed area blends into the rest.</p>
+
+<h2><a name="effects"></a>Effects</h2>
+<p>Effects work over a frame range and bake one pose per frame on their own level (<code>fx_smooth_motion</code>,
+<code>fx_stick</code>, <code>fx_push_out</code>, <code>fx_pin</code>). Neighbouring frames crossfade and the
+effect fades out one frame outside the range. Running an effect again replaces its earlier result.
+The selected vertices, with soft selection, are the mask.</p>
+<table><tr><th>Effect</th><th>What it does</th></tr>
+<tr><td>Smooth Motion</td><td>Averages each vertex's path over time with a Gaussian filter. <i>Smoothing</i> is the
+filter width in frames; larger values remove more jitter. <i>World space</i> smooths the path in the scene; turn it
+off to smooth only the deformation relative to the mesh's transform.</td></tr>
+<tr><td>Stick to Surface</td><td>On the bind frame, records where each vertex sits relative to the closest point on the
+driver mesh, then keeps it there on every frame. Good for a hand resting on a thigh, or a strap on a shoulder.</td></tr>
+<tr><td>Push Out</td><td>Wherever a vertex is inside the driver mesh (or closer than <i>Skin offset</i>), it is pushed
+out along the driver's surface normal. The driver's normals must point outward.</td></tr>
+<tr><td>Pin to World</td><td>Holds the masked vertices exactly where they were in the world on the bind frame.</td></tr></table>
+
+<h2><a name="handle"></a>Surface Handle</h2>
+<p>Select one vertex and click <b>Create on selected vertex</b>. You get a soft-modification handle that rides the
+skin: it follows the mesh as it animates, and moving or keying the handle pushes the surface around it.</p>
+<p>The handle needs UVs to ride the surface. On a mesh without UVs it is placed at the vertex and stays there, with
+a warning.</p>
+<p>On the handle in the Channel Box: <code>falloffRadius</code>, <code>falloffMode</code> (Volume or Surface),
+<code>falloffShape</code>, <code>envelope</code>, <code>showFalloff</code> and <code>orientToWorld</code>.
+Pick a falloff shape in the window and click <b>Apply</b> to rebuild the falloff curve.
+<b>Aim at selected</b> points the handle's axes at another object; <b>Clear aim</b> removes it.
+<b>Add / Remove geometry</b> lets one handle deform several meshes.</p>
+
+<h2><a name="utilities"></a>Utilities</h2>
+<ul>
+<li><b>Locator / Card on vertex</b>: bakes a locator (position) or a small card (position and orientation) onto each
+selected vertex over the playback range. Use them as constraint targets or reference.</li>
+<li><b>Bake mesh transforms</b>: bakes the selected objects' translate, rotate and scale to a key on every frame and
+removes their constraints.</li>
+<li><b>Smooth preview</b>: toggles smooth-mesh preview on every mesh under the selection.</li>
+<li><b>Next camera</b>: the active viewport looks through the next camera in the scene. Ortho cameras are skipped
+unless you untick the box.</li>
+<li><b>Colour materials</b>: click a swatch to give the selected meshes or faces a flat colour; <b>?</b> picks a random one.
+Materials are shared by colour (<code>atkColour_rrggbb</code>).</li>
+<li><b>Copy / Paste values</b>: copies the keyable channel values of the selection (or the channels highlighted in the
+Channel Box) and pastes them onto other objects. With one source, every target gets its values; with several, objects
+are matched by name, then by order. With Auto Key on, pasted channels are keyed. The values are kept in Maya's
+preferences as plain data.</li>
+<li><b>Extract faces (live copy)</b>: makes a separate mesh from the selected faces that keeps following the original,
+including skinning and tweaks.</li>
+</ul>
+
+<h2><a name="cache"></a>Cache versions</h2>
+<ol>
+<li><b>Export selected…</b> writes the selected meshes to an Alembic file. Each mesh is tagged with its own path so
+the cache can find it again.</li>
+<li><b>Import version…</b> brings a cache back as a version under <code>ATK_TweakCache_CTL</code>.</li>
+<li><b>Attach</b> drives the original meshes from the chosen (or active) version. The control's <code>envelope</code>
+fades the cache in and out and can be keyed.</li>
+<li><b>Swap to selected</b> switches the attached meshes to another version. Only the active version is shown.</li>
+<li><b>Detach</b> removes the attach blendShapes; <b>Delete version</b> removes a version.</li>
+</ol>
+<p>The Alembic plug-ins (AbcExport, AbcImport) are loaded when needed.</p>
+
+<h2><a name="troubleshooting"></a>Troubleshooting</h2>
+<ul>
+<li><b>"The sculpt has N vertices but the mesh has M"</b>: the copy's topology was changed (faces added or deleted).
+Cancel and sculpt again without changing topology.</li>
+<li><b>A tweak moves the wrong way after the character turns</b>: tweaks are stored in the mesh's object space after
+the skin, so they turn with the transform but not with joints. Use a Sequence tweak per pose, or a Surface Handle.</li>
+<li><b>Nothing happens when sculpting a sequence pose</b>: check the level name. Poses on different levels do not
+crossfade.</li>
+<li><b>Paint mask opens but paints the wrong target</b>: pick the tweak's name in the paint tool's target list.</li>
+<li><b>Surface Handle does not follow the skin</b>: the mesh has no UVs, or the UVs overlap at that vertex.</li>
+</ul>
+
+<h2><a name="about"></a>About</h2>
+<p>Animation Tweaker 1.0.0 for the Animation Tool Kit. Original ATK code, released under the ATK licence.</p>
+</body></html>

@@ -23,6 +23,7 @@ PACKAGE_ROOTS = {
     "time_bookmarks": TOOLS / "Bookmarks" / "src",
     "blue_pencil_flipbook": TOOLS / "Blue-Pencil-Flipbook-Manager",
     "atk_overlap": TOOLS / "Overlap",
+    "atk_tweaker": TOOLS / "Animation_Tweaker",
     "studiolibrary": TOOLS / "studiolibrary-2.21.1" / "src",
 }
 

@@ -176,6 +176,7 @@ def _draw_symbol(painter, icon_key, accent, size):
         "warning":  _draw_warning,
         "stagger":  _draw_stagger,
         "cleanup":  _draw_cleanup,
+        "tweaker":  _draw_tweaker,
     }
 
     fn = dispatch.get(icon_key, _draw_generic)
@@ -681,6 +682,37 @@ def _draw_cleanup(painter, accent, s, m):
     painter.setPen(_pen(QtGui.QColor("#ef6464"), s * 0.07))
     painter.drawLine(QtCore.QPointF(cx - r, cy - r), QtCore.QPointF(cx + r, cy + r))
     painter.drawLine(QtCore.QPointF(cx - r, cy + r), QtCore.QPointF(cx + r, cy - r))
+
+
+def _draw_tweaker(painter, accent, s, m):
+    """A surface pushed down by a brush, its old shape dashed - Animation Tweaker."""
+    def surface(peak):
+        path = QtGui.QPainterPath()
+        path.moveTo(m, s * 0.70)
+        path.cubicTo(s * 0.32, s * 0.70, s * 0.36, peak, s * 0.5, peak)
+        path.cubicTo(s * 0.64, peak, s * 0.68, s * 0.70, s - m, s * 0.70)
+        return path
+
+    ghost = _pen(accent.darker(190), s * 0.045)
+    ghost.setStyle(QtCore.Qt.DashLine)
+    painter.setPen(ghost)
+    painter.setBrush(QtCore.Qt.NoBrush)
+    painter.drawPath(surface(s * 0.48))
+    painter.setPen(_pen(accent, s * 0.07))
+    painter.drawPath(surface(s * 0.66))
+
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtGui.QBrush(_FG_COLOR))
+    for x, y in ((m, 0.70), (s * 0.5, 0.66), (s - m, 0.70)):
+        painter.drawEllipse(QtCore.QPointF(x, s * y), s * 0.055, s * 0.055)
+
+    # Brush ring and push arrow
+    painter.setPen(_pen(_FG_COLOR, s * 0.055))
+    painter.setBrush(QtCore.Qt.NoBrush)
+    painter.drawEllipse(QtCore.QPointF(s * 0.5, s * 0.30), s * 0.11, s * 0.11)
+    painter.drawLine(QtCore.QPointF(s * 0.5, s * 0.43), QtCore.QPointF(s * 0.5, s * 0.56))
+    painter.drawLine(QtCore.QPointF(s * 0.43, s * 0.50), QtCore.QPointF(s * 0.5, s * 0.57))
+    painter.drawLine(QtCore.QPointF(s * 0.57, s * 0.50), QtCore.QPointF(s * 0.5, s * 0.57))
 
 
 def _draw_generic(painter, accent, s, m):
