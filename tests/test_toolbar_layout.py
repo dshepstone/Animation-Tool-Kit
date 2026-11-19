@@ -78,8 +78,9 @@ class FullPresetTests(unittest.TestCase):
             expected.append(("tool", t["id"]))
             prev = t["group"]
         self.assertEqual(flat(p), expected)
-        self.assertEqual(p.icon_size, 32)
-        self.assertEqual(p.button_size, 40)
+        # Small (24 px) is the default icon size.
+        self.assertEqual(p.icon_size, 24)
+        self.assertEqual(p.button_size, 32)
         self.assertEqual(p.spacing, 2)
         self.assertEqual(p.align, "center")
 
@@ -284,20 +285,21 @@ class AlignmentTests(unittest.TestCase):
 
 
 class MeasureTests(unittest.TestCase):
+    # Geometry checks are written for Medium (32 px) icons.
     def test_single_row(self):
-        p = plan(show_separators=False)
+        p = plan(show_separators=False, icon_size=32)
         along, across = L.measure(p)
         self.assertEqual(along, 10 * 40 + 9 * 2)
         self.assertEqual(across, 40)
 
     def test_separators_and_extra_slots(self):
-        p = plan(extra_slots={"tangent": 3})
+        p = plan(extra_slots={"tangent": 3}, icon_size=32)
         along, _ = L.measure(p, extra_slots={"tangent": 3})
         widgets = 13 + 3
         self.assertEqual(along, 13 * 40 + 3 * 1 + (widgets - 1) * 2)
 
     def test_rows_stack_across(self):
-        p = plan({"lines": 3}, show_separators=False)
+        p = plan({"lines": 3}, show_separators=False, icon_size=32)
         along, across = L.measure(p)
         self.assertEqual(across, 3 * 40 + 2 * 2)
         self.assertEqual(along, 4 * 40 + 3 * 2)
@@ -400,7 +402,7 @@ class ExportImportTests(unittest.TestCase):
                            "icon_size": 1000, "align": "diagonal"})
         settings, size, align = L.import_layout(text, REGISTRY, GROUPS)
         self.assertEqual(settings, L.default_settings(REGISTRY, GROUPS))
-        self.assertEqual((size, align), (32, "center"))
+        self.assertEqual((size, align), (24, "center"))
 
 
 class UsageTests(unittest.TestCase):

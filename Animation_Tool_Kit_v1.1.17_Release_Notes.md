@@ -16,7 +16,7 @@ Nothing changes until you pick something: the default layout is **Full**, the sa
 - **My groups.** Make your own named groups of tools, such as *Blocking* or *Polish*. They fold open like the built-in groups, in the Custom and Grouped layouts.
 - **Rows and columns.** Use 1 to 3 rows on a top or bottom bar, or 1 to 3 columns on a side bar. Tools wrap in order.
 - **Alignment.** Left, centre or right on a top or bottom bar; top, centre or bottom on a side bar.
-- **Icon size**: Small, Medium or Large (moved here from the Appearance tab).
+- **Icon size**: Small, Medium or Large (moved here from the Appearance tab). **Small is now the default**, so the bar is shorter out of the box. If you already picked a size, yours is kept.
 - **Export / Import** a layout as a file, to share it with a class or move it to another computer. **Reset layout** goes back to Full.
 - **Usage.** ATK counts how often you use each tool: button clicks, quick left-click actions, right-click actions and the Timeline Ticks colour strips. Most used ranks by this count. **Reset usage** clears it. The bar doesn't reorder while you work; it updates the next time it is built (opening Maya, changing Settings or Reload Scripts).
 

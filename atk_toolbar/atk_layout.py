@@ -57,7 +57,7 @@ MAX_CUSTOM_GROUPS = 8
 MAX_GROUP_NAME = 32
 
 ICON_SIZES = (24, 32, 48)
-ICON_SIZE_DEFAULT = 32
+ICON_SIZE_DEFAULT = 24       # Small; the natural 32 px icons are Medium
 ALIGNMENTS = ("left", "center", "right")          # horizontal bar
 VALIGNMENTS = ("top", "center", "bottom")         # vertical bar
 

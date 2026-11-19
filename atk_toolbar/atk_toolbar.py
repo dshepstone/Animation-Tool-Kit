@@ -173,7 +173,7 @@ _POPUP_STYLE = (
 # ---------------------------------------------------------------------------
 
 def _get_icon_size():
-    return atk_settings._get_pref_int(_OPT_ICON_SIZE, 32)
+    return atk_settings._get_pref_int(_OPT_ICON_SIZE, atk_layout.ICON_SIZE_DEFAULT)
 
 
 def _show_tooltips():

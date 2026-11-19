@@ -147,8 +147,10 @@ class _FakeMayaCase(unittest.TestCase):
         self.app.processEvents()
 
     # -- helpers ----------------------------------------------------------
-    def configure(self, orientation="horizontal", **layout):
+    def configure(self, orientation="horizontal", icon_size=32, **layout):
+        # The geometry checks below are written for Medium (32 px) icons.
         self.cmds.vars["atk_toolbar_orientation"] = orientation
+        self.cmds.vars["atk_toolbar_icon_size"] = icon_size
         settings = self.layout.default_settings(self.registry, self.loader.GROUP_ORDER)
         settings.update(layout)
         self.loader.save_layout_settings(settings)
@@ -178,9 +180,9 @@ class ToolbarLayoutWidgetTests(_FakeMayaCase):
         self.assertEqual(list(w._button_map), [t["id"] for t in self.registry])
         self.assertEqual(w._fold_buttons, {})
         self.assertEqual(w._plan.preset, "full")
-        self.assertEqual(w._plan.icon_size, 32)
-        # Gear + logo are still there, at 40 px.
-        self.assertEqual(w.findChild(QtWidgets.QToolButton, "atk_tool_anim_snap").width(), 40)
+        # A fresh install starts with Small (24 px) icons.
+        self.assertEqual(w._plan.icon_size, 24)
+        self.assertEqual(w.findChild(QtWidgets.QToolButton, "atk_tool_anim_snap").width(), 32)
 
     def test_every_preset_builds_on_both_orientations_and_line_counts(self):
         for orientation in ("horizontal", "vertical"):

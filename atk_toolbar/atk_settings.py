@@ -492,7 +492,8 @@ class ATKSettingsDialog(QtWidgets.QDialog):
             self._most_used_spin.setValue(settings["most_used_count"])
             self._lines_spin.setValue(settings["lines"])
             self._set_combo(self._valign_combo, settings["valign"])
-            self._set_combo(self._icon_size_combo, _get_pref_int(OPT_ICON_SIZE, 32), 1)
+            self._set_combo(self._icon_size_combo,
+                           _get_pref_int(OPT_ICON_SIZE, atk_layout.ICON_SIZE_DEFAULT), 0)
             align = (cmds.optionVar(q=OPT_ICON_ALIGNMENT)
                      if cmds.optionVar(exists=OPT_ICON_ALIGNMENT) else "center")
             self._set_combo(self._halign_combo, align, 1)
@@ -752,7 +753,7 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         if answer != QtWidgets.QMessageBox.Yes:
             return
         atk_loader.reset_layout_settings()
-        _set_pref_int(OPT_ICON_SIZE, 32)
+        _set_pref_int(OPT_ICON_SIZE, atk_layout.ICON_SIZE_DEFAULT)
         cmds.optionVar(sv=(OPT_ICON_ALIGNMENT, "center"))
         self._load_layout()
         self._request_rebuild()
@@ -1007,7 +1008,7 @@ class ATKSettingsDialog(QtWidgets.QDialog):
         cmds.optionVar(sv=(OPT_ORIENTATION, "horizontal"))
         cmds.optionVar(sv=(OPT_ICON_ALIGNMENT, "center"))
         cmds.optionVar(sv=(OPT_DOCK_POSITION, "above_timeline"))
-        _set_pref_int(OPT_ICON_SIZE, 32)
+        _set_pref_int(OPT_ICON_SIZE, atk_layout.ICON_SIZE_DEFAULT)
         _set_pref_int(OPT_SHOW_TOOLTIPS, 1)
         _set_pref_int(OPT_SHOW_SEPARATORS, 1)
         _set_pref_int(OPT_SHOW_INLINE_SLIDER, 1)

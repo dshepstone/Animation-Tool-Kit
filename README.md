@@ -34,7 +34,7 @@ straight away.
   separators. Tooltips stay.
 - **My groups**: your own named groups of tools, for Custom and Grouped.
 - **Rows / columns**: 1–3 rows on a top or bottom bar, columns on a side bar.
-- **Alignment** and **Icon size**.
+- **Alignment** and **Icon size** (Small by default).
 - **Export… / Import…** a layout file, and **Reset layout** to go back to Full.
 
 The gear button's right-click menu also has a **Layout** submenu for quick
