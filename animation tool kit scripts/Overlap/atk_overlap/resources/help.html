@@ -11,13 +11,13 @@ th, td { border: 1px solid #52615f; padding: 8px; text-align: left; }
 th { background: #354c46; } .note { background: #34403d; padding: 12px; }
 .muted { color: #b3bfb9; } code { color: #f1cd8a; }
 </style></head><body>
-<h1>Overlap</h1><p class="muted">User guide · Version 0.5.0 · Offline reference</p>
+<h1>Overlap</h1><p class="muted">User guide · Version 0.5.1 · Offline reference</p>
 <p>Add lag, swing, and settling to animated controls, then bake an editable result.</p>
 <p><a href="#start">Quick start</a> · <a href="#spring">Settings</a> ·
 <a href="#examples">Suggested numbers</a> · <a href="#about">About &amp; licence</a></p>
 <h2><a name="start"></a>Getting started</h2>
 <ol><li>Animate the driver or parent first. Overlap adds secondary motion to existing movement.</li>
-<li>Select the controls to simulate. Click <b>Load selected</b>, then check their order from root to tip.</li>
+<li>Select the controls to simulate. Click <b>Load selected</b>, then check their order from root to tip. <b>Reload selected</b> starts a fresh pass on a new selection; <b>Reset</b> clears the list and restores default settings.</li>
 <li>Choose Rotation or Translation and the local X/Y/Z channels you want affected.</li>
 <li>Set a frame range long enough to include the settling after the driver stops.</li>
 <li>Use <b>Auto: continue chain</b> for a chain endpoint. Create a locator if you want to adjust the final segment.</li>
@@ -30,6 +30,8 @@ th { background: #354c46; } .note { background: #34403d; padding: 12px; }
 <h2><a name="setup"></a>Controls and setup</h2>
 <h3><a name="controls"></a>Controls to simulate</h3><p>Load the rig controls you want to add overlap to. For a chain, put the top control first and the bottom control last. Animate the driver or parent first: a chain at rest needs source movement to create a swing.</p>
 <h3><a name="load"></a>Load selected</h3><p>Select controls in Maya, then click this to put them in the list. Selected parents are placed before their children. Loading a new selection clears this session&#x27;s preview and endpoint; baked keys remain.</p>
+<h3><a name="reload"></a>Reload selected</h3><p>Start a fresh pass: clear this session&#x27;s preview and endpoint, reload the controls selected in Maya, and set Start / end to the playback range. Your settings are kept. With nothing selected, the controls already in the list are reloaded. Baked keys remain.</p>
+<h3><a name="reset"></a>Reset</h3><p>Clear the control list, remove this session&#x27;s preview locators and endpoint, and return every setting to its default. Start / end is set to the playback range. Baked keys and the rig remain in the scene.</p>
 <h3><a name="up"></a>Up</h3><p>Move the highlighted list entry one place earlier. Use this to arrange the chain from its root toward its tip. This changes the simulation order, not the rig hierarchy.</p>
 <h3><a name="down"></a>Down</h3><p>Move the highlighted list entry one place later. Parent controls must appear before their selected children. The last control uses the endpoint to define its final segment.</p>
 <h3><a name="mode"></a>Mode</h3><p>Rotation adds swing by turning the controls, useful for tails, ears, and pendulums. Translation adds lag to their positions, useful for floating props or controls that should follow a moving target.</p>
@@ -98,7 +100,7 @@ Unit scale, no shear, and zero rotate axis are required. Offset pivots are suppo
 <li><b>Delete bake is disabled:</b> the scene has no legacy Overlap layers. New bakes key the controls directly, so Undo reverts them.</li></ul>
 <h2><a name="about"></a>About Overlap</h2>
 <table cellspacing="0" cellpadding="7"><tr><th>Application</th><td>Overlap</td></tr>
-<tr><th>Version</th><td>0.5.0</td></tr><tr><th>Creator / copyright holder</th><td>David Shepstone</td></tr>
+<tr><th>Version</th><td>0.5.1</td></tr><tr><th>Creator / copyright holder</th><td>David Shepstone</td></tr>
 <tr><th>Licence</th><td>Private proprietary software · All rights reserved</td></tr>
 <tr><th>Host</th><td>Autodesk Maya · Python 3 · Qt / PySide</td></tr></table>
 <p>Copyright © 2026 David Shepstone. All rights reserved. No public redistribution licence is granted.</p>

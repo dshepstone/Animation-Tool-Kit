@@ -9,6 +9,7 @@ from . import __version__
 from .bakes import list_bakes, delete_bake
 from .shelf import add_to_shelf, icon_path
 from .help_view import show_help
+from .help_text import HELP
 
 
 def build_menu_bar(owner, panel):
@@ -54,14 +55,21 @@ class Panel(QtWidgets.QWidget):
         self.controls.setMinimumHeight(80)
         self.controls.setMaximumHeight(120)
         layout.addWidget(self.controls)
-        row = QtWidgets.QHBoxLayout()
-        layout.addLayout(row)
-        for label, action, key in (("Load selected", self.load_selection, "load"),
-                                   ("Up", lambda: self.move_control(-1), "up"),
-                                   ("Down", lambda: self.move_control(1), "down")):
-            button = QtWidgets.QPushButton(label)
-            button.clicked.connect(action)
-            row.addWidget(button)
+        self.list_buttons = {}
+        for buttons in ((("Load selected", self.load_selection, "load"),
+                         ("Reload selected", self.reload_selection, "reload"),
+                         ("Reset", lambda: self.run(self.reset), "reset")),
+                        (("Up", lambda: self.move_control(-1), "up"),
+                         ("Down", lambda: self.move_control(1), "down"))):
+            row = QtWidgets.QHBoxLayout()
+            layout.addLayout(row)
+            for label, action, key in buttons:
+                button = QtWidgets.QPushButton(label)
+                button.clicked.connect(action)
+                if key in HELP:
+                    button.setToolTip(HELP[key][1])
+                self.list_buttons[key] = button
+                row.addWidget(button)
         layout.addWidget(QtWidgets.QLabel("List order: root to tip. Independent controls are also supported."))
         form = QtWidgets.QFormLayout()
         layout.addLayout(form)
@@ -81,8 +89,7 @@ class Panel(QtWidgets.QWidget):
         self.end = QtWidgets.QSpinBox()
         for widget in (self.start, self.end):
             widget.setRange(-1000000, 1000000)
-        self.start.setValue(int(cmds.playbackOptions(query=True, minTime=True)))
-        self.end.setValue(int(cmds.playbackOptions(query=True, maxTime=True)))
+        self.sync_range()
         range_row = QtWidgets.QHBoxLayout()
         range_row.addWidget(self.start)
         range_row.addWidget(self.end)
@@ -209,6 +216,41 @@ class Panel(QtWidgets.QWidget):
             item.setToolTip(node)
             self.controls.addItem(item)
         self.status.setText("Loaded {} controls. Check root-to-tip order.".format(len(resolved)))
+
+    def reload_selection(self):
+        self.run(self._reload_selection)
+
+    def _reload_selection(self):
+        """Start a fresh pass on the current Maya selection.
+
+        Clears this session's previews and cached source, re-reads the
+        selected controls and matches Start / end to the playback range.
+        With nothing selected, the controls already in the list are reloaded.
+        """
+        names = cmds.ls(selection=True, long=True, type="transform") or []
+        if not names:
+            names = self.names()
+        if not names:
+            raise ValueError("Select transform controls in the viewport or Outliner")
+        self.load_controls(names)
+        self.sync_range()
+        self.status.setText("Reloaded {} controls, frames {}-{}. Check root-to-tip order, "
+                            "then refresh source.".format(self.controls.count(),
+                                                          self.start.value(), self.end.value()))
+
+    def sync_range(self):
+        self.start.setValue(int(cmds.playbackOptions(query=True, minTime=True)))
+        self.end.setValue(int(cmds.playbackOptions(query=True, maxTime=True)))
+
+    def reset(self):
+        """Clear the control list and session helpers; restore default settings."""
+        self.clear()
+        self.controls.clear()
+        # Match a freshly opened window (optimized bake is on by default).
+        self.apply_settings(Settings(optimize_bake=True))
+        self.sync_range()
+        self.status.setText("Reset: list cleared and settings restored to defaults. "
+                            "Baked keys retained.")
 
     def move_control(self, delta):
         row = self.controls.currentRow()

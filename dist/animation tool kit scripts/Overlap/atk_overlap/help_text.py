@@ -2,6 +2,8 @@
 HELP = {
     "controls": ("Controls to simulate", "Load the rig controls you want to add overlap to. For a chain, put the top control first and the bottom control last. Animate the driver or parent first: a chain at rest needs source movement to create a swing."),
     "load": ("Load selected", "Select controls in Maya, then click this to put them in the list. Selected parents are placed before their children. Loading a new selection clears this session's preview and endpoint; baked keys remain."),
+    "reload": ("Reload selected", "Start a fresh pass: clear this session's preview and endpoint, reload the controls selected in Maya, and set Start / end to the playback range. Your settings are kept. With nothing selected, the controls already in the list are reloaded. Baked keys remain."),
+    "reset": ("Reset", "Clear the control list, remove this session's preview locators and endpoint, and return every setting to its default. Start / end is set to the playback range. Baked keys and the rig remain in the scene."),
     "up": ("Up", "Move the highlighted list entry one place earlier. Use this to arrange the chain from its root toward its tip. This changes the simulation order, not the rig hierarchy."),
     "down": ("Down", "Move the highlighted list entry one place later. Parent controls must appear before their selected children. The last control uses the endpoint to define its final segment."),
     "mode": ("Mode", "Rotation adds swing by turning the controls, useful for tails, ears, and pendulums. Translation adds lag to their positions, useful for floating props or controls that should follow a moving target."),
