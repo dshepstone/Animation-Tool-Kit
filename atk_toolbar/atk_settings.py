@@ -1137,6 +1137,21 @@ def _show_fresh_toolbar(reopen, summary):
                        pos="midCenter", fade=True)
 
 
+def refresh_open_dialog():
+    """Reload the Layout tab of an open Settings dialog from the stored data.
+
+    Called when the layout changes outside the dialog (the gear menu's Layout
+    submenu, a group button's Unfold), so the dialog's controls never hold
+    stale values that Apply or the next Layout change would save back.
+    """
+    global _dialog_instance
+    try:
+        if _dialog_instance is not None and not _dialog_instance.isHidden():
+            _dialog_instance._load_layout()
+    except RuntimeError:
+        _dialog_instance = None
+
+
 def show(rebuild_callback=None, tab=None):
     """Show (or raise) the ATK settings dialog, optionally on a named tab."""
     global _dialog_instance

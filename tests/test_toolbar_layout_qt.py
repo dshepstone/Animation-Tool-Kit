@@ -507,6 +507,27 @@ class LayoutTabTests(_FakeMayaCase):
         warn.assert_called_once()
         self.assertEqual(self.loader.get_layout_settings()["preset"], "full")
 
+    def test_menu_changes_refresh_the_open_dialog(self):
+        d, _ = self.dialog()
+        d.show()
+        self.tb.atk_settings._dialog_instance = d
+        try:
+            with mock.patch.object(self.tb.QtCore.QTimer, "singleShot"):
+                self.tb._set_layout_field("preset", "grouped")
+                self.tb._set_layout_field("expert", True)
+                item = self.layout.Item("group", "group:timing", "Timing", "timing", ())
+                self.tb._set_fold_open(item, True)
+            self.assertEqual(d._preset_combo.currentData(), "grouped")
+            self.assertTrue(d._expert_cb.isChecked())
+            self.assertTrue(d._group_open_checks["timing"].isChecked())
+            # Apply must not put the old values back.
+            d._apply()
+            s = self.loader.get_layout_settings()
+            self.assertEqual((s["preset"], s["expert"], s["group_open"]["timing"]),
+                             ("grouped", True, True))
+        finally:
+            self.tb.atk_settings._dialog_instance = None
+
     def test_reset_layout_and_usage(self):
         self.loader.record_usage("anim_snap")
         d, _ = self.dialog()

@@ -1035,6 +1035,7 @@ def _set_layout_field(key, value):
     settings = atk_loader.get_layout_settings()
     settings[key] = value
     atk_loader.save_layout_settings(settings)
+    atk_settings.refresh_open_dialog()
     # Deferred: the menu that asked is still on the call stack.
     QtCore.QTimer.singleShot(0, rebuild_current)
 
@@ -1050,6 +1051,7 @@ def _set_fold_open(item, is_open):
         except (ValueError, IndexError):
             return
     atk_loader.save_layout_settings(settings)
+    atk_settings.refresh_open_dialog()
     QtCore.QTimer.singleShot(0, rebuild_current)
 
 
