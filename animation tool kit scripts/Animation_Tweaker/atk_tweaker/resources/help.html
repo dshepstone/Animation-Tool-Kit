@@ -11,7 +11,7 @@ th, td { border: 1px solid #4d5d5c; padding: 7px; text-align: left; vertical-ali
 th { background: #33474a; } .note { background: #323e3f; padding: 12px; }
 .muted { color: #b0bcb8; } code { color: #f1c56a; }
 </style></head><body>
-<h1>Animation Tweaker</h1><p class="muted">User guide · Version 1.1.0 · Offline reference</p>
+<h1>Animation Tweaker</h1><p class="muted">User guide · Version 1.2.0 · Offline reference</p>
 <p>Sculpt shot-specific corrections onto animated characters after the skin, then key them on and off.
 Every correction is stored as a target on one blendShape per mesh, so nothing else is added to your scene.</p>
 <p><a href="#start">Quick start</a> · <a href="#keying">Keying modes</a> · <a href="#effects">Effects</a> ·
@@ -82,7 +82,11 @@ across the mesh's X axis; <b>Settings</b> opens the brush size, strength and fal
 </ul>
 <p>Picking a brush while a sculpt is open selects the sculpt copy first, so the brush always works on the copy,
 never on the animated mesh. With <b>Pick up the last brush when a sculpt starts</b> on, Sculpt and Refine hand you
-the brush you used last. Commit and Cancel return to the Select tool. Hold B and drag to change the brush size, as usual.</p>
+the brush you used last. Commit and Cancel return to the Select tool.</p>
+<p>Under the brushes, <b>Size</b> and <b>Strength</b> set the radius and the influence of the current brush. Maya keeps
+its own size and strength for each brush, so the sliders follow you as you switch brushes, and they also follow
+B-drag (size) and M-drag (strength) in the viewport. The sliders run 0 to 100; type a larger size in the field for
+big meshes. They switch on once a sculpt brush has been picked.</p>
 
 <h2><a name="list"></a>Tweak list</h2>
 <p>Lists every tweak on the mesh with its kind, mode, frame and level. Drag a weight slider to see the tweak at
@@ -189,5 +193,5 @@ crossfade.</li>
 </ul>
 
 <h2><a name="about"></a>About</h2>
-<p>Animation Tweaker 1.1.0 for the Animation Tool Kit. Original ATK code, released under the ATK licence.</p>
+<p>Animation Tweaker 1.2.0 for the Animation Tool Kit. Original ATK code, released under the ATK licence.</p>
 </body></html>
