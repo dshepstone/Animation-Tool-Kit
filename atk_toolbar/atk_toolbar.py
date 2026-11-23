@@ -847,6 +847,7 @@ class _DockWatcher(QtCore.QObject):
             if maya_win is None or not maya_win.isVisible():
                 return
             if not _orient_budget_ok():
+                _schedule_trailing_orient()
                 return
             _auto_orient_docked()
         except Exception:
@@ -868,6 +869,30 @@ def _orient_budget_ok():
         return False
     _orient_runs.append(now)
     return True
+
+
+_trailing_orient_pending = False
+
+
+def _schedule_trailing_orient():
+    """Run one more settle once the budget frees up.
+
+    A dock-to-dock move that lands while the budget is spent would otherwise
+    be dropped for good (no floatingChangeCommand fires for it). One pending
+    retry at a time, so this cannot pile up.
+    """
+    global _trailing_orient_pending
+    if _trailing_orient_pending or not _orient_runs:
+        return
+    _trailing_orient_pending = True
+    wait = max(0.0, _ORIENT_WINDOW_S - (time.time() - _orient_runs[0]))
+    QtCore.QTimer.singleShot(int(wait * 1000) + 50, _run_trailing_orient)
+
+
+def _run_trailing_orient():
+    global _trailing_orient_pending
+    _trailing_orient_pending = False
+    _DockWatcher._on_settled()
 
 
 def _on_floating_change():

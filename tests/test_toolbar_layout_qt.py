@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest import mock
@@ -600,6 +601,29 @@ class MainWindowGuardTests(_FakeMayaCase):
         self.assertEqual(self._run(main, content), win)
         self.assertFalse(win.windowFlags() & QtCore.Qt.WindowMaximizeButtonHint)
         win.close()
+
+    def test_spent_orient_budget_schedules_one_trailing_run(self):
+        tb = self.tb
+        main = QtWidgets.QMainWindow()
+        main.show()
+        runs = []
+        with mock.patch.object(tb, "_maya_main_window", lambda: main), \
+                mock.patch.object(tb, "_toolbar_is_floating", lambda: False), \
+                mock.patch.object(tb, "_auto_orient_docked", lambda: runs.append(1)), \
+                mock.patch.object(tb.cmds, "workspaceControl", lambda *a, **k: True), \
+                mock.patch.object(tb, "_ORIENT_WINDOW_S", 0.2):
+            tb._orient_runs[:] = []
+            for _ in range(tb._ORIENT_MAX_RUNS + 3):
+                tb._DockWatcher._on_settled()
+            self.assertEqual(len(runs), tb._ORIENT_MAX_RUNS)
+            self.assertTrue(tb._trailing_orient_pending)
+            deadline = time.time() + 2
+            while tb._trailing_orient_pending and time.time() < deadline:
+                self.app.processEvents()
+                time.sleep(0.02)
+        self.assertEqual(len(runs), tb._ORIENT_MAX_RUNS + 1)
+        tb._orient_runs[:] = []
+        main.close()
 
     def test_tool_services_are_deferred_and_shared(self):
         calls = []
