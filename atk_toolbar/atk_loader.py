@@ -132,7 +132,7 @@ TOOL_REGISTRY = [
         "icon_file": "noise_generator_icon.png",
         "icon_key":  "noise",
         "group":     "timing",
-        "version":   "1.2.1",
+        "version":   "1.2.0",
     },
     {
         "id":        "overlap",

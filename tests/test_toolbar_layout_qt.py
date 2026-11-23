@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest import mock
@@ -541,6 +542,98 @@ class LayoutTabTests(_FakeMayaCase):
         self.assertEqual(self.loader.get_layout_settings()["preset"], "full")
         self.assertEqual(d._preset_combo.currentData(), "full")
         self.assertEqual(self.loader.get_usage(), {})
+
+@unittest.skipIf(QtWidgets is None, "PySide6 is required")
+class MainWindowGuardTests(_FakeMayaCase):
+    """The floating-window chrome code must never touch Maya's main window.
+
+    PySide6 can return a different wrapper for the same main window, so the
+    toolbar used to miss it with ``is`` and call setWindowFlags() on it:
+    Maya froze after install and the main window flashed at the next start.
+    """
+
+    def _pointers(self, main, content):
+        mq = self.tb.omui.MQtUtil
+        return [
+            mock.patch.object(mq, "mainWindow",
+                              lambda: shiboken.getCppPointer(main)[0], create=True),
+            mock.patch.object(mq, "findControl",
+                              lambda name: shiboken.getCppPointer(content)[0], create=True),
+        ]
+
+    def _run(self, main, content):
+        patches = self._pointers(main, content)
+        for p in patches:
+            p.start()
+        try:
+            self.tb._remove_min_max_buttons()
+            self.tb._resize_to_fit()
+            return self.tb._get_floating_window()
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_docked_toolbar_leaves_main_window_alone(self):
+        main = QtWidgets.QMainWindow()
+        main.setObjectName("MayaWindow")
+        content = QtWidgets.QWidget()
+        main.setCentralWidget(content)
+        main.resize(800, 600)
+        main.show()
+        flags = main.windowFlags()
+        size = main.size()
+        # The fake workspaceControl even reports floating=True: the guard
+        # must still recognise Maya's main window by its C++ address.
+        self.assertIsNone(self._run(main, content))
+        self.assertEqual(main.windowFlags(), flags)
+        self.assertEqual(main.size(), size)
+        self.assertTrue(main.isVisible())
+        self.assertTrue(self.tb._is_maya_main_window(content.window()))
+        main.close()
+
+    def test_floating_toolbar_window_is_stripped(self):
+        main = QtWidgets.QMainWindow()
+        win = QtWidgets.QWidget()
+        win.setWindowFlags(QtCore.Qt.Window | QtCore.Qt.WindowMinimizeButtonHint
+                           | QtCore.Qt.WindowMaximizeButtonHint)
+        content = QtWidgets.QWidget(win)
+        win.show()
+        self.assertEqual(self._run(main, content), win)
+        self.assertFalse(win.windowFlags() & QtCore.Qt.WindowMaximizeButtonHint)
+        win.close()
+
+    def test_spent_orient_budget_schedules_one_trailing_run(self):
+        tb = self.tb
+        main = QtWidgets.QMainWindow()
+        main.show()
+        runs = []
+        with mock.patch.object(tb, "_maya_main_window", lambda: main), \
+                mock.patch.object(tb, "_toolbar_is_floating", lambda: False), \
+                mock.patch.object(tb, "_auto_orient_docked", lambda: runs.append(1)), \
+                mock.patch.object(tb.cmds, "workspaceControl", lambda *a, **k: True), \
+                mock.patch.object(tb, "_ORIENT_WINDOW_S", 0.2):
+            tb._orient_runs[:] = []
+            for _ in range(tb._ORIENT_MAX_RUNS + 3):
+                tb._DockWatcher._on_settled()
+            self.assertEqual(len(runs), tb._ORIENT_MAX_RUNS)
+            self.assertTrue(tb._trailing_orient_pending)
+            deadline = time.time() + 2
+            while tb._trailing_orient_pending and time.time() < deadline:
+                self.app.processEvents()
+                time.sleep(0.02)
+        self.assertEqual(len(runs), tb._ORIENT_MAX_RUNS + 1)
+        tb._orient_runs[:] = []
+        main.close()
+
+    def test_tool_services_are_deferred_and_shared(self):
+        calls = []
+        with mock.patch.object(self.loader, "start_tool_services", lambda: calls.append(1)):
+            self.tb._schedule_tool_services()
+            self.tb._schedule_tool_services()
+            self.assertEqual(calls, [])       # never inside the caller
+            self.app.processEvents()
+        self.assertEqual(calls, [1])
+
 
 if __name__ == "__main__":
     unittest.main()
