@@ -341,7 +341,7 @@ class RealFFmpegTests(unittest.TestCase):
         self.p.execute_ffmpeg_command = run
 
     def probe(self, path):
-        result = subprocess.run(['ffprobe', '-v','error','-count_frames','-show_streams','-of','json',str(path)], check=True, capture_output=True)
+        result = subprocess.run(['ffprobe', '-v','error','-count_frames','-show_streams','-of','json',str(path)], check=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
         return json.loads(result.stdout)['streams']
 
     def test_real_h264_mpeg4_prores_containers(self):
@@ -357,7 +357,7 @@ class RealFFmpegTests(unittest.TestCase):
 
     def test_real_audio_offsets_and_duration(self):
         wav = self.folder/'audio.wav'
-        subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','sine=frequency=440:duration=2','-y',str(wav)], check=True)
+        subprocess.run(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i','sine=frequency=440:duration=2','-y',str(wav)], check=True, stdin=subprocess.DEVNULL, timeout=30)
         for offset in [-6, 0, 6]:
             with self.subTest(offset=offset):
                 self.p.get_audio_attributes = lambda:(str(wav), offset)
@@ -368,7 +368,7 @@ class RealFFmpegTests(unittest.TestCase):
                 self.assertEqual(streams[0]['nb_read_frames'],'12')
                 self.assertAlmostEqual(float(streams[0]['duration']),0.5,places=2)
                 if offset > 0:
-                    raw = subprocess.run(['ffmpeg','-v','error','-i',str(out),'-t','0.20','-f','s16le','-ac','1','-'],check=True,capture_output=True).stdout
+                    raw = subprocess.run(['ffmpeg','-nostdin','-v','error','-i',str(out),'-t','0.20','-f','s16le','-ac','1','-'],check=True,capture_output=True,stdin=subprocess.DEVNULL,timeout=30).stdout
                     import array
                     samples = array.array('h',raw)
                     self.assertLess(max(abs(x) for x in samples),10)
