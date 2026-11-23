@@ -132,7 +132,7 @@ TOOL_REGISTRY = [
         "icon_file": "noise_generator_icon.png",
         "icon_key":  "noise",
         "group":     "timing",
-        "version":   "1.2.0",
+        "version":   "1.2.1",
     },
     {
         "id":        "overlap",
@@ -360,7 +360,7 @@ TOOL_REGISTRY = [
         "icon_file": "animation_tweaker_32.png",
         "icon_key":  "tweaker",
         "group":     "rigging",
-        "version":   "1.2.0",
+        "version":   "1.2.1",
         "context_actions": [
             ("Commit Sculpt", "commit_sculpt"),
             ("Cancel Sculpt", "cancel_sculpt"),
