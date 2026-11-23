@@ -616,7 +616,29 @@ global proc atk__install()
 
     atk__replaceShelfButton($currentShelf, $shelfLabel, $annotation, $iconToUse, $pyCmd);
 
-    // ---- 7. Launch the toolbar immediately -------------------------------------
+    // ---- 7. Launch the toolbar once Maya is idle -----------------------------
+    // Maya runs a dropped .mel inside the drag-and-drop event. Building the
+    // docked toolbar, loading plug-ins and opening a modal dialog from there
+    // froze Maya, so the launch and the closing dialog run deferred, after
+    // the drop has finished.
+    global string $gAtkInstallInfo[];
+    $gAtkInstallInfo = {$toolName, $dstPkgDir, $scriptsDir, $iconsDir, $currentShelf};
+    print "// Files installed. Launching toolbar when Maya is idle...\n";
+    evalDeferred -lowestPriority "atk__finishInstall";
+}
+
+// -----------------------------------------------------------------------------
+// Deferred second half of the install: launch the toolbar and report
+// -----------------------------------------------------------------------------
+global proc atk__finishInstall()
+{
+    global string $gAtkInstallInfo[];
+    string $toolName     = $gAtkInstallInfo[0];
+    string $dstPkgDir    = $gAtkInstallInfo[1];
+    string $scriptsDir   = $gAtkInstallInfo[2];
+    string $iconsDir     = $gAtkInstallInfo[3];
+    string $currentShelf = $gAtkInstallInfo[4];
+
     print "// Launching toolbar...\n";
     string $launchPy = "";
     $launchPy += "import sys, importlib, maya.cmds as cmds\n";
@@ -650,7 +672,8 @@ global proc atk__install()
     $launchPy += "from atk_toolbar import atk_loader as _atk_loader\n";
     $launchPy += "_registered = [t['id'] for t in _atk_loader.TOOL_REGISTRY]\n";
     $launchPy += "print('// ATK Toolbar registered tools: {0}'.format(_registered))\n";
-    python($launchPy);
+    if (catch(`python $launchPy`))
+        warning("ATK Toolbar: files installed, but the toolbar did not open. Click the ATK shelf button or restart Maya.");
 
     // ---- Done -----------------------------------------------------------------
     print ("// ============================================================\n");

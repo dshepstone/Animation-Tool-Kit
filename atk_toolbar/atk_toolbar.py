@@ -64,7 +64,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.1.22"
+VERSION        = "1.1.23"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -212,6 +212,62 @@ def _maya_main_window():
     if ptr is None:
         return None
     return wrapInstance(int(ptr), QtWidgets.QWidget)
+
+
+def _cpp_address(widget):
+    """C++ address of a Qt object, or None."""
+    try:
+        return int(shiboken.getCppPointer(widget)[0])
+    except Exception:
+        return None
+
+
+def _is_maya_main_window(win):
+    """True when ``win`` is Maya's main window.
+
+    Compares C++ addresses, never Python identity: PySide6 can hand back two
+    different wrappers for the same window (``content.window()`` versus
+    ``wrapInstance(MQtUtil.mainWindow())``), so an ``is`` test can miss it.
+    When that happened the toolbar's floating-window chrome work ran on
+    Maya's main window — setWindowFlags() hides it and show() brings it
+    back — which froze Maya after install and made the main window flash on
+    and off at the next start.
+    """
+    if win is None:
+        return False
+    try:
+        ptr = omui.MQtUtil.mainWindow()
+    except Exception:
+        ptr = None
+    if ptr is not None and _cpp_address(win) == int(ptr):
+        return True
+    try:
+        if win.objectName() == "MayaWindow" or isinstance(win, QtWidgets.QMainWindow):
+            return True
+    except Exception:
+        return True   # cannot tell: treat it as Maya's window and leave it alone
+    return False
+
+
+def _floating_toolbar_window(content):
+    """The toolbar's own floating top-level window, or None.
+
+    None whenever the toolbar is docked or the window could be Maya's
+    main window: only a window that is certainly the toolbar's own may have
+    its flags, size or activation changed.
+    """
+    try:
+        if not cmds.workspaceControl(WORKSPACE_NAME, q=True, floating=True):
+            return None
+    except Exception:
+        return None
+    try:
+        win = content.window()
+    except Exception:
+        return None
+    if win is None or win is content or _is_maya_main_window(win):
+        return None
+    return win
 
 
 # Tangent Tools carries three quick tangent buttons beside its own button.
@@ -450,11 +506,9 @@ def _resize_to_fit():
     # The workspaceControl edit often only sets minimums and won't shrink
     # the window in the non-primary axis.  Force the Qt window directly.
     try:
-        if content is not None:
-            win      = content.window()
-            maya_win = _maya_main_window()
-            if win is not None and win is not maya_win:
-                win.resize(new_w, new_h)
+        win = _floating_toolbar_window(content) if content is not None else None
+        if win is not None:
+            win.resize(new_w, new_h)
     except Exception:
         pass
 
@@ -476,14 +530,16 @@ def _remove_min_max_buttons():
         if ptr is None:
             return
         content  = wrapInstance(int(ptr), QtWidgets.QWidget)
-        win      = content.window()
-        maya_win = _maya_main_window()
-        if win is None or win is maya_win:
+        win      = _floating_toolbar_window(content)
+        if win is None:
             return   # docked — title bar belongs to Maya, don't touch it
-        flags = win.windowFlags()
+        old_flags = win.windowFlags()
+        flags = old_flags
         flags &= ~QtCore.Qt.WindowMinimizeButtonHint
         flags &= ~QtCore.Qt.WindowMaximizeButtonHint
         flags |=  QtCore.Qt.WindowCloseButtonHint   # keep X active
+        if flags == old_flags:
+            return   # already stripped: setWindowFlags would hide/re-show it
         win.setWindowFlags(flags)
         win.show()
         # Schedule activation at 0 / 100 / 250 ms — at least one fires AFTER
@@ -599,11 +655,7 @@ def _get_floating_window():
         if ptr is None:
             return None
         content  = wrapInstance(int(ptr), QtWidgets.QWidget)
-        win      = content.window()
-        maya_win = _maya_main_window()
-        if win is None or win is maya_win:
-            return None
-        return win
+        return _floating_toolbar_window(content)
     except Exception:
         return None
 
@@ -788,9 +840,34 @@ class _DockWatcher(QtCore.QObject):
                 return
             if _toolbar_is_floating():
                 return
+            # While Maya builds or restores its main window (start-up, or
+            # the window being hidden) the geometry is not final: acting on
+            # it re-orients and resizes the bar, which moves the dock again.
+            maya_win = _maya_main_window()
+            if maya_win is None or not maya_win.isVisible():
+                return
+            if not _orient_budget_ok():
+                return
             _auto_orient_docked()
         except Exception:
             pass
+
+
+# Automatic re-orientation of a docked bar is limited to a few runs in a
+# short window, so a dock layout that keeps shifting can never turn into an
+# endless rebuild/resize loop.
+_ORIENT_WINDOW_S = 3.0
+_ORIENT_MAX_RUNS = 4
+_orient_runs = []
+
+
+def _orient_budget_ok():
+    now = time.time()
+    _orient_runs[:] = [t for t in _orient_runs if now - t < _ORIENT_WINDOW_S]
+    if len(_orient_runs) >= _ORIENT_MAX_RUNS:
+        return False
+    _orient_runs.append(now)
+    return True
 
 
 def _on_floating_change():
@@ -963,8 +1040,7 @@ class _GripHandle(QtWidgets.QWidget):
                     pass
 
         win = self.window()
-        maya_win = _maya_main_window()
-        if win is None or win is maya_win:
+        if win is None or _is_maya_main_window(win):
             event.accept()
             return
 
@@ -1132,6 +1208,41 @@ class _FoldPopup(QtWidgets.QFrame):
         super(_FoldPopup, self).hideEvent(event)
 
 
+_services_pending = False
+
+
+def _run_tool_services():
+    global _services_pending
+    _services_pending = False
+    try:
+        atk_loader.start_tool_services()
+    except Exception as exc:
+        try:
+            cmds.warning("ATK Toolbar: could not start tool services: {}".format(exc))
+        except Exception:
+            pass
+
+
+def _schedule_tool_services():
+    """Load the tools' plug-ins and start their services once Maya is idle.
+
+    The toolbar is built from Maya's workspace uiScript while Maya is still
+    restoring its UI at start-up, and from the drag-and-drop installer.
+    Loading a plug-in (Playblast Creator registers a viewport draw override)
+    or installing Time Slider callbacks from inside either of those made
+    Maya hang. Deferring to the event loop runs them once Maya is ready;
+    repeated rebuilds share one pending run.
+    """
+    global _services_pending
+    if _services_pending:
+        return
+    _services_pending = True
+    try:
+        QtCore.QTimer.singleShot(0, _run_tool_services)
+    except Exception:
+        _run_tool_services()
+
+
 class ATKToolbarWidget(QtWidgets.QWidget):
     """The actual button-strip widget embedded inside the workspaceControl.
 
@@ -1156,7 +1267,7 @@ class ATKToolbarWidget(QtWidgets.QWidget):
     # ── Construction ────────────────────────────────────────────────────────
 
     def _build(self):
-        atk_loader.start_tool_services()
+        _schedule_tool_services()
         self._close_popup()
         # Clear any previous children
         old_layout = self.layout()
