@@ -12,9 +12,9 @@ Channels highlighted in the Channel Box narrow the timeline cases to those chann
 
 Tangent Tools is now 1.0.1.
 
-## Fixed: playblasts with late-starting sound never finished on FFmpeg 9.1
+## Fixed: playblasts with sound could hang on FFmpeg 9.1
 
-With FFmpeg 9.1, a **Playblast Creator** export never finished when the scene's sound started after the first frame of the playblast. FFmpeg kept writing silence and Maya waited forever. The sound is now padded only to the length of the video, and the movie is cut at that length, so the export finishes on every FFmpeg version. Sound that starts on or before the first frame was not affected.
+With FFmpeg 9.1, a **Playblast Creator** export could run forever when the sound has silence followed by sound, for example when the scene's sound starts after the first frame of the playblast. FFmpeg's default AAC audio encoder gets stuck at the 192 kbps setting Playblast Creator uses, and Maya waited for it. Playblast Creator now uses FFmpeg's *fast* AAC encoder at the same bitrate, which does not hang. Exports without sound were not affected.
 
 Playblast Creator is now 2.0.6.
 

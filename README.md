@@ -5,8 +5,8 @@ Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and la
 Version **1.1.20** fixes the toolbar's quick tangent buttons (Auto Spline,
 Linear, Stepped) so they change only the keys you mean: the highlighted Time
 Slider range, else the keys selected in the Graph Editor, else the key on the
-current frame. **Playblast Creator** 2.0.6 fixes exports that never finished
-on FFmpeg 9.1 when the sound starts after the first frame. It keeps everything from 1.1.19, including **Overlap** 0.5.1
+current frame. **Playblast Creator** 2.0.6 fixes exports with sound that could hang
+on FFmpeg 9.1. It keeps everything from 1.1.19, including **Overlap** 0.5.1
 with **Reset** and **Reload selected**.
 See [release notes](Animation_Tool_Kit_v1.1.20_Release_Notes.md).
 
