@@ -2,12 +2,12 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.19** adds **Reset** and **Reload selected** to **Overlap** (0.5.1).
-Reset clears the control list and restores default settings; Reload selected
-starts a fresh pass on the current selection and playback range. It keeps
-everything from 1.1.18, including **Noise Generator** 1.2.0 with its **Presets**
-tab, inbetween bake, **Pin Noise** and **Ease In** / **Ease Out**.
-See [release notes](Animation_Tool_Kit_v1.1.19_Release_Notes.md).
+Version **1.1.20** fixes the toolbar's quick tangent buttons (Auto Spline,
+Linear, Stepped) so they change only the keys you mean: the highlighted Time
+Slider range, else the keys selected in the Graph Editor, else the key on the
+current frame. It keeps everything from 1.1.19, including **Overlap** 0.5.1
+with **Reset** and **Reload selected**.
+See [release notes](Animation_Tool_Kit_v1.1.20_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.

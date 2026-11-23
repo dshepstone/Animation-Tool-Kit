@@ -110,7 +110,7 @@ TOOL_REGISTRY = [
         "icon_file": "curveTool.png",
         "icon_key":  "tween",
         "group":     "timing",
-        "version":   "1.0.0",
+        "version":   "1.0.1",
     },
     {
         "id":        "tween_machine",

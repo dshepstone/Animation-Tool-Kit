@@ -6,4 +6,4 @@ Launch with::
     tangent_tools.main.launch()
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
