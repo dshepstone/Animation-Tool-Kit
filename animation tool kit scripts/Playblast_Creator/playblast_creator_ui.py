@@ -1484,7 +1484,7 @@ class PBCPlayblast(QtCore.QObject):
                 if temp_file_is_movie:
                     encoded = self.transcode_video(self._encoder, ffmpeg_path, source_path, output_path, include_audio=include_sound)
                 else:
-                    encoded = self.encode_video(self._encoder, ffmpeg_path, source_path, output_path, start_frame, include_audio=include_sound)
+                    encoded = self.encode_video(self._encoder, ffmpeg_path, source_path, output_path, start_frame, include_audio=include_sound, frame_count=expected_count)
             else:
                 self.log_error("Encoding failed. Unsupported encoder ({0}) for container ({1}).".format(self._encoder, self._container_format))
                 self.remove_temp_dir(playblast_output_dir, temp_file_extension)
@@ -1666,11 +1666,32 @@ class PBCPlayblast(QtCore.QObject):
                 except OSError:
                     pass
 
-    def encode_video(self, encoder, ffmpeg_path, source_path, output_path, start_frame, include_audio=True):
+    @staticmethod
+    def count_sequence_frames(source_path, start_number=0):
+        """Count consecutive frames of an image2 pattern such as ``shot.%04d.png``.
+
+        Literal percent signs in the path are escaped as ``%%``.
+        """
+        match = None
+        for match in re.finditer(r"(?<!%)%0?(\d*)d", source_path):
+            pass
+        if match is None:
+            return 0
+        head = source_path[:match.start()].replace("%%", "%")
+        tail = source_path[match.end():].replace("%%", "%")
+        width = int(match.group(1) or 0)
+        count = 0
+        while os.path.isfile("{0}{1:0{2}d}{3}".format(head, start_number + count, width, tail)):
+            count += 1
+        return count
+
+    def encode_video(self, encoder, ffmpeg_path, source_path, output_path, start_frame, include_audio=True,
+                     frame_count=None):
         """Encode an image sequence into a video using the given encoder.
 
         When include_audio is False the timeline sound node is ignored
-        and the resulting file is silent.
+        and the resulting file is silent.  ``frame_count`` is the number of
+        frames in the sequence; it is counted from disk when not given.
         """
         self.log_output("Starting {0} encoding...".format(encoder))
         self.log_output("ffmpeg path: {0}".format(ffmpeg_path))
@@ -1703,11 +1724,21 @@ class PBCPlayblast(QtCore.QObject):
         arguments.extend(video_codec_args)
 
         if audio_file_path:
-            audio_filter = "apad"
+            # Pad the audio only to the video's length and cap the output
+            # with -t.  An open-ended "apad" relies on -shortest to stop,
+            # and FFmpeg 9.1 never stops "adelay,apad" that way, so the
+            # encode ran forever when the sound starts after the first frame.
+            if frame_count is None:
+                frame_count = self.count_sequence_frames(source_path)
+            duration = "{0:.6f}".format(frame_count / float(framerate)) if frame_count else None
+            pad = "apad=whole_dur={0}".format(duration) if duration else "apad"
+            audio_filter = pad
             if audio_offset < 0:
-                audio_filter = "adelay={0}:all=1,apad".format(int(round(-audio_offset * 1000)))
+                audio_filter = "adelay={0}:all=1,{1}".format(int(round(-audio_offset * 1000)), pad)
             arguments.extend(["-map", "0:v:0", "-map", "1:a:0", "-af", audio_filter,
                               "-c:a", "aac", "-b:a", "192k", "-shortest"])
+            if duration:
+                arguments.extend(["-t", duration])
         elif not include_audio:
             arguments.append("-an")
 

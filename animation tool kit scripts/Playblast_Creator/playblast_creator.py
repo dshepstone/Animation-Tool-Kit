@@ -34,7 +34,7 @@ class PlayblastCreatorCmd(om.MPxCommand):
 
     COMMAND_NAME = "PlayblastCreator"
 
-    PLUG_IN_VERSION = "2.0.5"
+    PLUG_IN_VERSION = "2.0.6"
 
     FFMPEG_PATH_ENV_VAR = "PLAYBLAST_CREATOR_FFMPEG"
     TEMP_OUTPUT_DIR_ENV_VAR = "PLAYBLAST_CREATOR_TEMP_OUTPUT_DIR"

@@ -341,6 +341,61 @@ class ProcessTests(unittest.TestCase):
                     self.assertEqual(p.execute_ffmpeg_command('ffmpeg', ['-y']), expected)
 
 
+class AudioLengthTests(unittest.TestCase):
+    """Audio is padded only to the video's length, never left open-ended."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='ATK 100% test ')
+        self.addCleanup(self.temp.cleanup)
+        self.folder = Path(self.temp.name)
+        for i in range(12):
+            (self.folder / ('shot.%04d.png' % i)).write_bytes(b'x')
+        self.pattern = str(self.folder).replace('%', '%%') + os.sep + 'shot.%04d.png'
+        self.p = engine()
+        self.p.get_frame_rate = lambda: 24.0
+        self.p.get_platform_h264_video_codec = lambda: 'libx264'
+        self.calls = []
+
+        def run(program, args):
+            self.calls.append(args[:])
+            Path(args[-1]).write_bytes(b'movie')
+            return True
+        self.p.execute_ffmpeg_command = run
+
+    def encode(self, offset, **kwargs):
+        self.p.get_audio_attributes = lambda: ('audio.wav', offset)
+        out = self.folder / ('out%d.mp4' % offset)
+        self.assertTrue(self.p.encode_video('h264', 'ffmpeg', self.pattern, str(out), 0, **kwargs))
+        args = self.calls[-1]
+        return args[args.index('-af') + 1], args
+
+    def test_counts_frames_on_disk_with_escaped_percent(self):
+        self.assertEqual(PBC.count_sequence_frames(self.pattern), 12)
+        self.assertEqual(PBC.count_sequence_frames(self.pattern.replace('shot', 'none')), 0)
+
+    def test_late_audio_is_delayed_then_padded_to_video_length(self):
+        audio_filter, args = self.encode(6)
+        self.assertEqual(audio_filter, 'adelay=250:all=1,apad=whole_dur=0.500000')
+        self.assertEqual(args[args.index('-t') + 1], '0.500000')
+
+    def test_early_and_aligned_audio_are_padded_to_video_length(self):
+        for offset in (0, -6):
+            audio_filter, args = self.encode(offset)
+            self.assertEqual(audio_filter, 'apad=whole_dur=0.500000')
+            self.assertIn('-t', args)
+
+    def test_caller_frame_count_wins(self):
+        audio_filter, args = self.encode(0, frame_count=48)
+        self.assertEqual(audio_filter, 'apad=whole_dur=2.000000')
+        self.assertEqual(args[args.index('-t') + 1], '2.000000')
+
+    def test_silent_encode_has_no_audio_options(self):
+        out = self.folder / 'silent.mp4'
+        self.assertTrue(self.p.encode_video('h264', 'ffmpeg', self.pattern, str(out), 0, include_audio=False))
+        self.assertNotIn('-af', self.calls[-1])
+        self.assertNotIn('-t', self.calls[-1])
+
+
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg integration requires ffmpeg and ffprobe')
 class RealFFmpegTests(unittest.TestCase):
     def setUp(self):

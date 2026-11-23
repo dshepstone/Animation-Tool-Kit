@@ -1,4 +1,4 @@
-# Animation Tool Kit 1.1.20 — Tangent button fix
+# Animation Tool Kit 1.1.20 — Tangent button and playblast fixes
 
 ## Fixed: quick tangent buttons change only the keys you mean
 
@@ -11,6 +11,12 @@ The **Auto Spline (Legacy)**, **Linear** and **Stepped** buttons beside **Tangen
 Channels highlighted in the Channel Box narrow the timeline cases to those channels. Each click is one undo step. If there is no key on the current frame, nothing changes and Maya shows a warning. Stepped still sets only the out tangent.
 
 Tangent Tools is now 1.0.1.
+
+## Fixed: playblasts with late-starting sound never finished on FFmpeg 9.1
+
+With FFmpeg 9.1, a **Playblast Creator** export never finished when the scene's sound started after the first frame of the playblast. FFmpeg kept writing silence and Maya waited forever. The sound is now padded only to the length of the video, and the movie is cut at that length, so the export finishes on every FFmpeg version. Sound that starts on or before the first frame was not affected.
+
+Playblast Creator is now 2.0.6.
 
 ## Retained features
 
