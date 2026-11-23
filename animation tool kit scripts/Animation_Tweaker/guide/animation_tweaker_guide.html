@@ -237,7 +237,7 @@ footer { border-top: 1px solid var(--line); padding: 20px 0 34px; color: var(--m
   <div class="wrap">
     <div>
       <a class="back" href="https://shepstone.ca/software/maya-tool-kit/">&#8592; Animation Tool Kit for Maya</a>
-      <p class="kicker">ATK 1.1.16 · Animation Tweaker 1.1.0</p>
+      <p class="kicker">ATK 1.1.21 · Animation Tweaker 1.2.0</p>
       <h1>Animation Tweaker guide</h1>
       <p class="lede">Click any button, field or brush in the window below to see what it does and how to use it. Or pick a workflow at the bottom and step through it; the window shows you where to click.</p>
     </div>
@@ -263,7 +263,7 @@ footer { border-top: 1px solid var(--line); padding: 20px 0 34px; color: var(--m
   <div>
     <p class="hint">Interactive copy of the tool window. Tabs work, and every control explains itself.</p>
     <div class="maya" id="maya">
-      <div class="titlebar"><span class="m">M</span><span>Animation Tweaker 1.1.0</span><span class="spacer"></span><span class="wc" aria-hidden="true">&#8212;&#9633;&#10005;</span></div>
+      <div class="titlebar"><span class="m">M</span><span>Animation Tweaker 1.2.0</span><span class="spacer"></span><span class="wc" aria-hidden="true">&#8212;&#9633;&#10005;</span></div>
       <div class="menubar"><button class="mtool text" data-h="menu-file">File</button><button class="mtool text" data-h="menu-help">Help</button></div>
       <div class="mbody">
         <div class="row">
@@ -315,6 +315,8 @@ footer { border-top: 1px solid var(--line); padding: 20px 0 34px; color: var(--m
               <button class="mtool text" data-h="brush-settings">Settings</button>
               <button class="mtool text" data-h="brush-select">Select</button>
             </div>
+            <div class="row"><span class="lab" style="width:52px">Size</span><span class="wcell" style="flex:1"><input type="range" min="0" max="100" value="12" data-h="brush-size" aria-label="Brush size"><input class="mi num short" data-h="brush-size" value="12.00" aria-label="Brush size value"></span></div>
+            <div class="row"><span class="lab" style="width:52px">Strength</span><span class="wcell" style="flex:1"><input type="range" min="0" max="100" value="30" data-h="brush-strength" aria-label="Brush strength"><input class="mi num short" data-h="brush-strength" value="30.00" aria-label="Brush strength value"></span></div>
             <div class="row"><button class="mcheck" role="checkbox" aria-checked="true" data-h="auto-brush"><span class="box"></span>Pick up the last brush when a sculpt starts</button></div>
           </div>
           <div class="grp"><p class="gt">Tweaks on this mesh</p>
@@ -564,6 +566,14 @@ footer { border-top: 1px solid var(--line); padding: 20px 0 34px; color: var(--m
     "brush-settings": { tab: "Sculpt", group: "Sculpt brushes", t: "Brush settings",
       what: "Opens Maya's Tool Settings for the current brush: size, strength, falloff and stamps.",
       steps: ["Pick a brush.", "Click Settings."], rel: ["brush-shelf"] },
+    "brush-size": { tab: "Sculpt", group: "Sculpt brushes", t: "Brush size",
+      what: "The radius of the current brush. Maya keeps a size for each brush, so the slider changes when you switch brushes.",
+      steps: ["Pick a brush.", "Drag Size, or type a value. Type past 100 for large meshes."],
+      tips: ["It follows B-drag in the viewport too.", "Greyed out until a sculpt brush has been picked."], rel: ["brush-strength", "brush-settings"] },
+    "brush-strength": { tab: "Sculpt", group: "Sculpt brushes", t: "Brush strength",
+      what: "How much the current brush moves the surface with each stroke. Maya keeps a strength for each brush.",
+      steps: ["Pick a brush.", "Drag Strength, or type a value from 0 to 100."],
+      tips: ["It follows M-drag in the viewport too.", "Lower it for subtle shot fixes."], rel: ["brush-size", "brush-settings"] },
     "brush-select": { tab: "Sculpt", group: "Sculpt brushes", t: "Select (leave the brush)",
       what: "Puts down the brush and returns to the Select tool.",
       steps: ["Click Select."], tips: ["Commit and Cancel do this for you."], rel: ["commit"] },

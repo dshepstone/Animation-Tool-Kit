@@ -123,6 +123,62 @@ class WeightCell(QtWidgets.QWidget):
             self.panel.status.setText(str(error))
 
 
+class BrushValue(QtWidgets.QWidget):
+    """Slider plus field for one sculpt brush setting (size or strength)."""
+
+    STEPS = 10      # slider ticks per unit: 0-100 in steps of 0.1
+
+    def __init__(self, label, setter, tip):
+        super().__init__()
+        self.setter = setter
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        caption = QtWidgets.QLabel(label)
+        caption.setFixedWidth(52)
+        self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.slider.setRange(0, int(sculpt_brushes.SLIDER_MAX * self.STEPS))
+        self.field = _spin(0, 0, sculpt_brushes.FIELD_MAX, 0.1, 2)
+        self.field.setFixedWidth(80)
+        self.field.setKeyboardTracking(False)
+        for widget in (caption, self.slider, self.field):
+            widget.setToolTip(tip)
+        self.slider.valueChanged.connect(self._slid)
+        self.field.valueChanged.connect(self._typed)
+        layout.addWidget(caption)
+        layout.addWidget(self.slider, 1)
+        layout.addWidget(self.field)
+
+    def busy(self):
+        return self.slider.isSliderDown() or self.field.hasFocus()
+
+    def show_value(self, value):
+        for widget, v in ((self.slider, int(round(min(value, sculpt_brushes.SLIDER_MAX) * self.STEPS))),
+                          (self.field, value)):
+            widget.blockSignals(True)
+            widget.setValue(v)
+            widget.blockSignals(False)
+
+    def _apply(self, value):
+        try:
+            self.setter(value)
+        except Exception as error:
+            cmds.warning("Animation Tweaker: %s" % error)
+
+    def _slid(self, ticks):
+        value = ticks / float(self.STEPS)
+        self.field.blockSignals(True)
+        self.field.setValue(value)
+        self.field.blockSignals(False)
+        self._apply(value)
+
+    def _typed(self, value):
+        self.slider.blockSignals(True)
+        self.slider.setValue(int(round(min(value, sculpt_brushes.SLIDER_MAX) * self.STEPS)))
+        self.slider.blockSignals(False)
+        self._apply(value)
+
+
 class Panel(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -298,6 +354,22 @@ class Panel(QtWidgets.QWidget):
                                                 slot=self.leave_brush))
             row.addStretch(1)
             inner.addLayout(row)
+        self.brush_size = BrushValue("Size", sculpt_brushes.set_brush_size,
+                                     "Brush radius for the current brush (Maya keeps one per brush). "
+                                     "Type past 100 for large meshes. Same as holding B and dragging. "
+                                     "Enabled once a sculpt brush has been picked.")
+        self.brush_strength = BrushValue("Strength", sculpt_brushes.set_brush_strength,
+                                         "How strongly the current brush moves the surface. "
+                                         "Same as holding M and dragging. "
+                                         "Enabled once a sculpt brush has been picked.")
+        inner.addWidget(self.brush_size)
+        inner.addWidget(self.brush_strength)
+        # Follow brush changes and B/M-drag in the viewport while the window is open.
+        self._brush_timer = QtCore.QTimer(box)
+        self._brush_timer.setInterval(400)
+        self._brush_timer.timeout.connect(self.sync_brush_values)
+        self._brush_timer.start()
+        self.sync_brush_values()
         self.auto_brush = QtWidgets.QCheckBox("Pick up the last brush when a sculpt starts")
         self.auto_brush.setChecked(True)
         inner.addWidget(self.auto_brush)
@@ -334,7 +406,22 @@ class Panel(QtWidgets.QWidget):
                               sculpt_brushes.brush(brush_id)[1],
                               engine.short_name(target) if target else
                               "the selection (click Sculpt first to work on a copy)"))
+        self.sync_brush_values()
         return sculpt
+
+    def sync_brush_values(self):
+        """Show the current brush's size and strength; disabled until a brush exists."""
+        if not self.isVisible() and getattr(self, "_brush_synced", False):
+            return
+        try:
+            values = sculpt_brushes.brush_values()
+        except Exception:
+            values = None
+        self._brush_synced = True
+        for widget, value in zip((self.brush_size, self.brush_strength), values or (None, None)):
+            widget.setEnabled(values is not None)
+            if values is not None and not widget.busy():
+                widget.show_value(value)
 
     def brush_action(self, action_id, *_args):
         self.run(sculpt_brushes.run_action, action_id, refresh=False)

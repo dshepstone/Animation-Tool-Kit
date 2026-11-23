@@ -14,7 +14,8 @@ into Maya's user scripts directory. No separate install is needed.
   muting tweaks while sculpting, Refine, Amplify, Rename, Paint mask and Delete.
 - **Sculpt brushes.** Maya's sculpting brushes (Shape, Detail, Mask), symmetry,
   brush settings and Select on the Sculpt tab. Picking a brush selects the
-  sculpt copy first.
+  sculpt copy first. Size and Strength sliders set the current brush's radius
+  and influence, and follow B- and M-drag in the viewport.
 - **Animate tweaks.** Key selected tweaks (current weight, 0 or 1), remove or
   clear keys, jump between keys, open the Graph Editor, or re-key as Static,
   Pulse or Pose. Hand keys switch a tweak to *keyed* mode so automatic keys

@@ -360,7 +360,7 @@ TOOL_REGISTRY = [
         "icon_file": "animation_tweaker_32.png",
         "icon_key":  "tweaker",
         "group":     "rigging",
-        "version":   "1.1.0",
+        "version":   "1.2.0",
         "context_actions": [
             ("Commit Sculpt", "commit_sculpt"),
             ("Cancel Sculpt", "cancel_sculpt"),

@@ -92,6 +92,51 @@ def last_brush():
     return DEFAULT_BRUSH
 
 
+SCULPT_CONTEXT = "sculptMeshCacheContext"
+# Maya's Tool Settings sliders run 0-100; their fields accept up to 100000.
+SLIDER_MAX = 100.0
+FIELD_MAX = 100000.0
+_SETTING_SLIDERS = {"size": "sculptMeshFalloffSize_FSG", "strength": "sculptMeshFalloffStrength_FSG"}
+
+
+def brush_ready():
+    """True once Maya's sculpt context exists (a sculpt brush was used this session)."""
+    try:
+        return bool(cmds.sculptMeshCacheCtx(SCULPT_CONTEXT, exists=True))
+    except Exception:
+        return False
+
+
+def brush_values():
+    """(size, strength) of the current sculpt brush, or None before any brush was picked."""
+    if not brush_ready():
+        return None
+    return (cmds.sculptMeshCacheCtx(SCULPT_CONTEXT, query=True, size=True),
+            cmds.sculptMeshCacheCtx(SCULPT_CONTEXT, query=True, strength=True))
+
+
+def _set_value(flag, value):
+    if not brush_ready():
+        raise ValueError("Pick a sculpt brush first")
+    value = max(0.0, min(FIELD_MAX, float(value)))
+    cmds.sculptMeshCacheCtx(SCULPT_CONTEXT, edit=True, **{flag: value})
+    # Keep Maya's Tool Settings window in step when it is open.
+    slider = _SETTING_SLIDERS[flag]
+    if cmds.floatSliderGrp(slider, exists=True):
+        cmds.floatSliderGrp(slider, edit=True, value=value)
+    return value
+
+
+def set_brush_size(value):
+    """Brush radius for the current brush (Maya keeps one per brush unless the size is pinned)."""
+    return _set_value("size", value)
+
+
+def set_brush_strength(value):
+    """How strongly the current brush moves the surface."""
+    return _set_value("strength", value)
+
+
 def show_settings():
     """Open the Tool Settings for the current sculpt brush."""
     mel.eval("ShowMeshSculptToolOptions")
