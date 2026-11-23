@@ -19,9 +19,9 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 try:
-    from PySide6 import QtCore, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
 except ImportError:
-    from PySide2 import QtCore, QtWidgets
+    from PySide2 import QtCore, QtGui, QtWidgets
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 import maya.standalone
 maya.standalone.initialize(name="python")
@@ -356,6 +356,17 @@ def check_ui_and_toolbar(scripts, icons):
             cmds.currentTime(6)
             panel.sync_keys()
             assert abs(panel.cells[index].value() - 0.5) < 0.011
+            # Closing the window stops listening for frame changes; reopening it
+            # catches up with the frame and listens again.
+            first.closeEvent(QtGui.QCloseEvent())
+            assert panel._time_job is None
+            QtWidgets.QWidget.hide(first)
+            cmds.currentTime(3)
+            QtWidgets.QWidget.show(first)
+            assert panel.cells[index].value() == 0.0
+            cmds.currentTime(9)
+            ui.show()
+            assert panel.cells[index].value() == 1.0
             # scriptJob needs the interactive Maya UI; mayapy batch mode has none.
             assert cmds.about(batch=True) or cmds.scriptJob(exists=panel._time_job)
             ui.close()

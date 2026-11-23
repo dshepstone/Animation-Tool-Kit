@@ -201,11 +201,7 @@ class Panel(QtWidgets.QWidget):
         layout.addWidget(self.status)
         self.cells = {}
         self._time_job = None
-        if not cmds.about(batch=True):     # scriptJobs need the interactive UI
-            try:
-                self._time_job = cmds.scriptJob(event=["timeChanged", self.sync_keys])
-            except Exception:
-                traceback.print_exc()
+        self.listen()
         try:
             self.mesh_field.setText(engine.selected_mesh())
             self.refresh()
@@ -560,7 +556,7 @@ class Panel(QtWidgets.QWidget):
         if not self.cells or not text or not cmds.objExists(text):
             return
         try:
-            rows = engine.list_tweaks(text)
+            rows = engine.list_tweaks(text, from_curves=True)
         except Exception:
             return
         if sorted(r["index"] for r in rows) != sorted(self.cells):
@@ -572,6 +568,23 @@ class Panel(QtWidgets.QWidget):
             except RuntimeError:
                 self.refresh()
                 return
+
+    def listen(self):
+        """Follow frame changes. Closing the window stops listening, but Maya's
+        dockable control only hides it, so reopening calls this again."""
+        if cmds.about(batch=True):         # scriptJobs need the interactive UI
+            return
+        try:
+            if self._time_job is not None and cmds.scriptJob(exists=self._time_job):
+                return
+            self._time_job = cmds.scriptJob(event=["timeChanged", self.sync_keys])
+        except Exception:
+            traceback.print_exc()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.listen()
+        self.sync_keys()       # catch up with frame changes made while closed
 
     def shutdown(self):
         job, self._time_job = self._time_job, None
@@ -1128,6 +1141,8 @@ def show():
         _window = Window()
     _window.show(dockable=True)
     _window.raise_()
+    _window.panel.listen()
+    _window.panel.sync_keys()
     return _window
 
 

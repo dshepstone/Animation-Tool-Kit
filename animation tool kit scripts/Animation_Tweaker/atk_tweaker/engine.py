@@ -723,8 +723,12 @@ def rename_tweak(mesh, index, label):
         write_meta(node, meta)
 
 
-def list_tweaks(mesh):
-    """Rows for the tweak list: index, alias, label, kind, mode, frame, layer, weight, keyed."""
+def list_tweaks(mesh, from_curves=False):
+    """Rows for the tweak list: index, alias, label, kind, mode, frame, layer, weight, keyed.
+
+    ``from_curves`` reads keyed weights from their curves on the current frame
+    (for frame changes); otherwise a dragged, unkeyed preview value is kept.
+    """
     node = find_tweak_node(mesh)
     if not node:
         return []
@@ -737,9 +741,18 @@ def list_tweaks(mesh):
         plug = driver_plug(node, index)
         times = key_times(plug)
         rows.append(dict(entry, index=index, alias=aliases.get(index, ""),
-                         weight=cmds.getAttr(plug), keyed=bool(times), keys=len(times),
-                         key_state=core.key_state(times, now)))
+                         weight=_weight_now(plug, times, now, from_curves),
+                         keyed=bool(times), keys=len(times), key_state=core.key_state(times, now)))
     return rows
+
+
+def _weight_now(plug, times, now, from_curves):
+    """The weight on ``now``. A keyed weight is read from its curve at that
+    time, so a frame-change callback never sees a value Maya has not
+    evaluated yet."""
+    if times and from_curves:
+        return cmds.getAttr(plug, time=now)
+    return cmds.getAttr(plug)
 
 
 def tweak_meshes():
