@@ -23,7 +23,13 @@ jobs:
           python-version: '3.11'
       - name: Install FFmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libegl1 libopengl0
+        # A stalled Ubuntu mirror once held this step for the whole job limit:
+        # fail fast and let apt retry and time out slow downloads.
+        timeout-minutes: 6
+        run: |
+          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          sudo apt-get $APT update
+          sudo apt-get $APT install -y ffmpeg libegl1 libopengl0
       - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
         run: choco install ffmpeg --no-progress -y
