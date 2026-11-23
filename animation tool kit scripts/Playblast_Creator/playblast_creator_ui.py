@@ -1666,6 +1666,11 @@ class PBCPlayblast(QtCore.QObject):
                 except OSError:
                     pass
 
+    # AAC options for every encode.  FFmpeg 9.1's default "twoloop" coder hangs
+    # at 192k when silence is followed by sound (a delayed or late-starting
+    # timeline sound), so the export never finished; the "fast" coder does not.
+    AAC_AUDIO_ARGS = ["-c:a", "aac", "-aac_coder", "fast", "-b:a", "192k"]
+
     def encode_video(self, encoder, ffmpeg_path, source_path, output_path, start_frame, include_audio=True):
         """Encode an image sequence into a video using the given encoder.
 
@@ -1707,7 +1712,7 @@ class PBCPlayblast(QtCore.QObject):
             if audio_offset < 0:
                 audio_filter = "adelay={0}:all=1,apad".format(int(round(-audio_offset * 1000)))
             arguments.extend(["-map", "0:v:0", "-map", "1:a:0", "-af", audio_filter,
-                              "-c:a", "aac", "-b:a", "192k", "-shortest"])
+                              ] + self.AAC_AUDIO_ARGS + ["-shortest"])
         elif not include_audio:
             arguments.append("-an")
 
@@ -1739,9 +1744,7 @@ class PBCPlayblast(QtCore.QObject):
             arguments.extend([
                 "-map", "0:v",
                 "-map", "0:a?",
-                "-c:a", "aac",
-                "-b:a", "192k",
-            ])
+            ] + self.AAC_AUDIO_ARGS)
         else:
             arguments.append("-an")
 

@@ -23,6 +23,30 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'animation tool kit scripts/Playblast_Creator/playblast_creator_ui.py'
 
 
+def run_bounded(cmd, timeout=60):
+    """Run ``cmd`` and return ``(returncode, stdout, stderr)``.
+
+    On timeout the whole process tree is killed and AssertionError raised.
+    Windows package managers start FFmpeg through a launcher shim; killing
+    only the shim leaves FFmpeg holding the pipes, so ``subprocess.run``'s
+    own timeout would hang instead of failing.
+    """
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if sys.platform == 'win32':
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            proc.kill()
+        out, err = proc.communicate(timeout=30)
+        raise AssertionError('Timed out after %ss: %s | stderr tail: %s' % (
+            timeout, ' '.join(map(str, cmd)), err.decode('utf-8', 'replace')[-2000:]))
+    return proc.returncode, out, err
+
+
 def load_classes():
     tree = ast.parse(SOURCE.read_text(encoding='utf-8'))
     classes = [n for n in tree.body if isinstance(n, ast.ClassDef) and n.name in
@@ -317,6 +341,41 @@ class ProcessTests(unittest.TestCase):
                     self.assertEqual(p.execute_ffmpeg_command('ffmpeg', ['-y']), expected)
 
 
+class AacOptionsTests(unittest.TestCase):
+    """FFmpeg 9.1's default AAC coder hangs at 192k on silence followed by sound."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.folder = Path(self.temp.name)
+        self.p = engine()
+        self.p.get_frame_rate = lambda: 24.0
+        self.p.get_platform_h264_video_codec = lambda: 'libx264'
+        self.calls = []
+
+        def run(program, args):
+            self.calls.append(args[:])
+            Path(args[-1]).write_bytes(b'movie')
+            return True
+        self.p.execute_ffmpeg_command = run
+
+    def assertFastAac(self, args):
+        i = args.index('-c:a')
+        self.assertEqual(args[i:i + 6], ['-c:a', 'aac', '-aac_coder', 'fast', '-b:a', '192k'])
+
+    def test_encode_with_late_sound_uses_fast_coder(self):
+        for offset in (6, 0, -6):
+            self.p.get_audio_attributes = lambda: ('audio.wav', offset)
+            out = self.folder / ('out%d.mp4' % offset)
+            self.assertTrue(self.p.encode_video('h264', 'ffmpeg', 'f.%04d.png', str(out), 0))
+            self.assertFastAac(self.calls[-1])
+
+    def test_transcode_with_sound_uses_fast_coder(self):
+        out = self.folder / 'out.mp4'
+        self.assertTrue(self.p.transcode_video('h264', 'ffmpeg', 'temp.mov', str(out), include_audio=True))
+        self.assertFastAac(self.calls[-1])
+
+
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg integration requires ffmpeg and ffprobe')
 class RealFFmpegTests(unittest.TestCase):
     def setUp(self):
@@ -334,15 +393,15 @@ class RealFFmpegTests(unittest.TestCase):
         self.calls = []
         def run(program, args):
             self.calls.append(args[:])
-            proc = subprocess.run([program, '-nostdin', '-hide_banner', '-loglevel', 'error'] + args,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-            self.last_stderr = proc.stderr.decode('utf-8', errors='replace')
-            return proc.returncode == 0
+            code, _, err = run_bounded([program, '-nostdin', '-hide_banner', '-loglevel', 'error'] + args)
+            self.last_stderr = err.decode('utf-8', errors='replace')
+            return code == 0
         self.p.execute_ffmpeg_command = run
 
     def probe(self, path):
-        result = subprocess.run(['ffprobe', '-v','error','-count_frames','-show_streams','-of','json',str(path)], check=True, capture_output=True)
-        return json.loads(result.stdout)['streams']
+        code, out, err = run_bounded(['ffprobe', '-v','error','-count_frames','-show_streams','-of','json',str(path)])
+        self.assertEqual(code, 0, err)
+        return json.loads(out)['streams']
 
     def test_real_h264_mpeg4_prores_containers(self):
         for encoder, container, expected in [('h264','mp4','h264'), ('h264','mov','h264'), ('mpeg4','mp4','mpeg4'), ('mpeg4','mov','mpeg4'), ('prores','mov','prores')]:
@@ -357,7 +416,8 @@ class RealFFmpegTests(unittest.TestCase):
 
     def test_real_audio_offsets_and_duration(self):
         wav = self.folder/'audio.wav'
-        subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','sine=frequency=440:duration=2','-y',str(wav)], check=True)
+        code, _, err = run_bounded(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i','sine=frequency=440:duration=2','-y',str(wav)])
+        self.assertEqual(code, 0, err)
         for offset in [-6, 0, 6]:
             with self.subTest(offset=offset):
                 self.p.get_audio_attributes = lambda:(str(wav), offset)
@@ -368,7 +428,8 @@ class RealFFmpegTests(unittest.TestCase):
                 self.assertEqual(streams[0]['nb_read_frames'],'12')
                 self.assertAlmostEqual(float(streams[0]['duration']),0.5,places=2)
                 if offset > 0:
-                    raw = subprocess.run(['ffmpeg','-v','error','-i',str(out),'-t','0.20','-f','s16le','-ac','1','-'],check=True,capture_output=True).stdout
+                    code, raw, err = run_bounded(['ffmpeg','-nostdin','-v','error','-i',str(out),'-t','0.20','-f','s16le','-ac','1','-'])
+                    self.assertEqual(code, 0, err)
                     import array
                     samples = array.array('h',raw)
                     self.assertLess(max(abs(x) for x in samples),10)

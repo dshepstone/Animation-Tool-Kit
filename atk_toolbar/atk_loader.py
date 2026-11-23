@@ -110,7 +110,7 @@ TOOL_REGISTRY = [
         "icon_file": "curveTool.png",
         "icon_key":  "tween",
         "group":     "timing",
-        "version":   "1.0.0",
+        "version":   "1.0.1",
     },
     {
         "id":        "tween_machine",
@@ -405,7 +405,7 @@ TOOL_REGISTRY = [
         "icon_file": "playblast_creator_icon.png",
         "icon_key":  "snap",
         "group":     "pipeline",
-        "version":   "2.0.5",
+        "version":   "2.0.6",
     },
     {
         "id":        "user_directory_check",

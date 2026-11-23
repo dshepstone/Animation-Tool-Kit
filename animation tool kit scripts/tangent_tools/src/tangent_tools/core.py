@@ -3,12 +3,16 @@
 This module is a thin wrapper over ``maya.cmds`` that centralizes every
 tangent/curve operation the UI needs to drive.
 
-The implementations deliberately mirror how Maya's own Graph Editor
-menus invoke the underlying commands (for example, ``keyTangent`` and
-``setInfinity`` are called *without* naming any target, so Maya's normal
-selection-context resolution handles the "selected keys in the Graph
-Editor vs. selected object in the viewport" case for us).  Matching the
-native menus keeps behaviour predictable across Maya versions.
+Most implementations mirror how Maya's own Graph Editor menus invoke the
+underlying commands (for example, ``setInfinity`` is called *without*
+naming any target, so Maya's normal selection-context resolution handles
+the "selected keys in the Graph Editor vs. selected object in the
+viewport" case for us).  Matching the native menus keeps behaviour
+predictable across Maya versions.
+
+Tangent types are the exception: :func:`set_tangent_type` names each key
+it changes, because an untargeted ``keyTangent`` would change every key
+on the selected objects.
 """
 from __future__ import absolute_import, division, print_function
 
@@ -96,37 +100,166 @@ def _graph_editor_selected_plugs():
 # Tangent type operations
 # ---------------------------------------------------------------------------
 
-def set_tangent_type(kind):
-    """Apply a tangent type to whatever Maya currently considers selected.
+def _time_slider():
+    """Return the main Time Slider control name, or ``None``."""
+    try:
+        return mel.eval("$atkTangentToolsTmp = $gPlayBackSlider") or None
+    except Exception:
+        return None
 
-    We intentionally do NOT pass target objects to ``keyTangent``.  Maya's
-    built-in menu items work the same way — the command resolves its own
-    target from the active selection, which correctly handles selected
-    keys in the Graph Editor, selected anim curves, and plain object
-    selections in the viewport.
+
+def _timeline_range(slider):
+    """Return the shift-dragged Time Slider range as ``(start, end)``.
+
+    ``end`` is exclusive: ``rangeArray`` reports the frame *after* the
+    last highlighted frame.  Returns ``None`` when nothing is highlighted.
+    """
+    if not slider:
+        return None
+    try:
+        if not cmds.timeControl(slider, query=True, rangeVisible=True):
+            return None
+        start, end = cmds.timeControl(slider, query=True, rangeArray=True)
+    except Exception:
+        return None
+    return float(start), float(end)
+
+
+def _timeline_curves(slider):
+    """Return the anim curves whose keys the Time Slider is showing.
+
+    This follows the Time Slider's own rules (selected objects, narrowed to
+    any channels highlighted in the Channel Box, animation layers included).
+    Falls back to every curve on the selected objects.
+    """
+    curves = []
+    if slider:
+        try:
+            curves = cmds.timeControl(
+                slider, query=True, animCurveNames=True) or []
+        except Exception:
+            curves = []
+    if not curves:
+        objects = _selected_objects()
+        if objects:
+            try:
+                curves = cmds.keyframe(objects, query=True, name=True) or []
+            except Exception:
+                curves = []
+    seen = set()
+    return [c for c in curves if not (c in seen or seen.add(c))]
+
+
+def _keys_in_window(curves, start, end, end_inclusive):
+    """Return ``{curve: [times]}`` for keys between ``start`` and ``end``."""
+    targets = {}
+    for curve in curves:
+        try:
+            times = cmds.keyframe(
+                curve, query=True, timeChange=True, time=(start, end)) or []
+        except Exception:
+            times = []
+        if not end_inclusive:
+            times = [t for t in times if t < end]
+        if times:
+            targets[curve] = sorted(set(times))
+    return targets
+
+
+def _selected_keys():
+    """Return ``{curve: [times]}`` for keys selected in the Graph Editor."""
+    targets = {}
+    for curve in _selected_anim_curves():
+        try:
+            times = cmds.keyframe(
+                curve, query=True, selected=True, timeChange=True) or []
+        except Exception:
+            times = []
+        if times:
+            targets[curve] = sorted(set(times))
+    return targets
+
+
+def resolve_tangent_targets():
+    """Work out which keys a tangent button should change.
+
+    Returns ``(scope, {curve: [times]})``, checked in this order:
+
+    1. ``"range"`` — a range is shift-dragged on the Time Slider: every
+       key inside it on the Time Slider's curves, and nothing else.
+    2. ``"selected"`` — keys are selected in the Graph Editor (or Dope
+       Sheet): exactly those keys.
+    3. ``"current"`` — nothing highlighted or selected: only the key at
+       the current frame on the Time Slider's curves.
+    """
+    slider = _time_slider()
+
+    window = _timeline_range(slider)
+    if window is not None:
+        start, end = window
+        return "range", _keys_in_window(
+            _timeline_curves(slider), start, end, end_inclusive=False)
+
+    selected = _selected_keys()
+    if selected:
+        return "selected", selected
+
+    now = cmds.currentTime(query=True)
+    return "current", _keys_in_window(
+        _timeline_curves(slider), now, now, end_inclusive=True)
+
+
+_SCOPE_EMPTY_MESSAGES = {
+    "range": "no keys inside the highlighted Time Slider range.",
+    "selected": "no keys selected.",
+    "current": "no key on the current frame. Move to a key, highlight a "
+               "range on the Time Slider, or select keys in the Graph Editor.",
+}
+
+
+def set_tangent_type(kind):
+    """Apply a tangent type to the targeted keys only.
+
+    See :func:`resolve_tangent_targets` for which keys are affected.
+    Each key is addressed by curve and time, so keys outside the target
+    are never touched.  The whole change is one undo step.
     """
     if kind not in TANGENT_TYPES:
         raise ValueError("Unknown tangent type: {0}".format(kind))
 
     tangent = TANGENT_TYPES[kind]
+    if tangent == "step":
+        # Step is only valid on the out-tangent side; Maya's own menu
+        # leaves the in-tangent alone for stepped keys.
+        flags = {"outTangentType": "step"}
+    else:
+        flags = {"inTangentType": tangent, "outTangentType": tangent}
 
+    scope, targets = resolve_tangent_targets()
+    if not targets:
+        cmds.warning("Tangent Tools: " + _SCOPE_EMPTY_MESSAGES[scope])
+        return 0
+
+    changed = 0
+    errors = []
+    cmds.undoInfo(openChunk=True, chunkName="atkSetTangentType")
     try:
-        if tangent == "step":
-            # Step is only valid on the out-tangent side; Maya's own menu
-            # leaves the in-tangent alone for stepped keys.
-            cmds.keyTangent(edit=True, outTangentType="step")
-        else:
-            cmds.keyTangent(
-                edit=True,
-                inTangentType=tangent,
-                outTangentType=tangent,
-            )
-    except Exception as exc:
+        for curve, times in targets.items():
+            for t in times:
+                try:
+                    cmds.keyTangent(curve, edit=True, time=(t, t), **flags)
+                    changed += 1
+                except Exception as exc:
+                    errors.append(exc)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
+    if errors:
         cmds.warning(
-            "Tangent Tools: keyTangent failed ({0}). "
-            "Select an object, a curve, or keys in the Graph Editor."
-            .format(exc)
+            "Tangent Tools: keyTangent failed on {0} key(s) ({1})."
+            .format(len(errors), errors[0])
         )
+    return changed
 
 
 def set_weighted(weighted):

@@ -64,7 +64,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.1.19"
+VERSION        = "1.1.20"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -1572,7 +1572,9 @@ class ATKToolbarWidget(QtWidgets.QWidget):
             btn.setIcon(icon)
             btn.setIconSize(QtCore.QSize(icon_sz, icon_sz))
             if show_tips:
-                tip = "<b>{}</b><br>Set selected keys to {} tangents.".format(label, label)
+                tip = ("<b>{}</b><br>Set keys to {} tangents: the highlighted "
+                       "Time Slider range, else the keys selected in the Graph "
+                       "Editor, else the key on the current frame.").format(label, label)
                 if not installed:
                     tip += "<br><i style='color:#ff6666;'>Tangent Tools not installed</i>"
                 btn.setToolTip(tip)
