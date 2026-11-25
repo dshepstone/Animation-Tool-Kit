@@ -122,5 +122,41 @@ class TransportErrors(unittest.TestCase):
             self.assertIn('Could not read the product', manual.read_text(encoding='utf-8'))
 
 
+class RealDescriptionShape(unittest.TestCase):
+    # Shape of the live product description (Nov 2026): an h2 title, then an
+    # h3 "What's new" section followed by other h3 sections.
+    OLD = ('<h2>Animation Tool Kit v1.1.30 for Maya</h2><p>Intro.</p>'
+           "<h3>What's new in v1.1.30</h3><p>old notes</p><ul><li>x</li></ul>"
+           '<p><a href="https://github.com/dshepstone/Animation-Tool-Kit/releases/tag/ATK_1.1.29">notes</a></p>'
+           '<h3>Tools in the kit</h3><ul><li>tools</li></ul>')
+
+    def test_replaces_h3_section_at_the_same_level(self):
+        new, how = gr.update_description(self.OLD, '1.1.31', NOTES)
+        self.assertEqual(how, 'heading')
+        self.assertNotIn('old notes', new)
+        self.assertIn("<h3>What's new in 1.1.31</h3>", new)
+        self.assertIn('<h4>Fixed: something</h4>', new)
+        self.assertIn('<h2>Animation Tool Kit v1.1.31 for Maya</h2>', new)
+        self.assertIn('<h3>Tools in the kit</h3><ul><li>tools</li></ul>', new)
+        self.assertEqual(new.count("What's new"), 1)
+
+    def test_second_run_replaces_its_own_block(self):
+        once, _ = gr.update_description(self.OLD, '1.1.31', NOTES)
+        twice, how = gr.update_description(once, '1.1.32', NOTES)
+        self.assertEqual(how, 'markers')
+        self.assertIn("<h3>What's new in 1.1.32</h3>", twice)
+        self.assertEqual(twice.count("What's new"), 1)
+
+    def test_bumps_release_tag_links(self):
+        self.assertIn('releases/tag/ATK_1.1.31',
+                      gr.bump_versions('releases/tag/ATK_1.1.29', '1.1.31'))
+
+    def test_keep_old_files(self):
+        current = [{'id': 'a', 'name': 'AnimationToolKit_v1_1_29'}, {'id': 'b', 'name': 'Guide.pdf'}]
+        files, removed = gr.plan_files(current, 'u', 'AnimationToolKit_v1_1_31', 'cli', keep_old=True)
+        self.assertEqual(removed, [])
+        self.assertEqual([f['id'] for f in files], ['cli', 'a', 'b'])
+
+
 if __name__ == '__main__':
     unittest.main()

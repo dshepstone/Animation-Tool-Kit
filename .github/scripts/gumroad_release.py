@@ -30,11 +30,12 @@ from pathlib import Path
 
 API = 'https://api.gumroad.com/v2'
 PRODUCT_URL = 'https://shepstone.gumroad.com/l/animation-tool-kit'
+REPO_URL = 'https://github.com/dshepstone/Animation-Tool-Kit'
 ZIP_NAME = re.compile(r'^AnimationToolKit_v\d+_\d+_\d+', re.I)
-VERSION_IN_TEXT = re.compile(r'(?i)\b(version\s*|v)(\d+\.\d+\.\d+)\b')
+VERSION_IN_TEXT = re.compile(r'(?i)\b(version\s*|v|ATK_)(\d+\.\d+\.\d+)\b')
 CHANGELOG_START = '<!-- atk-changelog:start -->'
 CHANGELOG_END = '<!-- atk-changelog:end -->'
-WHATS_NEW_H2 = re.compile(r"<h2[^>]*>\s*What(?:&#39;|'|’|&rsquo;)s new[^<]*</h2>", re.I)
+WHATS_NEW = re.compile(r"<h([23])[^>]*>\s*What(?:&#39;|'|’|&rsquo;)s new.*?</h\1>", re.I | re.S)
 
 
 # ---------------------------------------------------------------- text helpers
@@ -60,11 +61,11 @@ def _inline(text):
     return text
 
 
-def markdown_to_html(markdown):
+def markdown_to_html(markdown, base_level=3):
     """Small Markdown converter for release notes: headings, paragraphs,
     bullet and numbered lists, bold, italics, code and links. The top-level
-    '# Title' is dropped (the block has its own heading) and '##' becomes h3
-    so the notes nest under the block's h2."""
+    '# Title' is dropped (the block has its own heading) and '##' becomes
+    base_level, one below the block's own heading."""
     out, para, items, list_tag = [], [], [], None
 
     def flush():
@@ -87,7 +88,7 @@ def markdown_to_html(markdown):
             flush()
             level = len(heading.group(1))
             if level > 1:
-                tag = 'h%d' % min(level + 1, 6)
+                tag = 'h%d' % min(level + base_level - 2, 6)
                 out.append('<%s>%s</%s>' % (tag, _inline(heading.group(2)), tag))
         elif bullet or number:
             tag = 'ul' if bullet else 'ol'
@@ -105,28 +106,36 @@ def markdown_to_html(markdown):
     return '\n'.join(out)
 
 
-def changelog_block(version, notes_markdown):
-    return '%s\n<h2>What\'s new in %s</h2>\n%s\n%s' % (
-        CHANGELOG_START, version, markdown_to_html(notes_markdown), CHANGELOG_END)
+def changelog_block(version, notes_markdown, level=2):
+    link = '<p><a href="%s/releases/tag/ATK_%s">Full release notes on GitHub</a></p>' % (REPO_URL, version)
+    return '%s\n<h%d>What\'s new in %s</h%d>\n%s\n%s\n%s' % (
+        CHANGELOG_START, level, version, level, markdown_to_html(notes_markdown, level + 1), link, CHANGELOG_END)
 
 
-def replace_changelog(description, block):
-    """Put block in place of the current changelog. Looks, in order, for the
-    marker comments, then for an h2 starting "What's new" (up to the next h2),
-    and otherwise puts the block at the top. Returns (html, how)."""
+def replace_changelog(description, version, notes_markdown):
+    """Put the release notes in place of the current changelog. Looks, in
+    order, for the marker comments, then for an h2 or h3 starting "What's new"
+    (up to the next heading of the same or a higher level), and otherwise puts
+    the block at the top. The block's heading matches the level it replaces.
+    Returns (html, how)."""
     start, end = description.find(CHANGELOG_START), description.find(CHANGELOG_END)
     if start != -1 and end > start:
+        old = WHATS_NEW.search(description, start, end)
+        block = changelog_block(version, notes_markdown, int(old.group(1)) if old else 2)
         return description[:start] + block + description[end + len(CHANGELOG_END):], 'markers'
-    heading = WHATS_NEW_H2.search(description)
+    heading = WHATS_NEW.search(description)
     if heading:
-        following = re.compile(r'<h2[\s>]', re.I).search(description, heading.end())
+        level = int(heading.group(1))
+        following = re.compile(r'<h[1-%d][\s>]' % level, re.I).search(description, heading.end())
         stop = following.start() if following else len(description)
-        return description[:heading.start()] + block + '\n' + description[stop:], 'heading'
-    return block + '\n' + description, 'top'
+        block = changelog_block(version, notes_markdown, level)
+        return description[:heading.start()] + block + description[stop:], 'heading'
+    return changelog_block(version, notes_markdown) + '\n' + description, 'top'
 
 
 def bump_versions(text, version):
-    """Replace 'Version X.Y.Z' / 'vX.Y.Z' with version where X.Y.Z is older."""
+    """Replace 'Version X.Y.Z', 'vX.Y.Z' and 'ATK_X.Y.Z' (release-tag links)
+    with version where X.Y.Z is older."""
     def sub(match):
         if _vkey(match.group(2)) < _vkey(version):
             return match.group(1) + version
@@ -145,7 +154,7 @@ def update_description(description, version, notes_markdown):
         description = head + description[start:end] + tail
     else:
         description = bump_versions(description, version)
-    return replace_changelog(description, changelog_block(version, notes_markdown))
+    return replace_changelog(description, version, notes_markdown)
 
 
 def swap_file_embeds(node, old_ids, new_id):
@@ -172,9 +181,13 @@ def swap_file_embeds(node, old_ids, new_id):
     return node, 0
 
 
-def plan_files(current_files, new_file_url, new_display_name, client_id):
+def plan_files(current_files, new_file_url, new_display_name, client_id, keep_old=False):
     """Return (files_param, removed_ids). Keeps every file that is not an
-    AnimationToolKit_vX_Y_Z ZIP and puts the new ZIP where the old one was."""
+    AnimationToolKit_vX_Y_Z ZIP and puts the new ZIP where the first old one
+    was. With keep_old, the old ZIPs stay too and the new one goes first."""
+    if keep_old:
+        files = [{'id': f['id']} for f in current_files]
+        return [{'id': client_id, 'url': new_file_url, 'display_name': new_display_name}] + files, []
     files, removed, position = [], [], None
     for index, f in enumerate(current_files):
         if ZIP_NAME.match(f.get('name') or ''):
@@ -298,6 +311,7 @@ def main():
         notes = notes_file.read_text(encoding='utf-8')
     dry_run = env.get('DRY_RUN', 'false').lower() == 'true'
     update_file = env.get('UPDATE_FILE', 'true').lower() != 'false'
+    keep_old = env.get('OLD_FILES', 'remove').lower() == 'keep'
     product_ref = env.get('GUMROAD_PRODUCT') or 'animation-tool-kit'
     zips = sorted(Path(env.get('ASSETS_DIR', 'release-assets')).glob('AnimationToolKit_v*.zip'))
     zip_path = zips[0] if zips else None
@@ -346,17 +360,20 @@ def main():
                         file_url = '(uploaded in a real run)'
                     else:
                         file_url = api.upload(zip_path)
-                    files, removed = plan_files(product.get('files') or [], file_url, zip_path.stem, client_id)
+                    files, removed = plan_files(product.get('files') or [], file_url, zip_path.stem, client_id, keep_old)
                     body = {'files': files}
+                    old_zips = [f for f in product.get('files') or [] if ZIP_NAME.match(f.get('name') or '')]
                     pages, embeds = [], 0
                     for page in product.get('rich_content') or []:
-                        swapped, n = swap_file_embeds(page.get('description'), set(removed), client_id)
+                        swapped, n = swap_file_embeds(page.get('description'), {f['id'] for f in old_zips}, client_id)
                         embeds += n
                         pages.append({'id': page['id'], 'title': page.get('title'), 'description': swapped})
                     if embeds:
                         body['rich_content'] = pages
-                    log.append('- File: `%s` replaces %s; %d content-page embed(s) repointed.'
-                               % (zip_path.name, ', '.join('`%s`' % i for i in removed) or 'nothing', embeds))
+                    names = ', '.join('`%s`' % f.get('name') for f in old_zips) or 'none'
+                    log.append('- File: `%s` added; old ATK ZIPs on the product: %s (%s); '
+                               '%d content-page embed(s) pointed at the new ZIP.'
+                               % (zip_path.name, names, 'kept' if keep_old else 'removed', embeds))
                     if not dry_run:
                         api.call('PUT', '/products/' + product['id'], body)
                     file_done = True

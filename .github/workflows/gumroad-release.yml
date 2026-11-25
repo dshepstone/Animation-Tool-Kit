@@ -69,6 +69,7 @@ jobs:
           GUMROAD_ACCESS_TOKEN: ${{ secrets.GUMROAD_ACCESS_TOKEN }}
           GUMROAD_PRODUCT: ${{ vars.GUMROAD_PRODUCT_ID || 'animation-tool-kit' }}
           UPDATE_FILE: ${{ vars.GUMROAD_UPDATE_FILE || 'true' }}
+          OLD_FILES: ${{ vars.GUMROAD_OLD_FILES || 'remove' }}
           ASSETS_DIR: release-assets
           MANUAL_STEPS_FILE: gumroad-manual-steps.md
         run: python .github/scripts/gumroad_release.py

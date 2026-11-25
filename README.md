@@ -118,7 +118,8 @@ directly when it publishes a new release, reading the tag from
   and the "What's new" section is replaced with the release notes (the release
   body, or `Animation_Tool_Kit_vX.Y.Z_Release_Notes.md` when the body is empty).
   The section is found by its `<!-- atk-changelog:start/end -->` markers, then
-  by an h2 starting "What's new", and is otherwise added at the top.
+  by an h2 or h3 starting "What's new" (up to the next heading of that level),
+  and is otherwise added at the top. Release-tag links (`ATK_X.Y.Z`) are bumped.
 - **Download:** the release's `AnimationToolKit_vX_Y_Z.zip` is uploaded and
   replaces the previous `AnimationToolKit_v*` ZIP. Other files stay, and
   content pages that embed the old ZIP are pointed at the new one.
@@ -136,7 +137,8 @@ One-time setup:
    Never commit the token.
 3. Optional repository **variables** on the same page:
    `GUMROAD_PRODUCT_ID` (defaults to the `animation-tool-kit` permalink) and
-   `GUMROAD_UPDATE_FILE=false` to update only the description.
+   `GUMROAD_UPDATE_FILE=false` to update only the description, and
+   `GUMROAD_OLD_FILES=keep` to add the new ZIP without removing older ones.
 4. Test it: **Actions → Update Gumroad product → Run workflow**, enter the
    current tag (for example `ATK_1.1.29`) and keep **dry run** ticked. The run
    summary shows the new description and which file it would replace, without
