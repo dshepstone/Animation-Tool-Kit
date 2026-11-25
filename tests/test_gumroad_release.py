@@ -98,5 +98,29 @@ class ManualSteps(unittest.TestCase):
         self.assertIn('- boom', text)
 
 
+class TransportErrors(unittest.TestCase):
+    def test_connection_failure_becomes_gumroad_error(self):
+        import urllib.error
+        from unittest import mock
+        with mock.patch.object(gr.urllib.request, 'urlopen', side_effect=urllib.error.URLError('down')):
+            with self.assertRaises(gr.GumroadError):
+                gr.Gumroad('t').call('GET', '/products/x')
+
+    def test_lookup_failure_writes_manual_steps(self):
+        import os
+        import tempfile
+        import urllib.error
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            manual = Path(tmp) / 'manual.md'
+            env = {'GUMROAD_ACCESS_TOKEN': 't', 'RELEASE_TAG': 'ATK_1.1.30', 'RELEASE_BODY': 'notes',
+                   'MANUAL_STEPS_FILE': str(manual), 'ASSETS_DIR': tmp}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                    mock.patch.object(gr.urllib.request, 'urlopen', side_effect=urllib.error.URLError('down')), \
+                    mock.patch('builtins.print'):
+                gr.main()
+            self.assertIn('Could not read the product', manual.read_text(encoding='utf-8'))
+
+
 if __name__ == '__main__':
     unittest.main()

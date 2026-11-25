@@ -110,7 +110,9 @@ If that file is missing, it falls back to:
 Publishing a GitHub release runs
 [`.github/workflows/gumroad-release.yml`](.github/workflows/gumroad-release.yml),
 which updates the [Gumroad product](https://shepstone.gumroad.com/l/animation-tool-kit)
-through the Gumroad API:
+through the Gumroad API. The release job in `playblast-tests.yml` calls it
+directly when it publishes a new release (keep the tag in its `created=true`
+line in step when bumping the version):
 
 - **Description:** every `Version X.Y.Z` / `vX.Y.Z` is set to the new version,
   and the "What's new" section is replaced with the release notes (the release

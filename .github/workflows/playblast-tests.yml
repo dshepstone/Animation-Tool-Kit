@@ -97,6 +97,7 @@ jobs:
           python-version: '3.11'
       - run: python package_atk_release.py --version 1.1.29
       - name: Publish verified ATK 1.1.29 release once
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -104,4 +105,22 @@ jobs:
             echo 'Release already exists; preserving published assets.'
           else
             gh release create ATK_1.1.29 dist/AnimationToolKit_v1_1_29.zip dist/AnimationToolKit_v1_1_29.zip.sha256 --target "$GITHUB_SHA" --title 'Animation Tool Kit v1.1.29' --notes-file Animation_Tool_Kit_v1.1.29_Release_Notes.md --latest
+            # Keep this tag in step with the release above; the gumroad job uses it.
+            printf 'created=true\ntag=ATK_1.1.29\n' >> "$GITHUB_OUTPUT"
           fi
+    outputs:
+      created: ${{ steps.publish.outputs.created }}
+      tag: ${{ steps.publish.outputs.tag }}
+  gumroad:
+    # Releases created with GITHUB_TOKEN do not trigger gumroad-release.yml's
+    # `release` event, so call it here, once, when a new release was made.
+    needs: release
+    if: needs.release.outputs.created == 'true'
+    permissions:
+      contents: read
+      issues: write
+    uses: ./.github/workflows/gumroad-release.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets:
+      GUMROAD_ACCESS_TOKEN: ${{ secrets.GUMROAD_ACCESS_TOKEN }}

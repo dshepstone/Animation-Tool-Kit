@@ -215,6 +215,9 @@ class Gumroad:
         except urllib.error.HTTPError as error:
             text = error.read().decode(errors='replace')[:500]
             raise GumroadError('%s %s -> HTTP %s: %s' % (method, path, error.code, text))
+        except (urllib.error.URLError, OSError, ValueError) as error:
+            # Connection, timeout or bad-JSON failures still lead to the manual steps.
+            raise GumroadError('%s %s -> %s' % (method, path, error))
         if payload.get('success') is False:
             raise GumroadError('%s %s -> %s' % (method, path, payload.get('message') or payload))
         return payload
@@ -357,7 +360,7 @@ def main():
                     if not dry_run:
                         api.call('PUT', '/products/' + product['id'], body)
                     file_done = True
-                except (GumroadError, urllib.error.URLError, KeyError) as error:
+                except (GumroadError, OSError, KeyError, ValueError) as error:
                     reasons.append('Replacing the downloadable file failed: %s' % error)
 
     if reasons:
