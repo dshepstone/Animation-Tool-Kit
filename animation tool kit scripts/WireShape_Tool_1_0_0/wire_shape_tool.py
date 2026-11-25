@@ -1357,14 +1357,14 @@ def _apply_renames(nodes, new_names, rename_shapes=True):
     pairs = [(i, n) for i, n in zip(ids, new_names) if i]
     for k, (uuid, _) in enumerate(pairs):
         cmds.rename(_node_path(uuid), "atkRenameTmp{0}_".format(k))
-    result = []
     for uuid, name in pairs:
         cmds.rename(_node_path(uuid), name)
         path = _node_path(uuid)
         if rename_shapes and cmds.listRelatives(path, shapes=True):
             _rename_shapes(path)
-        result.append(path)
-    return result
+    # Resolve every path only now: renaming a parent after its child (a
+    # child selected first) changes the child's DAG path.
+    return [p for p in (_node_path(uuid) for uuid, _ in pairs) if p]
 
 
 def batch_rename(nodes, pattern, start=1, step=1, hierarchy=False, rename_shapes=True):

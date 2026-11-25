@@ -109,6 +109,22 @@ class ReloadKeepsMayaUiTests(_FakeMayaCase):
         self.assertEqual(self.deleted, ["wireShapeWorkspaceControl"])
         self.assertIn("wire_shape", reopen)
 
+    def test_floating_tool_window_under_maya_main_window_is_closed(self):
+        from PySide6 import QtCore
+        main = self.named(None, "MayaWindow", "window")
+        self.widgets.append(main)
+        tool = _tool_class("tangent_tools.ui", "TangentToolsWindow")(main)
+        tool.setWindowFlags(QtCore.Qt.Window)
+        child = QtWidgets.QWidget(tool)          # a widget inside that window
+        tool.show()
+
+        reopen = self.settings.close_tool_windows()
+
+        self.assertEqual(self.deleted, [])       # nothing of Maya's deleted
+        self.assertFalse(tool.isVisible())       # the window itself closed
+        self.assertIn("tangent_tools", reopen)
+        self.assertEqual(self.settings._tool_workspace_control(child), (None, False))
+
 
 if __name__ == "__main__":
     unittest.main()

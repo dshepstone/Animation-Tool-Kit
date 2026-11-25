@@ -2,12 +2,12 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.28** brings **Wire Shapes** 2.3.1: shapes built with **Snap to
-Selection** now land on each selected object's pivot with its orientation
-(**Match Rotation**), on the centre of selected components, or at the origin
-when nothing is selected. It keeps everything from 1.1.27, including the
-Joint Mode per-joint list with a **Size** per controller.
-See [release notes](Animation_Tool_Kit_v1.1.28_Release_Notes.md).
+Version **1.1.29** fixes two small issues from 1.1.28: **Reload Scripts** closes
+and reopens floating tool windows such as Tangent Tools again, and **Wire Shapes**
+2.3.2 **Batch Rename** no longer errors when a child is selected before its
+parent. It keeps everything from 1.1.28, including Wire Shapes Joint Mode, Batch
+Rename and shapes that align to the selection.
+See [release notes](Animation_Tool_Kit_v1.1.29_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.

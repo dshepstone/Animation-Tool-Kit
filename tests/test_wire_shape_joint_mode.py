@@ -482,6 +482,16 @@ class BatchRename(unittest.TestCase):
         self.assertEqual(wst.format_rename("Arm_##_JNT", 3), "Arm_03_JNT")
         self.assertEqual(wst.format_rename("L_{name}", 1, "|x|elbow"), "L_elbow")
 
+    def test_child_selected_before_parent_returns_live_paths(self):
+        scene = FakeScene()
+        parent = scene.add_joint("parent", None, (0, 0, 0), X_UP)
+        child = scene.add_joint("child", "parent", (0, 1, 0), X_UP)
+        wst = load_tool(scene)
+        renamed = wst.batch_rename([child, parent], "renamed_#")
+        self.assertEqual(renamed, ["|renamed_2|renamed_1", "|renamed_2"])
+        for path in renamed:
+            self.assertEqual(scene.path(scene.find(path)), path)
+
     def test_search_replace_and_prefix_suffix(self):
         scene = FakeScene()
         j1 = scene.add_joint("joint1", None, (0, 0, 0), X_UP)
