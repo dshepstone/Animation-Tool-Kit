@@ -1,0 +1,84 @@
+name: Update Gumroad product
+# After a release is published, update the Gumroad product's description
+# (version and "What's new") and swap in the release ZIP through the Gumroad
+# API. Anything it cannot do is posted as an issue with the manual steps.
+# Setup: README.md → "Gumroad release updates".
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish to Gumroad (for example ATK_1.1.29)
+        required: true
+      dry_run:
+        description: Show what would change without touching Gumroad
+        type: boolean
+        default: true
+  # The release job in playblast-tests.yml publishes with GITHUB_TOKEN, and
+  # releases made that way do not fire the `release` event, so it calls this
+  # workflow directly.
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      dry_run:
+        type: boolean
+        default: false
+    secrets:
+      GUMROAD_ACCESS_TOKEN:
+        required: false
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: gumroad-release
+  cancel-in-progress: false
+jobs:
+  gumroad:
+    # Pre-releases (rc builds) are for testers and do not go to Gumroad.
+    if: github.event_name != 'release' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      DRY_RUN: ${{ github.event_name != 'release' && inputs.dry_run || 'false' }}
+    steps:
+      # The workflow's own revision, not the release tag: older tags do not
+      # contain the updater script. Release notes come from the release body.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download the release ZIP
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'AnimationToolKit_v*.zip' --dir release-assets || echo "No ZIP asset found"
+      - name: Read the release notes
+        run: |
+          {
+            echo "RELEASE_NAME=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name --jq .name)"
+            echo 'RELEASE_BODY<<ATK_NOTES_EOF'
+            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body
+            echo 'ATK_NOTES_EOF'
+          } >> "$GITHUB_ENV"
+      - name: Update Gumroad
+        env:
+          GUMROAD_ACCESS_TOKEN: ${{ secrets.GUMROAD_ACCESS_TOKEN }}
+          GUMROAD_PRODUCT: ${{ vars.GUMROAD_PRODUCT_ID || 'animation-tool-kit' }}
+          UPDATE_FILE: ${{ vars.GUMROAD_UPDATE_FILE || 'true' }}
+          ASSETS_DIR: release-assets
+          MANUAL_STEPS_FILE: gumroad-manual-steps.md
+        run: python .github/scripts/gumroad_release.py
+      - name: Open an issue with the manual steps
+        if: hashFiles('gumroad-manual-steps.md') != '' && env.DRY_RUN != 'true'
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Update Gumroad by hand for $RELEASE_TAG" \
+            --body-file gumroad-manual-steps.md \
+            --assignee "$GITHUB_REPOSITORY_OWNER" \
+          || gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Update Gumroad by hand for $RELEASE_TAG" \
+            --body-file gumroad-manual-steps.md

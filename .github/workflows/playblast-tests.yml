@@ -96,6 +96,15 @@ jobs:
         with:
           python-version: '3.11'
       - run: python package_atk_release.py --version 1.1.31
+      # Read the version from the toolkit so these steps need no edit per release.
+      - name: Check whether this version is already released
+        id: before
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="ATK_$(python -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('atk_toolbar/__init__.py').read()).group(1))")"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" >/dev/null 2>&1; then echo "existed=true" >> "$GITHUB_OUTPUT"; fi
       - name: Publish verified ATK 1.1.31 release once
         env:
           GH_TOKEN: ${{ github.token }}
@@ -105,3 +114,28 @@ jobs:
           else
             gh release create ATK_1.1.31 dist/AnimationToolKit_v1_1_31.zip dist/AnimationToolKit_v1_1_31.zip.sha256 --target "$GITHUB_SHA" --title 'Animation Tool Kit v1.1.31' --notes-file Animation_Tool_Kit_v1.1.31_Release_Notes.md --latest
           fi
+      - name: Tell the Gumroad job whether a new release was published
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.before.outputs.tag }}
+        run: |
+          if [ "${{ steps.before.outputs.existed }}" != "true" ] && gh release view "$TAG" >/dev/null 2>&1; then
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+    outputs:
+      created: ${{ steps.published.outputs.created }}
+      tag: ${{ steps.before.outputs.tag }}
+  gumroad:
+    # Releases created with GITHUB_TOKEN do not trigger gumroad-release.yml's
+    # `release` event, so call it here, once, when a new release was made.
+    needs: release
+    if: needs.release.outputs.created == 'true'
+    permissions:
+      contents: read
+      issues: write
+    uses: ./.github/workflows/gumroad-release.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets:
+      GUMROAD_ACCESS_TOKEN: ${{ secrets.GUMROAD_ACCESS_TOKEN }}

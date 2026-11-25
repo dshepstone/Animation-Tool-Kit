@@ -104,3 +104,40 @@ If that file is missing, it falls back to:
 
 - The installer copies files into Maya user preference/script locations (per-user install).
 - If a tool file or icon is missing, Maya will show a warning and continue installing the rest.
+
+## Gumroad release updates (maintainers)
+
+Publishing a GitHub release runs
+[`.github/workflows/gumroad-release.yml`](.github/workflows/gumroad-release.yml),
+which updates the [Gumroad product](https://shepstone.gumroad.com/l/animation-tool-kit)
+through the Gumroad API. The release job in `playblast-tests.yml` calls it
+directly when it publishes a new release, reading the tag from
+`atk_toolbar/__init__.py`, so nothing extra needs editing per release:
+
+- **Description:** every `Version X.Y.Z` / `vX.Y.Z` is set to the new version,
+  and the "What's new" section is replaced with the release notes (the release
+  body, or `Animation_Tool_Kit_vX.Y.Z_Release_Notes.md` when the body is empty).
+  The section is found by its `<!-- atk-changelog:start/end -->` markers, then
+  by an h2 starting "What's new", and is otherwise added at the top.
+- **Download:** the release's `AnimationToolKit_vX_Y_Z.zip` is uploaded and
+  replaces the previous `AnimationToolKit_v*` ZIP. Other files stay, and
+  content pages that embed the old ZIP are pointed at the new one.
+- Pre-releases are skipped. If any step fails, the workflow opens an issue
+  with the steps to finish it by hand in the Gumroad editor.
+
+One-time setup:
+
+1. In Gumroad, open **Settings → Advanced → Applications**, create an
+   application (any name; the redirect URI can be `https://localhost`), then
+   click **Generate access token**. The token can edit your products, so keep
+   it private.
+2. In GitHub, open **Settings → Secrets and variables → Actions → New
+   repository secret**, name it `GUMROAD_ACCESS_TOKEN` and paste the token.
+   Never commit the token.
+3. Optional repository **variables** on the same page:
+   `GUMROAD_PRODUCT_ID` (defaults to the `animation-tool-kit` permalink) and
+   `GUMROAD_UPDATE_FILE=false` to update only the description.
+4. Test it: **Actions → Update Gumroad product → Run workflow**, enter the
+   current tag (for example `ATK_1.1.29`) and keep **dry run** ticked. The run
+   summary shows the new description and which file it would replace, without
+   changing Gumroad. Untick dry run to apply it.
