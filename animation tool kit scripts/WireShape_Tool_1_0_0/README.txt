@@ -137,9 +137,21 @@ If you prefer to install by hand, copy the files yourself:
                        matched groups above the selected objects
                        without changing their world position.
 
-  Snap to Selection  - When checked, the created control moves
-                       to the pivot of your current selection
-                       automatically.
+  Snap to Selection  - When checked and something is selected,
+                       one control is built on each selected
+                       object, at its pivot (rotate pivot), or at
+                       the centre of selected components (vertices,
+                       edges, faces, CVs). A selected shape node
+                       counts as its transform. With nothing
+                       selected, controls are built at 0,0,0.
+  Match Rotation     - Also turns each control to the object's
+                       world orientation (rotation, joint orient,
+                       rotate axis and parents included) and copies
+                       its rotate order. Scale, shear and mirroring
+                       (negative scale) are not copied, so the
+                       control keeps scale 1. Off: position only.
+                       The control's pivot stays at the shape's own
+                       origin, so it turns about the object's pivot.
 
   Search box         - Filter shapes by name in real time; empty
                        sections hide while filtering.
@@ -227,7 +239,8 @@ If you prefer to install by hand, copy the files yourself:
   follow its bone. One click is one undo step.
 
   All shapes are created at the world origin (or snapped to
-  selection) and named with a _CTRL suffix.
+  selection) and named with a _CTRL suffix. One click is one
+  undo step.
 
 
 ================================================================

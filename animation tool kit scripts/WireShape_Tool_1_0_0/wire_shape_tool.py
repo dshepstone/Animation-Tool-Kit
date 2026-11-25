@@ -642,6 +642,98 @@ def add_offset_groups(count: int = 1):
     return cmds.ls(outermost_ids, long=True) or []
 
 
+# ── Snap to selection ────────────────────────────────────────────────────────
+
+def _owner_transform(node):
+    """The transform a selected item belongs to (itself, a shape's parent,
+    or the object a component such as obj.vtx[3] lives on)."""
+    obj = node.split(".")[0]
+    try:
+        if cmds.objectType(obj, isAType="shape"):
+            parent = cmds.listRelatives(obj, parent=True, fullPath=True) or []
+            return parent[0] if parent else None
+    except Exception:
+        pass
+    return obj
+
+
+def selection_targets(selection):
+    """Where new controls should go, one target per selected object.
+
+    Returns a list of dicts with ``pos`` (world position), ``matrix`` (clean
+    world rotation as a flat 4x4, translation set to ``pos``) and
+    ``rotate_order``.  A transform, joint or control gives its rotate pivot
+    and world orientation (rotate, jointOrient, rotateAxis and parents all
+    included).  Components (vertices, edges, faces, CVs) give one target at
+    their centre, oriented like their object.  Shape nodes count as their
+    transform.
+    """
+    targets, seen = [], set()
+    components = {}
+    for item in selection or []:
+        if "." in item:
+            owner = _owner_transform(item)
+            if owner:
+                components.setdefault(owner, []).append(item)
+            continue
+        owner = _owner_transform(item)
+        if not owner or owner in seen:
+            continue
+        seen.add(owner)
+        try:
+            pos = cmds.xform(owner, q=True, ws=True, rp=True)
+            m = cmds.xform(owner, q=True, ws=True, m=True)
+        except Exception:
+            continue
+        targets.append(_make_target(owner, pos, m))
+    for owner, comps in components.items():
+        try:
+            flat = cmds.xform(comps, q=True, ws=True, t=True) or []
+            m = cmds.xform(owner, q=True, ws=True, m=True)
+        except Exception:
+            continue
+        pts = [flat[i:i + 3] for i in range(0, len(flat) - 2, 3)]
+        if not pts:
+            continue
+        lo = [min(p[k] for p in pts) for k in range(3)]
+        hi = [max(p[k] for p in pts) for k in range(3)]
+        pos = [(lo[k] + hi[k]) * 0.5 for k in range(3)]
+        targets.append(_make_target(owner, pos, m))
+    return targets
+
+
+def _make_target(owner, pos, world_matrix):
+    m = _matrix_without_scale(world_matrix)
+    m[12:15] = [float(c) for c in pos]
+    try:
+        rotate_order = cmds.getAttr(owner + ".rotateOrder")
+    except Exception:
+        rotate_order = 0
+    return {"node": owner, "pos": [float(c) for c in pos], "matrix": m,
+            "rotate_order": rotate_order}
+
+
+def align_to_target(node, target, rotate=True):
+    """Place node on a target from selection_targets().
+
+    With ``rotate`` the node takes the target's world orientation and rotate
+    order as well as its position; scale stays 1.
+    """
+    if rotate:
+        try:
+            cmds.setAttr(node + ".rotateOrder", target["rotate_order"])
+        except Exception:
+            pass
+        cmds.xform(node, ws=True, m=target["matrix"])
+        try:
+            cmds.setAttr(node + ".scale", 1, 1, 1, type="double3")
+            cmds.setAttr(node + ".shear", 0, 0, 0, type="double3")
+        except Exception:
+            pass
+    else:
+        cmds.xform(node, ws=True, t=target["pos"])
+
+
 # ── Joint Mode ───────────────────────────────────────────────────────────────
 #
 # Builds controls that sit on joints with the joint's own rotation axes, so
@@ -766,14 +858,36 @@ def pattern_needs_number(pattern):
     return "#" not in pattern and "{joint}" not in pattern
 
 
+def _normalize(v):
+    length = math.sqrt(sum(c * c for c in v))
+    return [c / length for c in v] if length > 1e-12 else None
+
+
+def _cross(a, b):
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+
 def _matrix_without_scale(m):
-    """Return a 4x4 (flat list) world matrix with its axes made unit length."""
+    """A 4x4 (flat list) world matrix reduced to a clean rotation + translation.
+
+    Builds a right-handed orthonormal frame from the matrix's X and Y axes:
+    X keeps its direction, Y is made perpendicular to it and Z follows.
+    That drops scale, shear and mirroring (negative scale), which a control
+    must not inherit, while keeping the orientation the object shows.
+    """
     out = list(m)
-    for row in range(3):
-        v = out[row * 4: row * 4 + 3]
-        length = math.sqrt(sum(c * c for c in v)) or 1.0
-        for i in range(3):
-            out[row * 4 + i] = v[i] / length
+    x = _normalize(out[0:3])
+    y = out[4:7]
+    if x is None:
+        x = [1.0, 0.0, 0.0]
+    z = _normalize(_cross(x, y))
+    if z is None:   # X and Y parallel or zero: fall back on the matrix's Z
+        z = _normalize(out[8:11]) or [0.0, 0.0, 1.0]
+        y = _normalize(_cross(z, x)) or [0.0, 1.0, 0.0]
+        z = _cross(x, y)
+    else:
+        y = _cross(z, x)
+    out[0:3], out[4:7], out[8:11] = x, y, z
     return out
 
 
@@ -1776,9 +1890,24 @@ class WireShapeToolUI:
         self.snap_cb = QtWidgets.QCheckBox("Snap to Selection")
         self.snap_cb.setChecked(True)
         self.snap_cb.setToolTip(
-            "If something is selected, move the created control to the selection pivot."
+            "If something is selected, build one control on each selected object\n"
+            "(at its pivot) or at the centre of selected components. With nothing\n"
+            "selected, controls are built at the origin."
         )
-        header.addWidget(self.snap_cb, 0, QtCore.Qt.AlignTop)
+        self.match_rot_cb = QtWidgets.QCheckBox("Match Rotation")
+        self.match_rot_cb.setChecked(True)
+        self.match_rot_cb.setToolTip(
+            "Also turn the new control to the selected object's world orientation\n"
+            "(rotation, joint orient and parents included; scale and mirroring are\n"
+            "not copied). Off: position only.")
+        snap_col = QtWidgets.QVBoxLayout()
+        snap_col.setSpacing(4)
+        snap_col.addWidget(self.snap_cb)
+        snap_col.addWidget(self.match_rot_cb)
+        snap_col.addStretch(1)
+        self.snap_cb.toggled.connect(lambda on: self.match_rot_cb.setEnabled(
+            on and not self.joint_mode_cb.isChecked()))
+        header.addLayout(snap_col)
         main.addLayout(header)
         main.addSpacing(12)
 
@@ -2299,6 +2428,7 @@ class WireShapeToolUI:
         self.single_rb.setEnabled(on)
         self.multi_rb.setEnabled(on)
         self.snap_cb.setEnabled(not on)
+        self.match_rot_cb.setEnabled(not on and self.snap_cb.isChecked())
         multi = self.multi_rb.isChecked()
         for w in self._multi_widgets:
             w.setEnabled(multi)
@@ -2730,64 +2860,65 @@ class WireShapeToolUI:
 
     # ── Actions ──────────────────────────────────────────────────────────────
 
-    def _snap_to_previous_selection(self, node, prev_sel, index=-1):
-        """Move node to the pivot of a previously selected object (last by default)."""
-        if not (self.snap_cb.isChecked() and prev_sel):
-            return
-        try:
-            src = prev_sel[index]
-            pos = cmds.xform(src, q=True, ws=True, rp=True)
-            cmds.xform(node, ws=True, t=pos)
-        except Exception:
-            pass
+    def _snap_targets(self):
+        """Targets for the current selection, or [] when Snap is off."""
+        if not self.snap_cb.isChecked():
+            return []
+        return selection_targets(cmds.ls(sl=True, long=True, flatten=True) or [])
 
     def _on_create(self, shape_def: ShapeDef):
         if self.joint_mode_cb.isChecked():
             self._on_create_joint_mode(shape_def)
             return
-        # Capture selection before creation for snap-to-selection
-        prev_sel = cmds.ls(sl=True, long=True) or []
-        # The classic MEL shapes build one copy per selected object so each
-        # can snap to its own target. With Snap off that only stacks
-        # duplicates at the origin, so create a single shape instead.
-        if prev_sel and not self.snap_cb.isChecked():
-            cmds.select(clear=True)
+        sel = cmds.ls(sl=True, long=True) or []
+        targets = self._snap_targets()
+        if sel and self.snap_cb.isChecked() and not targets:
+            cmds.warning("Wire Shapes: Nothing in the selection has a position to "
+                         "snap to; building at the origin.")
+        rotate = self.match_rot_cb.isChecked()
+        created = []
+        cmds.undoInfo(openChunk=True, chunkName="WireShapesCreate")
         try:
-            created = shape_def.creator()
+            for target in targets or [None]:
+                # Build each control from a clear selection: the classic
+                # shapes otherwise make one copy per selected object.
+                cmds.select(clear=True)
+                nodes = shape_def.creator()
+                if not nodes:
+                    continue
+                node_id = _uuid(nodes[0])
+                for extra in nodes[1:]:
+                    try:
+                        cmds.delete(extra)
+                    except Exception:
+                        pass
+                # The control's pivot stays where the shape was built (its
+                # origin), so it turns about the target's pivot.
+                if target is not None:
+                    align_to_target(_node_path(node_id), target, rotate)
+                created.append(_node_path(node_id))
         except Exception as e:
             cmds.warning(
-                "Wire Shapes: Failed to create '{0}': {1}".format(shape_def.label, e)
-            )
-            return
+                "Wire Shapes: Failed to create '{0}': {1}".format(shape_def.label, e))
+        finally:
+            cmds.undoInfo(closeChunk=True)
 
         if not created:
             cmds.warning(
-                "Wire Shapes: No object created for '{0}'.".format(shape_def.label)
-            )
+                "Wire Shapes: No object created for '{0}'.".format(shape_def.label))
             return
-
         cmds.select(created, replace=True)
-        if len(created) > 1 and len(created) == len(prev_sel):
-            # One shape per selected object: snap each to its own target.
-            for i, node in enumerate(created):
-                self._snap_to_previous_selection(node, prev_sel, i)
-        else:
-            self._snap_to_previous_selection(created[0], prev_sel)
-
-        try:
-            cmds.xform(created, centerPivots=True)
-        except Exception:
-            pass
 
     def _on_create_dummy(self):
-        prev_sel = cmds.ls(sl=True, long=True) or []
+        targets = self._snap_targets()
         try:
             zero, ctrl = create_offset_dummy("dummy", offsets=self.offset_spin.value())
         except Exception as e:
             cmds.warning("Wire Shapes: Failed to create offset dummy: {0}".format(e))
             return
         # Move the whole chain via the ZERO group so the control stays zeroed
-        self._snap_to_previous_selection(zero, prev_sel)
+        if targets:
+            align_to_target(zero, targets[-1], self.match_rot_cb.isChecked())
         cmds.select(ctrl, replace=True)
 
     def _on_wrap_selection(self):

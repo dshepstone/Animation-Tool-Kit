@@ -2,12 +2,12 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.27** brings **Wire Shapes** 2.3.0: the Joint Mode per-joint list
-loads your current joint selection as soon as you open it and has a **Size**
-for each controller. It keeps everything from 1.1.26, including FK
-parent-constraint chains, **Best Option** shapes, a shape per joint and the
-**Batch Rename** tab.
-See [release notes](Animation_Tool_Kit_v1.1.27_Release_Notes.md).
+Version **1.1.28** brings **Wire Shapes** 2.3.1: shapes built with **Snap to
+Selection** now land on each selected object's pivot with its orientation
+(**Match Rotation**), on the centre of selected components, or at the origin
+when nothing is selected. It keeps everything from 1.1.27, including the
+Joint Mode per-joint list with a **Size** per controller.
+See [release notes](Animation_Tool_Kit_v1.1.28_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.

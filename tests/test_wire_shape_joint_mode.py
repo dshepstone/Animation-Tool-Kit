@@ -58,6 +58,7 @@ class FakeScene(object):
         self.selection = []
         self.constraints = []
         self.warnings = []
+        self.components = {}    # "obj.vtx[0]" -> world position
         self.rotations = {}     # uuid -> euler baked into the shape
         self.scales = {}
 
@@ -104,6 +105,9 @@ class FakeScene(object):
     def nodeType(self, node):
         return self.find(node).type
 
+    def objectType(self, node, isAType=None):
+        return self.find(node).type in ("nurbsCurve", "mesh", "locator")
+
     def listRelatives(self, node, **kw):
         n = self.find(node)
         if kw.get("parent"):
@@ -118,11 +122,21 @@ class FakeScene(object):
         return [self.path(c) for c in kids]
 
     def xform(self, node, **kw):
+        if isinstance(node, (list, tuple)) or "." in str(node):
+            items = node if isinstance(node, (list, tuple)) else [node]
+            flat = []
+            for it in items:
+                flat.extend(self.components[it])
+            return flat
         n = self.find(node)
         if kw.get("q"):
             if kw.get("m"):
                 return [*n.axes[0], 0, *n.axes[1], 0, *n.axes[2], 0, *n.pos, 1]
+            if kw.get("rp"):
+                return list(getattr(n, "rp", n.pos))
             return list(n.pos)
+        if "t" in kw and kw.get("ws"):
+            n.pos = tuple(kw["t"])
         if "m" in kw:
             m = kw["m"]
             n.axes = [m[0:3], m[4:7], m[8:11]]
@@ -477,6 +491,135 @@ class BatchRename(unittest.TestCase):
         self.assertEqual([r.split("|")[-1] for r in out], ["spine1", "spine2"])
         out = wst.prefix_suffix_names(["spine1"], "C_", "_JNT", hierarchy=True)
         self.assertEqual([r.split("|")[-1] for r in out], ["C_spine1_JNT", "C_spine2_JNT"])
+
+
+class SnapToSelection(unittest.TestCase):
+    """Shapes built outside Joint Mode land on the selection's pivot and axes."""
+
+    def scene_with(self):
+        scene = FakeScene()
+        wrist = Node("L_wrist_CTRL", "transform")
+        # Turned 90 deg about Z and 30 about X, inside a parent scaled 2.5
+        # and mirrored (-1 X): the world axes carry scale and a reflection.
+        rot = _rot_matrix(30, 0, 90)
+        wrist.axes = [[-2.5 * c for c in rot[0]], [2.5 * c for c in rot[1]],
+                      [2.5 * c for c in rot[2]]]
+        wrist.pos = (5.0, 4.0, 1.0)
+        wrist.rp = (5.5, 4.0, 1.0)          # pivot moved off the translate
+        wrist.attrs["rotateOrder"] = 3
+        scene.nodes.append(wrist)
+        mesh = Node("body", "transform")
+        mesh.pos = (0.0, 0.0, 0.0)
+        scene.nodes.append(mesh)
+        shape = Node("bodyShape", "mesh", mesh)
+        scene.nodes.append(shape)
+        scene.components = {"|body.vtx[0]": (1.0, 2.0, 0.0), "|body.vtx[1]": (3.0, 2.0, 2.0)}
+        return scene, rot
+
+    def test_clean_frame_drops_scale_shear_and_mirror(self):
+        wst = load_tool(FakeScene())
+        m = wst._matrix_without_scale([-2, 0, 0, 0,  0.5, 3, 0, 0,  0, 0, 4, 0,  1, 2, 3, 1])
+        x, y, z = m[0:3], m[4:7], m[8:11]
+        dot = lambda a, b: sum(i * j for i, j in zip(a, b))
+        for v in (x, y, z):
+            self.assertAlmostEqual(dot(v, v), 1.0)
+        self.assertAlmostEqual(dot(x, y), 0.0)
+        cross = [x[1]*y[2]-x[2]*y[1], x[2]*y[0]-x[0]*y[2], x[0]*y[1]-x[1]*y[0]]
+        self.assertEqual([round(c, 6) for c in cross], [round(c, 6) for c in z])  # right-handed
+        self.assertEqual([round(c, 6) for c in x], [-1.0, 0.0, 0.0])           # X kept
+        self.assertEqual(m[12:15], [1, 2, 3])
+
+    def test_targets_for_objects_shapes_and_components(self):
+        scene, rot = self.scene_with()
+        wst = load_tool(scene)
+        targets = wst.selection_targets(
+            ["|L_wrist_CTRL", "|body|bodyShape", "|body.vtx[0]", "|body.vtx[1]"])
+        self.assertEqual([t["node"] for t in targets], ["|L_wrist_CTRL", "|body", "|body"])
+        wrist, body, comps = targets
+        self.assertEqual(wrist["pos"], [5.5, 4.0, 1.0])                   # rotate pivot
+        self.assertEqual(wrist["rotate_order"], 3)
+        self.assertEqual(body["pos"], [0.0, 0.0, 0.0])                    # shape -> transform
+        self.assertEqual(comps["pos"], [2.0, 2.0, 1.0])                   # component centre
+
+    def test_align_matches_position_and_orientation(self):
+        scene, rot = self.scene_with()
+        wst = load_tool(scene)
+        target = wst.selection_targets(["|L_wrist_CTRL"])[0]
+        ctrl = Node("ctrl", "transform")
+        scene.nodes.append(ctrl)
+        wst.align_to_target("|ctrl", target)
+        self.assertEqual(ctrl.pos, (5.5, 4.0, 1.0))
+        self.assertEqual(ctrl.attrs["rotateOrder"], 3)
+        # Same X and Y axis directions as the wrist (scale removed); Z is
+        # rebuilt right-handed rather than mirrored.
+        self.assertEqual([round(c, 6) for c in ctrl.axes[0]], [round(-c, 6) for c in rot[0]])
+        self.assertEqual([round(c, 6) for c in ctrl.axes[1]], [round(c, 6) for c in rot[1]])
+
+        other = Node("ctrl2", "transform")
+        scene.nodes.append(other)
+        wst.align_to_target("|ctrl2", target, rotate=False)
+        self.assertEqual(tuple(other.pos), (5.5, 4.0, 1.0))
+        self.assertEqual(other.axes, [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+
+    def test_nothing_selected_gives_no_targets(self):
+        wst = load_tool(FakeScene())
+        self.assertEqual(wst.selection_targets([]), [])
+
+
+try:
+    from PySide6 import QtWidgets as _QtWidgets
+except ImportError:  # pragma: no cover
+    _QtWidgets = None
+
+
+@unittest.skipIf(_QtWidgets is None, "PySide6 not installed")
+class SnapFromTheWindow(unittest.TestCase):
+    """Clicking a shape outside Joint Mode, as the window does it."""
+
+    def test_one_control_per_target_and_origin_without_selection(self):
+        import os
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = _QtWidgets.QApplication.instance() or _QtWidgets.QApplication([])
+        scene, rot = SnapToSelection().scene_with()
+        scene.undoInfo = lambda *a, **k: None
+        scene.scriptJob = lambda *a, **k: 1
+        plain_ls = scene.ls
+        scene.ls = lambda *a, **k: plain_ls(*a, **{x: y for x, y in k.items() if x != "flatten"})
+        wst = load_tool(scene)
+
+        def fake(d):
+            def creator(key=d.key):
+                n = Node("%s_CTRL%d" % (key, len(scene.nodes)), "transform")
+                n.shape = "nurbsCurve"
+                scene.nodes.append(n)
+                return [n.name]
+            return wst.ShapeDef(d.key, d.label, creator, [], d.tooltip, d.category)
+        defs = [fake(d) for d in wst.get_shape_defs()]
+        wst.get_shape_defs = lambda: list(defs)
+        ui = wst.WireShapeToolUI()
+        try:
+            scene.selection = ["|L_wrist_CTRL", "|body.vtx[0]", "|body.vtx[1]"]
+            ui._on_create(ui._defs_by_key["lollipop"])
+            made = [scene.find(n) for n in scene.selection]
+            self.assertEqual([m.pos for m in made], [(5.5, 4.0, 1.0), (2.0, 2.0, 1.0)])
+            self.assertEqual([round(c, 6) for c in made[0].axes[0]],
+                             [round(-c, 6) for c in rot[0]])
+
+            ui.match_rot_cb.setChecked(False)
+            scene.selection = ["|L_wrist_CTRL"]
+            ui._on_create(ui._defs_by_key["circleX"])
+            made = scene.find(scene.selection[0])
+            self.assertEqual(tuple(made.pos), (5.5, 4.0, 1.0))
+            self.assertEqual(made.axes, [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+
+            scene.selection = []
+            ui._on_create(ui._defs_by_key["circleX"])
+            made = [scene.find(n) for n in scene.selection]
+            self.assertEqual([m.pos for m in made], [(0.0, 0.0, 0.0)])
+        finally:
+            ui.dlg.close()
+            ui.dlg.deleteLater()
+            app.processEvents()
 
 
 if __name__ == "__main__":
