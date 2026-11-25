@@ -64,7 +64,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.1.24"
+VERSION        = "1.1.25"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -2496,6 +2496,23 @@ def _ensure_ui_component_visible(component):
     return True
 
 
+def _warn_if_time_slider_damaged():
+    """Warn when the Time Slider panel is shown but its slider is gone.
+
+    Reload Scripts in ATK 1.1.24 and earlier could delete Maya's
+    ``timeControl1`` along with a Timeline Ticks or Bookmarks overlay,
+    leaving an empty strip that only a Maya restart rebuilds.
+    """
+    try:
+        slider = mel.eval("$atkTbSlider = $gPlayBackSlider")
+        if slider and cmds.control(slider, exists=True):
+            return
+    except Exception:
+        return
+    cmds.warning("ATK Toolbar: Maya's Time Slider widget is missing (the strip "
+                 "above the Range Slider is empty). Restart Maya to rebuild it.")
+
+
 def show():
     """Create or restore the ATK toolbar workspaceControl.
 
@@ -2582,6 +2599,7 @@ def show():
         # the bar to the very bottom of Maya (under the Help Line).  Bring the
         # Time Slider back first, then fall back to the Range Slider.
         _ensure_ui_component_visible("Time Slider")
+        _warn_if_time_slider_damaged()
         anchor = _ui_component_anchor("Time Slider")
         if anchor:
             candidates.append({"dockToControl": (anchor, "top")})

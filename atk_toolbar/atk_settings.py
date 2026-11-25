@@ -1103,13 +1103,13 @@ def close_tool_windows():
     for widget in outermost:
         try:
             tool_id = owner(widget)
-            control, parent = None, widget
-            while parent is not None:
-                name = parent.objectName()
-                if name and cmds.workspaceControl(name, exists=True):
-                    control = name
-                    break
-                parent = parent.parentWidget()
+            control, embedded = _tool_workspace_control(widget)
+            if embedded:
+                # An overlay or helper the tool placed inside Maya's own UI
+                # (Timeline Ticks / Bookmarks draw on the Time Slider). It is
+                # not a window: the tool's shutdown() removes it. Deleting
+                # its enclosing control here deleted Maya's Time Slider.
+                continue
             if control:
                 cmds.deleteUI(control)
             else:
@@ -1121,6 +1121,56 @@ def close_tool_windows():
         except Exception as exc:
             cmds.warning("ATK Toolbar: could not close a tool window: {}".format(exc))
     return reopen
+
+
+# Maya's own UI elements (Windows > UI Elements and the main panes). Reload
+# Scripts must never delete these, whatever a tool has parented inside them.
+_MAYA_UI_CONTROLS = frozenset((
+    "TimeSlider", "RangeSlider", "Shelf", "StatusLine", "ToolBox",
+    "CommandLine", "HelpLine", "ChannelBoxLayerEditor", "AttributeEditor",
+    "Outliner", "ToolSettings", "MainPane", "ToolBar", "PlaybackControls",
+))
+
+
+def _is_maya_ui_object(name):
+    """True when ``name`` is a Maya UI object (control, layout, panel...)."""
+    try:
+        return bool(cmds.objectTypeUI(name))
+    except Exception:
+        return False
+
+
+def _tool_workspace_control(widget):
+    """Find the workspaceControl hosting a tool widget.
+
+    Returns ``(control, embedded)``. ``control`` is the name of the tool's
+    own workspaceControl, or None for a plain floating window. ``embedded``
+    is True when the widget sits inside Maya's own UI instead - a Maya
+    control or panel lies between it and the workspaceControl (an overlay
+    on ``timeControl1``), or the control is one of Maya's UI elements - and
+    nothing may be deleted for it.
+
+    ``workspaceControl -exists`` answers True for any UI object of that
+    name, so each candidate is checked to really be a workspaceControl.
+    """
+    parent = widget.parentWidget()
+    while parent is not None:
+        name = parent.objectName()
+        if name and _is_maya_ui_object(name):
+            try:
+                kind = cmds.objectTypeUI(name)
+            except Exception:
+                kind = ""
+            if kind == "workspaceControl":
+                if name in _MAYA_UI_CONTROLS:
+                    return None, True
+                return name, False
+            if not kind.lower().endswith("layout"):
+                # A Maya control or panel (timeControl1, a modelPanel, ...)
+                # owns this widget: it is drawn on Maya's UI.
+                return None, True
+        parent = parent.parentWidget()
+    return None, False
 
 
 def _show_fresh_toolbar(reopen, summary):
