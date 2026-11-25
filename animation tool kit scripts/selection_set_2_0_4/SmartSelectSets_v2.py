@@ -1165,7 +1165,9 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             return
 
         self._teardown()
-        super().closeEvent(event)
+        # Accept directly: QDialog.closeEvent would call reject(), which is
+        # routed back to close() above and makes Qt ignore this close.
+        event.accept()
 
     def reject(self) -> None:
         # Esc: close like the title bar button (saves, keeps pop-outs alive)
@@ -2327,7 +2329,8 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
         self.close()  # Esc closes (and deletes) the pop-out like its x button
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        super().closeEvent(event)
+        # Not QDialog.closeEvent: it calls reject(), which calls close() again
+        event.accept()
         host = self.host_window
         try:
             if host is not None and isValid(host):

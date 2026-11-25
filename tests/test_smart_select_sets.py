@@ -307,8 +307,31 @@ class WindowTests(SmartSelectSetsTestCase):
         _pump()
         popup.close()
         _pump(6)
+        self.assertFalse(shiboken6.isValid(popup) and popup.isVisible())
         self.assertFalse(shiboken6.isValid(win))
         self.assertFalse(jobs & self.cmds.jobs)
+
+    def test_close_really_closes_window_and_popout(self):
+        win = self.win
+        win.manager.create_group("x", "Body", ["a"])
+        win.refresh_ui()
+        win.open_category_popout("Body")
+        popup = win.popout_windows["Body"]
+        popup.close()
+        _pump(6)
+        self.assertFalse(shiboken6.isValid(popup) and popup.isVisible())
+        self.assertNotIn("Body", win.popout_windows)
+        jobs = set(self.cmds.jobs)
+        win.close()
+        _pump(6)
+        self.assertFalse(shiboken6.isValid(win) and win.isVisible())
+        self.assertFalse(jobs & self.cmds.jobs)
+
+    def test_escape_closes_window(self):
+        win = self.win
+        win.reject()
+        _pump(6)
+        self.assertFalse(shiboken6.isValid(win) and win.isVisible())
 
     def test_shutdown_closes_hidden_window_and_popouts(self):
         win = self.win
