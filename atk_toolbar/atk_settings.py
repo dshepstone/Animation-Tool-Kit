@@ -1144,7 +1144,9 @@ def _tool_workspace_control(widget):
     """Find the workspaceControl hosting a tool widget.
 
     Returns ``(control, embedded)``. ``control`` is the name of the tool's
-    own workspaceControl, or None for a plain floating window. ``embedded``
+    own workspaceControl, or None for a plain floating window (the widget,
+    or an ancestor below any Maya control, is a top-level window - a tool
+    window parented to Maya's main window included). ``embedded``
     is True when the widget sits inside Maya's own UI instead - a Maya
     control or panel lies between it and the workspaceControl (an overlay
     on ``timeControl1``), or the control is one of Maya's UI elements - and
@@ -1153,6 +1155,8 @@ def _tool_workspace_control(widget):
     ``workspaceControl -exists`` answers True for any UI object of that
     name, so each candidate is checked to really be a workspaceControl.
     """
+    if widget.isWindow():
+        return None, False          # the tool's own floating window
     parent = widget.parentWidget()
     while parent is not None:
         name = parent.objectName()
@@ -1169,6 +1173,11 @@ def _tool_workspace_control(widget):
                 # A Maya control or panel (timeControl1, a modelPanel, ...)
                 # owns this widget: it is drawn on Maya's UI.
                 return None, True
+        if parent.isWindow():
+            # Reached a floating top-level window (a tool window, or one
+            # Maya's dock made) without passing a Maya control: the widget
+            # belongs to that window, which a plain close handles.
+            return None, False
         parent = parent.parentWidget()
     return None, False
 
