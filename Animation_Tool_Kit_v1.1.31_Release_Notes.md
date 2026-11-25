@@ -41,5 +41,7 @@ renames the category (for Uncategorized it changes the label shown).
 
 ## Retained features
 
-Includes everything from 1.1.29: Reload Scripts reopening floating tool windows,
-the Batch Rename fix, Wire Shapes Joint Mode, and all earlier tools and fixes.
+Includes everything from 1.1.30: the TweenMachine fix (it opens again under
+Maya's Python 3), and from 1.1.29 Reload Scripts reopening floating tool
+windows, the Batch Rename fix, Wire Shapes Joint Mode, and all earlier tools and
+fixes.

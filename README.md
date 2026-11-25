@@ -6,7 +6,7 @@ Version **1.1.31** improves **Smart Select Sets** (2.6.0): pop-out pickers stay
 open after the main window is closed, and stay in front of Maya without covering
 other applications; buttons can be dragged into a new position within a
 category; and a deleted category name can be created again. It keeps everything
-from 1.1.29.
+from 1.1.30, including the **TweenMachine** fix (it opens again).
 See [release notes](Animation_Tool_Kit_v1.1.31_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
