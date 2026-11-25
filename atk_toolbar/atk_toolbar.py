@@ -64,7 +64,7 @@ from . import atk_settings
 # ---------------------------------------------------------------------------
 WORKSPACE_NAME = "ATKToolbar"
 TOOLBAR_LABEL  = "Animation Tool Kit"
-VERSION        = "1.1.23"
+VERSION        = "1.1.24"
 
 # optionVar keys mirrored from atk_settings
 _OPT_ICON_SIZE       = atk_settings.OPT_ICON_SIZE
@@ -2454,6 +2454,48 @@ def _rebuild_ui():
     QtCore.QTimer.singleShot(50, _remove_min_max_buttons)
 
 
+def _ui_component_anchor(component):
+    """The visible toolbar control holding a Maya UI element, or None.
+
+    ``component`` is a UI element name as used by Windows > UI Elements,
+    such as "Time Slider", "Range Slider" or "Shelf".
+    """
+    try:
+        anchor = mel.eval('getUIComponentToolBar("%s", false)' % component)
+    except Exception:
+        return None
+    if not anchor:
+        return None
+    try:
+        if not cmds.control(anchor, exists=True):
+            return None
+    except Exception:
+        return None
+    try:
+        if cmds.workspaceControl(anchor, exists=True) and \
+                not cmds.workspaceControl(anchor, q=True, visible=True):
+            return None
+    except Exception:
+        pass
+    return anchor
+
+
+def _ensure_ui_component_visible(component):
+    """Show a Maya UI element (Windows > UI Elements) if it is hidden.
+
+    Returns True when the element had to be shown.
+    """
+    try:
+        if mel.eval('isUIComponentVisible("%s")' % component):
+            return False
+        mel.eval('toggleUIComponentVisibility("%s")' % component)
+    except Exception:
+        return False
+    print("ATK Toolbar: Maya's %s was hidden; showing it so the toolbar can "
+          "dock above the timeline." % component)
+    return True
+
+
 def show():
     """Create or restore the ATK toolbar workspaceControl.
 
@@ -2535,17 +2577,21 @@ def show():
 
     # Candidate dock targets, tried in order until one succeeds.
     candidates = []
-    try:
-        if dock_pos == "above_timeline":
-            anchor = mel.eval('getUIComponentToolBar("Time Slider", false)')
-            if anchor and cmds.control(anchor, exists=True):
-                candidates.append({"dockToControl": (anchor, "top")})
-        elif dock_pos == "below_shelf":
-            anchor = mel.eval('getUIComponentToolBar("Shelf", false)')
-            if anchor and cmds.control(anchor, exists=True):
-                candidates.append({"dockToControl": (anchor, "bottom")})
-    except Exception:
-        pass
+    if dock_pos == "above_timeline":
+        # A hidden Time Slider has no toolbar to dock against, which dropped
+        # the bar to the very bottom of Maya (under the Help Line).  Bring the
+        # Time Slider back first, then fall back to the Range Slider.
+        _ensure_ui_component_visible("Time Slider")
+        anchor = _ui_component_anchor("Time Slider")
+        if anchor:
+            candidates.append({"dockToControl": (anchor, "top")})
+        anchor = _ui_component_anchor("Range Slider")
+        if anchor:
+            candidates.append({"dockToControl": (anchor, "top")})
+    elif dock_pos == "below_shelf":
+        anchor = _ui_component_anchor("Shelf")
+        if anchor:
+            candidates.append({"dockToControl": (anchor, "bottom")})
 
     # dockToMainWindow only accepts the "left", "right" and "bottom" areas.
     if dock_pos == "left":
