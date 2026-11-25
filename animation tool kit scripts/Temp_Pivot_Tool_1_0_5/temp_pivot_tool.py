@@ -398,16 +398,38 @@ _ALLOWED_INPUT_PREFIXES = ("animBlendNode",)
 
 
 def _channel_input(node: str, attr: str) -> Optional[str]:
-    """Return the node driving ``node.attr`` (or its compound parent)."""
-    for plug in (f"{node}.{attr}", f"{node}.{attr[0]}"):
-        if not cmds.objExists(plug):
-            continue
+    """Return the node driving ``node.attr`` (or its compound parent).
+
+    The compound (``t`` / ``r``) only counts when it is connected itself.
+    ``listConnections`` on a compound also returns its children's inputs,
+    so an expression on ``tx`` alone would otherwise mark ``ty`` and ``tz``
+    as driven too.
+    """
+    plug = f"{node}.{attr}"
+    if cmds.objExists(plug):
         sources = cmds.listConnections(
             plug, source=True, destination=False, plugs=False,
             skipConversionNodes=True
         ) or []
         if sources:
             return sources[0]
+
+    compound = f"{node}.{attr[0]}"
+    if cmds.objExists(compound):
+        try:
+            exact = cmds.connectionInfo(compound, isExactDestination=True)
+        except Exception:
+            exact = False
+        if exact:
+            source_plug = cmds.connectionInfo(compound, sourceFromDestination=True) or ""
+            source = source_plug.split(".")[0]
+            if source and cmds.nodeType(source) == "unitConversion":
+                upstream = cmds.listConnections(
+                    f"{source}.input", source=True, destination=False,
+                    skipConversionNodes=True
+                ) or []
+                source = upstream[0] if upstream else source
+            return source or None
     return None
 
 
@@ -1234,7 +1256,7 @@ def complete_setup(null_grp_1: str, report: bool = True) -> Tuple[bool, str, Opt
         return True, message, settings_node
     except Exception as exc:
         _rollback_setup(pivot_short, original_parent, original_matrix,
-                        original_pivot_ws, created)
+                        original_pivot_ws, created, prefix)
         if report:
             return False, _report_exception(title, exc), None
         raise
@@ -1244,9 +1266,30 @@ def complete_setup(null_grp_1: str, report: bool = True) -> Tuple[bool, str, Opt
 
 def _rollback_setup(pivot_short: str, original_parent: List[str],
                     original_matrix: List[float], original_pivot_ws: List[float],
-                    created: List[str]) -> None:
-    """Undo a half-finished Complete Setup so the user can try again."""
+                    created: List[str], prefix: str = "") -> None:
+    """Undo a half-finished Complete Setup so the user can try again.
+
+    The pivot goes back to being a pending Stage 1 null: if the failure
+    came after it was marked complete, ``setupComplete`` is reset and its
+    link to the deleted settings node is cleared, and any auto-key jobs
+    already installed are removed.
+    """
+    for node in created:
+        if _rig_suffix_of(node) == SETTINGS_SUFFIX:
+            try:
+                cleanup_auto_key(node)
+            except Exception:
+                pass
     pivot = _resolve_stored_name(pivot_short)
+    if pivot:
+        try:
+            if cmds.attributeQuery("setupComplete", node=pivot, exists=True):
+                cmds.setAttr(f"{pivot}.setupComplete", False)
+            if cmds.attributeQuery("settingsNode", node=pivot, exists=True):
+                cmds.setAttr(f"{pivot}.settingsNode", "", type="string")
+            _set_null_color(pivot, UI_COLORS["stage1"])
+        except Exception:
+            pass
     try:
         if pivot:
             current_parent = cmds.listRelatives(pivot, parent=True, fullPath=True) or []

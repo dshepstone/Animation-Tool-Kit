@@ -96,7 +96,11 @@ class Scene(object):
             return [n for n, d in self.nodes.items()
                     if any(src == node for src in d["inputs"].values())]
         inputs = self.nodes[node]["inputs"]
-        sources = [inputs[attr]] if attr in inputs else ([] if attr else list(inputs.values()))
+        if attr in ("t", "r"):
+            # Like Maya: a compound query also returns its children's inputs.
+            sources = [v for k, v in inputs.items() if k == attr or (len(k) == 2 and k[0] == attr)]
+        else:
+            sources = [inputs[attr]] if attr in inputs else ([] if attr else list(inputs.values()))
         wanted = kwargs.get("type")
         if wanted:
             sources = [s for s in sources
@@ -121,6 +125,20 @@ class Scene(object):
         if kwargs.get("q"):
             return [0.0, 0.0, 0.0]
         return None
+
+    def connectionInfo(self, plug, **kwargs):
+        node, _, attr = plug.partition(".")
+        source = self.nodes[node]["inputs"].get(attr)
+        if kwargs.get("isExactDestination"):
+            return source is not None
+        if kwargs.get("sourceFromDestination"):
+            return f"{source}.output" if source else ""
+        return None
+
+    def setAttr(self, path, value, **kwargs):
+        node, _, attr = path.partition(".")
+        if node in self.nodes:
+            self.nodes[node]["attrs"][attr] = value
 
     def about(self, **kwargs):
         return False
@@ -215,6 +233,21 @@ class DiagnoseControlTest(unittest.TestCase):
         self.assertTrue(any("expression" in p for p in report["problems"]))
         self.assertTrue(any("set driven key" in p for p in report["problems"]))
 
+    def test_one_driven_axis_does_not_block_its_siblings(self):
+        self.scene.add("hand_ctrl")
+        self.scene.add("hand_expr", "expression")
+        self.scene.nodes["hand_ctrl"]["inputs"]["tx"] = "hand_expr"
+        report = self.tool.get_channel_report("hand_ctrl")
+        self.assertEqual(report["skip_translate"], ["x"])
+        self.assertEqual(report["skip_rotate"], [])
+
+    def test_connected_compound_blocks_all_three_axes(self):
+        self.scene.add("hand_ctrl")
+        self.scene.add("hand_mult", "multiplyDivide")
+        self.scene.nodes["hand_ctrl"]["inputs"]["r"] = "hand_mult"
+        report = self.tool.get_channel_report("hand_ctrl")
+        self.assertEqual(report["skip_rotate"], ["x", "y", "z"])
+
     def test_zero_scale_is_reported(self):
         self.scene.add("hand_ctrl")
         self.scene.nodes["hand_ctrl"]["matrix"] = [0, 0, 0, 0] + IDENTITY[4:]
@@ -258,6 +291,19 @@ class FailureReportTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("simulated Maya failure", message)
         self.assertEqual(len(self.scene.dialogs), 1)
+
+    def test_failed_setup_leaves_the_pivot_pending(self):
+        """A failure after setupComplete was set must not block a retry."""
+        pivot = self.scene.add("hand_ctrl_TMP_pivot", setupComplete=True,
+                               settingsNode="hand_ctrl_TMP_settings",
+                               targetControl="hand_ctrl")
+        self.scene.add("hand_ctrl_TMP_settings")
+        self.tool._rollback_setup(pivot, [], list(IDENTITY), [0, 0, 0],
+                                  ["hand_ctrl_TMP_settings"], "hand_ctrl")
+        self.assertFalse(self.scene.nodes[pivot]["attrs"]["setupComplete"])
+        self.assertEqual(self.scene.nodes[pivot]["attrs"]["settingsNode"], "")
+        self.assertNotIn("hand_ctrl_TMP_settings", self.scene.nodes)
+        self.assertEqual(self.tool.find_rig_context([pivot]), ("pending", pivot))
 
     def test_empty_selection_is_explained(self):
         self.scene.selection = []
