@@ -36,6 +36,7 @@ left / right name tokens (lf/rt, l/r, left/right, L_/R_, armL ...).
 Usage
 -----
     import mirror_pose
+    mirror_pose.show()                 # the Mirror Pose window
     mirror_pose.mirror_pose()          # whole character of the selection
     mirror_pose.mirror_selected()      # only the selected controls (and
                                        # their partners)
@@ -370,6 +371,8 @@ def _show_report(title, problems, details="", icon="warning"):
     Maya's command line.
     """
     problems = [p for p in problems if p] or ["Unknown reason (see Script Editor)."]
+    LAST_REPORT.append(title + ":")
+    LAST_REPORT.extend(problems)
     lines = ["{}: {}".format(TOOL_TITLE, title), ""]
     lines += ["  - {}".format(p) for p in problems]
     if details:
@@ -540,9 +543,11 @@ def _sample(ctrl, to_deg):
 class _Character(object):
     """One character's controls, pairs, centres and placement controls."""
 
-    def __init__(self, controls, snapshot):
+    def __init__(self, controls, snapshot, keep_placement=True,
+                 flip_one_sided=True):
         self.controls = list(controls)
         self.snapshot = snapshot
+        self.flip_one_sided = flip_one_sided
         self.by_leaf = {c.split("|")[-1]: c for c in self.controls}
         self.by_base = {}
         for c in self.controls:
@@ -551,7 +556,7 @@ class _Character(object):
         self.centres = []
         self.unmatched = []
         self.excluded = []
-        self.placement = self._find_placement()
+        self.placement = self._find_placement() if keep_placement else []
         self._pair_up()
 
     def _excluded(self, ctrl):
@@ -610,12 +615,14 @@ class _Character(object):
                     and not self._excluded(partner):
                 self.partner[ctrl] = partner
                 self.partner[partner] = ctrl
-            else:
-                # Centre controls, and one-sided parts with no partner (a
-                # hair strand only on the right), flip in place.
+            elif side_of(base_name(ctrl)) == "middle":
                 self.centres.append(ctrl)
-                if side_of(base_name(ctrl)) != "middle":
-                    self.unmatched.append(ctrl)
+            else:
+                # One-sided parts with no partner (a hair strand only on the
+                # right) flip in place like centre controls, unless turned off.
+                self.unmatched.append(ctrl)
+                if self.flip_one_sided:
+                    self.centres.append(ctrl)
 
     def left_right_pairs(self):
         done, out = set(), []
@@ -633,6 +640,44 @@ class _Character(object):
 # Main entry points
 # ---------------------------------------------------------------------------
 
+_OPT_AXIS = "atkMirrorPose_axis"
+_OPT_KEEP_PLACEMENT = "atkMirrorPose_keepPlacement"
+_OPT_FLIP_ONE_SIDED = "atkMirrorPose_flipOneSided"
+AXIS_CHOICES = ("Auto", "X", "Y", "Z")
+
+# Lines describing the last run, shown in the window's status area.
+LAST_REPORT = []
+
+
+def get_options():
+    """Saved options: {"axis", "keep_placement", "flip_one_sided"}."""
+    opts = {"axis": "Auto", "keep_placement": True, "flip_one_sided": True}
+    try:
+        if cmds.optionVar(exists=_OPT_AXIS):
+            axis = cmds.optionVar(query=_OPT_AXIS)
+            if axis in AXIS_CHOICES:
+                opts["axis"] = axis
+        for key, var in (("keep_placement", _OPT_KEEP_PLACEMENT),
+                         ("flip_one_sided", _OPT_FLIP_ONE_SIDED)):
+            if cmds.optionVar(exists=var):
+                opts[key] = bool(cmds.optionVar(query=var))
+    except Exception:
+        pass
+    return opts
+
+
+def set_options(axis=None, keep_placement=None, flip_one_sided=None):
+    try:
+        if axis in AXIS_CHOICES:
+            cmds.optionVar(stringValue=(_OPT_AXIS, axis))
+        if keep_placement is not None:
+            cmds.optionVar(intValue=(_OPT_KEEP_PLACEMENT, int(keep_placement)))
+        if flip_one_sided is not None:
+            cmds.optionVar(intValue=(_OPT_FLIP_ONE_SIDED, int(flip_one_sided)))
+    except Exception:
+        pass
+
+
 def mirror_pose():
     """Mirror the whole pose of every character with a selected control."""
     return _run(selected_only=False)
@@ -641,11 +686,6 @@ def mirror_pose():
 def mirror_selected():
     """Mirror only the selected controls (pairs swap, centres flip)."""
     return _run(selected_only=True)
-
-
-def show():
-    """Toolbar launch: mirror the whole pose."""
-    return mirror_pose()
 
 
 def _gather_characters(selection):
@@ -664,9 +704,12 @@ def _gather_characters(selection):
     return out
 
 
-def _run(selected_only):
+def _run(selected_only, options=None):
+    del LAST_REPORT[:]
+    opts = get_options()
+    opts.update(options or {})
     try:
-        return _mirror(selected_only)
+        return _mirror(selected_only, opts)
     except Exception as exc:
         import traceback
         traceback.print_exc()
@@ -678,7 +721,7 @@ def _run(selected_only):
         return None
 
 
-def _mirror(selected_only):
+def _mirror(selected_only, opts):
     selection = cmds.ls(selection=True, long=True, type="transform") or []
     if not selection:
         _show_report("Nothing selected", [
@@ -701,7 +744,9 @@ def _mirror(selected_only):
 
     for key, controls in characters.items():
         snap = _load_snapshot(controls[0])
-        char = _Character(controls, snap)
+        char = _Character(controls, snap,
+                          keep_placement=opts.get("keep_placement", True),
+                          flip_one_sided=opts.get("flip_one_sided", True))
         if selected_only:
             targets = set()
             for c in controls:
@@ -715,7 +760,8 @@ def _mirror(selected_only):
         if not targets:
             continue
 
-        result = _mirror_character(char, targets, to_deg)
+        result = _mirror_character(char, targets, to_deg,
+                                   axis=opts.get("axis", "Auto"))
         name = key.split(":", 1)[1]
         if result["written"]:
             summary.append("{}: {} control{} mirrored".format(
@@ -729,10 +775,11 @@ def _mirror(selected_only):
         # production rigs: list them in the Script Editor, no pop-up.
         notes = []
         if char.unmatched:
-            notes.append("{} one-sided control{} flipped in place (no "
-                         "partner): {}".format(
+            notes.append("{} one-sided control{} {} (no partner): {}".format(
                              len(char.unmatched),
                              "" if len(char.unmatched) == 1 else "s",
+                             "flipped in place" if char.flip_one_sided
+                             else "left as they were",
                              ", ".join(base_name(c) for c in char.unmatched)))
         if result["skipped"]:
             notes.append("{} locked or driven channel{} left as they were: "
@@ -741,6 +788,15 @@ def _mirror(selected_only):
                                      ", ".join(result["skipped"])))
         for note in notes:
             print("[{}] {}: {}".format(TOOL_TITLE, name, note))
+        LAST_REPORT.append("{}: pairs from {}; {} pairs, {} centre / one-sided, "
+                           "kept in place: {}".format(
+                               name,
+                               "Character Snapshot + names" if snap else "names",
+                               len(char.left_right_pairs()), len(char.centres),
+                               ", ".join(base_name(c) for c in char.placement)
+                               or "none"))
+        for note in notes:
+            LAST_REPORT.append("{}: {}".format(name, note))
         if result["failed"]:
             problems.append("{}: could not solve the mirror for {}".format(
                 name, ", ".join(base_name(c) for c in result["failed"][:6])))
@@ -764,6 +820,7 @@ def _mirror(selected_only):
         ])
         return None
 
+    LAST_REPORT[:0] = summary
     _in_view("<hl>Mirror Pose</hl>  " + "; ".join(summary))
     if problems:
         _show_report("Mirrored with warnings", problems,
@@ -771,19 +828,19 @@ def _mirror(selected_only):
     return summary
 
 
-def _mirror_character(char, targets, to_deg):
+def _mirror_character(char, targets, to_deg, axis="Auto"):
     """Sample the rest pose, solve and write the mirrored pose.
 
     Auto-key is put back to the user's setting whatever happens.
     """
     auto_key = cmds.autoKeyframe(query=True, state=True)
     try:
-        return _mirror_character_inner(char, targets, to_deg, auto_key)
+        return _mirror_character_inner(char, targets, to_deg, auto_key, axis)
     finally:
         cmds.autoKeyframe(state=auto_key)
 
 
-def _mirror_character_inner(char, targets, to_deg, auto_key):
+def _mirror_character_inner(char, targets, to_deg, auto_key, axis="Auto"):
     controls = char.controls
     # 1. Current pose of every control (and the values to restore).
     current = {}
@@ -850,7 +907,10 @@ def _mirror_character_inner(char, targets, to_deg, auto_key):
     pair_pos = [(samples[a]["pos"], samples[b]["pos"])
                 for a, b in char.left_right_pairs()
                 if a in samples and b in samples]
-    normal = fit_mirror_normal(pair_pos)
+    if axis in ("X", "Y", "Z"):
+        normal = [1.0 if a == axis else 0.0 for a in "XYZ"]
+    else:
+        normal = fit_mirror_normal(pair_pos)
     S = reflection(normal)
 
     # 3. Solve every target from the captured pose.
@@ -918,3 +978,202 @@ def _mirror_character_inner(char, targets, to_deg, auto_key):
 
     return {"written": len(plan), "skipped": skipped, "failed": failed,
             "normal": normal}
+
+
+# ---------------------------------------------------------------------------
+# Window
+# ---------------------------------------------------------------------------
+
+WINDOW_OBJECT_NAME = "atkMirrorPoseWindow"
+
+_STYLE = """
+QDialog { background-color: #2b2b2b; color: #d4d4d4; font-size: 12px; }
+QLabel { color: #d4d4d4; background: transparent; }
+QLabel#title { font-size: 15px; font-weight: bold; color: #ffffff; }
+QLabel#hint { color: #9a9a9a; font-size: 11px; }
+QGroupBox { border: 1px solid #444; border-radius: 6px; margin-top: 10px;
+            padding: 8px 8px 6px 8px; color: #FFB74D; font-weight: bold; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
+QComboBox, QPlainTextEdit { background-color: #363636; color: #e0e0e0;
+            border: 1px solid #555; border-radius: 4px; padding: 3px 6px; }
+QCheckBox { color: #d4d4d4; }
+QPushButton { background-color: #4a4a4a; color: #e8e8e8; border: 1px solid #5c5c5c;
+              border-radius: 5px; padding: 6px 12px; }
+QPushButton:hover { background-color: #5a5a5a; }
+QPushButton#primary { background-color: #3d7fc4; border-color: #4f93d8;
+                      font-size: 14px; font-weight: bold; padding: 10px; }
+QPushButton#primary:hover { background-color: #4a8fd6; }
+"""
+
+
+def _snapshot_status():
+    """One line on where pairs will come from for the current selection."""
+    try:
+        sel = cmds.ls(selection=True, long=True, type="transform") or []
+    except Exception:
+        sel = []
+    if not sel:
+        return "Select a control on the character to mirror."
+    snap = _load_snapshot(sel[0])
+    ns = namespace_of(sel[0]) or "this rig"
+    if snap is not None:
+        return ("Character Snapshot found for {}: its manual pairs, exclusions "
+                "and rest pose are used.".format(ns))
+    return ("No Character Snapshot for {}: pairs come from the control "
+            "names (L_/R_, lf/rt, left/right ...).".format(ns))
+
+
+def _maya_main_window(QtWidgets):
+    try:
+        import maya.OpenMayaUI as omui
+        from shiboken6 import wrapInstance
+        ptr = omui.MQtUtil.mainWindow()
+        return wrapInstance(int(ptr), QtWidgets.QWidget) if ptr else None
+    except Exception:
+        return None
+
+
+def _build_window():
+    from PySide6 import QtCore, QtWidgets
+
+    class MirrorPoseWindow(QtWidgets.QDialog):
+        def __init__(self, parent=None):
+            super(MirrorPoseWindow, self).__init__(parent)
+            self.setObjectName(WINDOW_OBJECT_NAME)
+            self.setWindowTitle("Mirror Pose  v{}".format(__version__))
+            self.setWindowFlags(self.windowFlags() | QtCore.Qt.Tool)
+            self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+            self.setStyleSheet(_STYLE)
+            self.setMinimumWidth(380)
+            self._build()
+            self._load_options()
+            self.refresh_status()
+
+        def _build(self):
+            lay = QtWidgets.QVBoxLayout(self)
+            title = QtWidgets.QLabel("Mirror Pose")
+            title.setObjectName("title")
+            hint = QtWidgets.QLabel(
+                "Left and right swap, and the spine, pelvis, chest, neck and "
+                "head flip, so a run or walk pose becomes its mirror image.")
+            hint.setObjectName("hint")
+            hint.setWordWrap(True)
+            lay.addWidget(title)
+            lay.addWidget(hint)
+
+            self.mirror_btn = QtWidgets.QPushButton("Mirror Whole Pose")
+            self.mirror_btn.setObjectName("primary")
+            self.mirror_btn.clicked.connect(lambda: self._run(False))
+            self.selected_btn = QtWidgets.QPushButton("Mirror Selected Controls Only")
+            self.selected_btn.clicked.connect(lambda: self._run(True))
+            lay.addWidget(self.mirror_btn)
+            lay.addWidget(self.selected_btn)
+
+            box = QtWidgets.QGroupBox("Options")
+            form = QtWidgets.QGridLayout(box)
+            form.addWidget(QtWidgets.QLabel("Mirror axis:"), 0, 0)
+            self.axis_cb = QtWidgets.QComboBox()
+            self.axis_cb.addItems(["Auto", "X", "Y", "Z"])
+            self.axis_cb.setToolTip(
+                "Auto finds the mirror plane from the rig's left / right "
+                "pairs. Pick X, Y or Z to force a world axis.")
+            form.addWidget(self.axis_cb, 0, 1)
+            self.placement_chk = QtWidgets.QCheckBox(
+                "Keep world / main controls in place")
+            self.placement_chk.setToolTip(
+                "Controls that place the whole character (world, global, "
+                "main ...) are not mirrored, so the character stays where it is.")
+            self.one_sided_chk = QtWidgets.QCheckBox(
+                "Flip one-sided controls in place")
+            self.one_sided_chk.setToolTip(
+                "Controls with a side name but no partner (hair only on one "
+                "side) flip in place like the spine. Off: they keep their pose.")
+            form.addWidget(self.placement_chk, 1, 0, 1, 2)
+            form.addWidget(self.one_sided_chk, 2, 0, 1, 2)
+            for w in (self.axis_cb, self.placement_chk, self.one_sided_chk):
+                sig = (w.currentIndexChanged if isinstance(w, QtWidgets.QComboBox)
+                       else w.toggled)
+                sig.connect(self._save_options)
+            lay.addWidget(box)
+
+            pairing = QtWidgets.QGroupBox("Pairing")
+            pl = QtWidgets.QVBoxLayout(pairing)
+            self.snap_lbl = QtWidgets.QLabel()
+            self.snap_lbl.setWordWrap(True)
+            row = QtWidgets.QHBoxLayout()
+            refresh = QtWidgets.QPushButton("Refresh")
+            refresh.clicked.connect(self.refresh_status)
+            snap_btn = QtWidgets.QPushButton("Open Character Snapshot")
+            snap_btn.setToolTip("Take a snapshot or add manual pairs for "
+                                "controls whose names don't match.")
+            snap_btn.clicked.connect(self._open_snapshot)
+            row.addWidget(refresh)
+            row.addWidget(snap_btn)
+            pl.addWidget(self.snap_lbl)
+            pl.addLayout(row)
+            lay.addWidget(pairing)
+
+            self.report = QtWidgets.QPlainTextEdit()
+            self.report.setReadOnly(True)
+            self.report.setPlaceholderText("The result of each run shows here.")
+            self.report.setMinimumHeight(110)
+            lay.addWidget(self.report)
+
+        def _load_options(self):
+            opts = get_options()
+            self.axis_cb.setCurrentText(opts["axis"])
+            self.placement_chk.setChecked(opts["keep_placement"])
+            self.one_sided_chk.setChecked(opts["flip_one_sided"])
+
+        def _save_options(self, *args):
+            set_options(axis=self.axis_cb.currentText(),
+                        keep_placement=self.placement_chk.isChecked(),
+                        flip_one_sided=self.one_sided_chk.isChecked())
+
+        def refresh_status(self):
+            self.snap_lbl.setText(_snapshot_status())
+
+        def _run(self, selected_only):
+            self._save_options()
+            _run(selected_only)
+            self.report.setPlainText("\n".join(LAST_REPORT))
+            self.refresh_status()
+
+        def _open_snapshot(self):
+            try:
+                import character_snapshot_v1_0_0 as cs
+                cs.show_dialog()
+            except Exception as exc:
+                _show_report("Could not open Character Snapshot", [
+                    "The Character Snapshot tool is not installed or failed "
+                    "to open: {}".format(exc)])
+
+    return MirrorPoseWindow
+
+
+_window = None
+
+
+def show():
+    """Open the Mirror Pose window (toolbar button)."""
+    global _window
+    try:
+        from PySide6 import QtWidgets
+        for widget in QtWidgets.QApplication.allWidgets():
+            if widget.objectName() == WINDOW_OBJECT_NAME:
+                widget.close()
+        window_cls = _build_window()
+        _window = window_cls(parent=_maya_main_window(QtWidgets))
+        _window.show()
+        _window.raise_()
+        _window.activateWindow()
+        return _window
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        _show_report("Could not open the window", [
+            "Maya raised an error: {}".format(str(exc).strip() or
+                                              exc.__class__.__name__)],
+            "Right-click the toolbar button and choose Mirror Whole Pose to "
+            "mirror without the window.")
+        return None

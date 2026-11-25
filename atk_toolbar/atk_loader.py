@@ -356,7 +356,7 @@ TOOL_REGISTRY = [
         "label":     "Mirror Pose",
         "tooltip":   "Mirror the whole pose: left and right swap, spine, pelvis and head flip",
         "module":    "mirror_pose",
-        "launch_fn": "mirror_pose",
+        "launch_fn": "show",
         "icon_file": "mirror_pose.png",
         "icon_key":  "mirror_pose",
         "group":     "rigging",
