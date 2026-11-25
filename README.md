@@ -2,13 +2,12 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.33** makes **Temp Pivot** explain itself: when a control cannot
-take a temp pivot, a pop-up now lists the reasons (an existing constraint,
-locked or driven channels, the wrong kind of node, and so on) instead of
-nothing happening. It also fixes several Temp Pivot bugs, including joints
-being refused and rigs on two characters with the same control names
-interfering with each other. It keeps everything from 1.1.32.
-See [release notes](Animation_Tool_Kit_v1.1.33_Release_Notes.md).
+Version **1.1.34** adds **Mirror Pose**, a one-click toolbar button that
+turns a pose into its mirror image: left and right arms, legs and hands swap,
+and the spine, chest, pelvis, neck and head flip across the character, so a
+run or walk pose becomes the opposite step. Right-click the button to mirror
+only the selected controls. It keeps everything from 1.1.33.
+See [release notes](Animation_Tool_Kit_v1.1.34_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.

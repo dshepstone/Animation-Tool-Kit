@@ -352,6 +352,21 @@ TOOL_REGISTRY = [
         "version":   "2.3.3",
     },
     {
+        "id":        "mirror_pose",
+        "label":     "Mirror Pose",
+        "tooltip":   "Mirror the whole pose: left and right swap, spine, pelvis and head flip",
+        "module":    "mirror_pose",
+        "launch_fn": "mirror_pose",
+        "icon_file": "mirror_pose.png",
+        "icon_key":  "mirror_pose",
+        "group":     "rigging",
+        "version":   "1.0.0",
+        "context_actions": [
+            ("Mirror Whole Pose", "mirror_pose"),
+            ("Mirror Selected Controls Only", "mirror_selected"),
+        ],
+    },
+    {
         "id":        "animation_tweaker",
         "label":     "Animation Tweaker",
         "tooltip":   "Sculpt corrections and polish onto animated meshes after the skin",

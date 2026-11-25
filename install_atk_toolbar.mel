@@ -353,6 +353,7 @@ global proc atk__install()
         "selection_set_2_0_4/SmartSelectSets_v2.py",
         "Mirror_Controls_2_3_0/mirror_controls_v2_3_0.py",
         "Character_Snapshot_1_0_0/character_snapshot_v1_0_0.py",
+        "Mirror_Pose_1_0_0/mirror_pose.py",
         "user_directory_check_1_0_0/user_directory_check.py"
     };
     for ($relScript in $toolScripts)
@@ -558,6 +559,7 @@ global proc atk__install()
         "selection_set_2_0_4/selectionSet.png",
         "Mirror_Controls_2_3_0/mirror.png",
         "Character_Snapshot_1_0_0/snapshot.png",
+        "Mirror_Pose_1_0_0/mirror_pose.png",
         "Bookmarks/icons/Bookmark.png",
         "tangent_tools/curveTool.png",
         "tangent_tools/tangent_icons/AutoSpline.png",
