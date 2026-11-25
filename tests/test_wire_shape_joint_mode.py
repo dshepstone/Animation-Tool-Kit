@@ -428,6 +428,20 @@ class JointScene(unittest.TestCase):
         with self.assertRaises(ValueError):
             wst.resolve_joint_shapes(joints, ["square"])
 
+    def test_per_joint_sizes(self):
+        scene = self.build_chain(X_UP)
+        wst = load_tool(scene)
+        defs = self.fake_defs(scene, wst)
+        for i in range(4):
+            scene.find("joint%d" % (i + 1)).attrs["radius"] = 0.5
+        joints = wst.gather_joints(["joint1"], True)
+        opts = wst.JointModeOptions(multi=True, name_pattern="S_#")
+        built = wst.create_joint_controls(defs["circleY"], joints, opts, sizes=[4.0, 2.0, 1.0])
+        scales = [scene.scales[scene.find(c).uuid] for _, c, _ in built]
+        self.assertEqual(scales, [2.0, 1.0, 0.5])    # radius 0.5 x size
+        with self.assertRaises(ValueError):
+            wst.create_joint_controls(defs["circleY"], joints, opts, sizes=[1.0])
+
 
 class BatchRename(unittest.TestCase):
     def test_rename_chain_from_root(self):

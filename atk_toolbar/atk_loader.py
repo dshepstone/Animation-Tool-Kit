@@ -292,7 +292,7 @@ TOOL_REGISTRY = [
         "icon_file": "Shape_Icon.png",
         "icon_key":  "wire",
         "group":     "rigging",
-        "version":   "2.2.0",
+        "version":   "2.3.0",
     },
     {
         "id":        "reset",

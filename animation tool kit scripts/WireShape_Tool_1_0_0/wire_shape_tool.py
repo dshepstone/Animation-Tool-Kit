@@ -1052,12 +1052,14 @@ def _constrain(driver, driven, kind, label):
         return None
 
 
-def create_joint_controls(shape_def, joints, options=None):
+def create_joint_controls(shape_def, joints, options=None, sizes=None):
     """Create one control per joint, aligned to each joint.
 
     ``shape_def`` is a ShapeDef for every joint, BEST_SHAPE for the best
     shape per joint, or a list with one entry per joint (see
-    ``resolve_joint_shapes``).
+    ``resolve_joint_shapes``).  ``sizes`` optionally gives each joint its
+    own size, read like ``JointModeOptions.size`` (a multiple of the joint
+    radius or bone length, or units, per ``size_mode``).
 
     Each control is placed on the joint's pivot with the joint's rotation
     axes and rotate order, its shape turned to face the chain (see
@@ -1068,6 +1070,10 @@ def create_joint_controls(shape_def, joints, options=None):
     """
     opts = options or JointModeOptions()
     shapes = resolve_joint_shapes(joints, shape_def)
+    if sizes is None:
+        sizes = [opts.size] * len(joints)
+    elif len(sizes) != len(joints):
+        raise ValueError("one size per joint is needed")
     pattern = opts.name_pattern
     if len(joints) > 1 and pattern_needs_number(pattern):
         pattern = (pattern or "").strip() + "_#"
@@ -1104,16 +1110,17 @@ def create_joint_controls(shape_def, joints, options=None):
         else:
             rotation = axis_align_rotation(src_axis, aim)
 
+        size = float(sizes[i])
         if opts.size_mode == SIZE_BONE:
-            scale = _bone_length(jnt) * opts.size
+            scale = _bone_length(jnt) * size
         elif opts.size_mode == SIZE_RADIUS:
             try:
                 radius = float(cmds.getAttr(jnt + ".radius"))
             except Exception:
                 radius = 1.0
-            scale = (radius or 1.0) * opts.size
+            scale = (radius or 1.0) * size
         else:
-            scale = opts.size
+            scale = size
         scale = max(scale, 1e-4)
 
         cmds.select(clear=True)
@@ -2025,6 +2032,10 @@ class WireShapeToolUI:
         self.joint_mode_cb.toggled.connect(self._update_joint_mode_ui)
         self.multi_rb.toggled.connect(self._update_joint_mode_ui)
         self.per_joint_btn.toggled.connect(self._update_joint_mode_ui)
+        self.per_joint_btn.toggled.connect(lambda on: on and self._auto_load_joint_list())
+        self.multi_rb.toggled.connect(lambda on: on and self._auto_load_joint_list())
+        self.joint_mode_cb.toggled.connect(lambda on: on and self._auto_load_joint_list())
+        self.size_spin.valueChanged.connect(self._on_global_size_changed)
         self.link_combo.currentIndexChanged.connect(self._update_joint_mode_ui)
         self.zero_cb.toggled.connect(self._update_joint_mode_ui)
         self.name_edit.textChanged.connect(self._update_name_preview)
@@ -2034,41 +2045,53 @@ class WireShapeToolUI:
     # ── Per-joint shape list ─────────────────────────────────────────────────
 
     def _build_per_joint_box(self):
+        self._filling_list = False   # True while the code (not the user) fills rows
+        self._list_edited = False    # the user changed a shape or size in the list
         box = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(box)
         v.setContentsMargins(0, 4, 0, 0)
         v.setSpacing(6)
 
         hint = QtWidgets.QLabel(
-            "Load the chain, pick a shape per joint (or select rows and click a "
-            "shape below), then Build Controls.")
+            "The list follows your joint selection until you edit it. Pick a "
+            "shape and size per joint (or select rows and click a shape below), "
+            "then Build Controls.")
         hint.setObjectName("lbl_desc")
         hint.setWordWrap(True)
         v.addWidget(hint)
 
         buttons = QtWidgets.QHBoxLayout()
-        load = QtWidgets.QPushButton("Load Joints from Selection")
-        load.setToolTip("Fill the list with the joints the chain options select.")
+        load = QtWidgets.QPushButton("Load Selection")
+        load.setToolTip("Fill the list with the joints the chain options select.\n"
+                        "Shapes and sizes already set for a joint are kept.")
         load.clicked.connect(self._on_load_joint_list)
         best = QtWidgets.QPushButton("All: Best Option")
         best.setToolTip("Set every row to the recommended shape for its joint.")
         best.clicked.connect(lambda: self._assign_rows(BEST_SHAPE, all_rows=True))
+        all_size = QtWidgets.QPushButton("All: Size")
+        all_size.setToolTip("Set every row's size to the Size above.")
+        all_size.clicked.connect(self._reset_row_sizes)
         clear = QtWidgets.QPushButton("Clear")
-        clear.clicked.connect(lambda: self.joint_table.setRowCount(0))
-        for b in (load, best, clear):
+        clear.clicked.connect(self._clear_joint_list)
+        for b in (load, best, all_size, clear):
             buttons.addWidget(b)
         buttons.addStretch(1)
         v.addLayout(buttons)
 
-        self.joint_table = QtWidgets.QTableWidget(0, 3)
-        self.joint_table.setHorizontalHeaderLabels(["Joint", "Shape", "Control name"])
+        self.joint_table = QtWidgets.QTableWidget(0, 4)
+        self.joint_table.setHorizontalHeaderLabels(["Joint", "Shape", "Size", "Control name"])
+        self.joint_table.horizontalHeaderItem(2).setToolTip(
+            "Each control's size, read like the Size above (x Radius, x Bone or\n"
+            "units). With several rows selected, editing one sets them all.")
         self.joint_table.verticalHeader().setVisible(False)
         self.joint_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.joint_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         header = self.joint_table.horizontalHeader()
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.Fixed)
+        header.resizeSection(2, 78)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
         self.joint_table.setMinimumHeight(150)
         self.joint_table.setMaximumHeight(190)
         v.addWidget(self.joint_table)
@@ -2087,37 +2110,142 @@ class WireShapeToolUI:
             combo.addItem(d.label, d.key)
         idx = combo.findData(value.key if isinstance(value, ShapeDef) else value)
         combo.setCurrentIndex(max(idx, 0))
-        combo.currentIndexChanged.connect(self._refresh_joint_table_names)
+        combo.currentIndexChanged.connect(self._on_row_shape_changed)
         return combo
 
-    def _on_load_joint_list(self):
+    def _size_spin(self, value):
+        spin = QtWidgets.QDoubleSpinBox()
+        spin.setRange(0.01, 1000.0)
+        spin.setDecimals(2)
+        spin.setSingleStep(0.25)
+        spin.setValue(value)
+        spin.setProperty("edited", False)
+        spin.setStyleSheet("QDoubleSpinBox { padding: 1px 4px; min-height: 18px; }")
+        spin.valueChanged.connect(lambda v, sp=spin: self._on_row_size_changed(sp, v))
+        return spin
+
+    def _on_row_shape_changed(self, *_):
+        if not self._filling_list:
+            self._list_edited = True
+        self._refresh_joint_table_names()
+
+    def _on_row_size_changed(self, spin, value):
+        if self._filling_list:
+            return
+        self._list_edited = True
+        spin.setProperty("edited", True)
+        # Editing one of several selected rows sets them all.
+        rows = {i.row() for i in self.joint_table.selectionModel().selectedRows()}
+        if len(rows) > 1 and any(self.joint_table.cellWidget(r, 2) is spin for r in rows):
+            self._filling_list = True
+            try:
+                for r in rows:
+                    other = self.joint_table.cellWidget(r, 2)
+                    other.setValue(value)
+                    other.setProperty("edited", True)
+            finally:
+                self._filling_list = False
+
+    def _on_global_size_changed(self, value):
+        """Rows that were not given their own size follow the Size field."""
+        if not hasattr(self, "joint_table"):
+            return
+        self._filling_list = True
+        try:
+            for r in range(self.joint_table.rowCount()):
+                spin = self.joint_table.cellWidget(r, 2)
+                if not spin.property("edited"):
+                    spin.setValue(value)
+        finally:
+            self._filling_list = False
+
+    def _reset_row_sizes(self):
+        self._filling_list = True
+        try:
+            for r in range(self.joint_table.rowCount()):
+                spin = self.joint_table.cellWidget(r, 2)
+                spin.setValue(self.size_spin.value())
+                spin.setProperty("edited", False)
+        finally:
+            self._filling_list = False
+
+    def _clear_joint_list(self):
+        self.joint_table.setRowCount(0)
+        self._list_edited = False
+
+    def _on_load_joint_list(self, quiet=False):
+        """Fill the list from the selection; keeps each joint's shape and size.
+
+        ``quiet`` (automatic loads) leaves the list alone, without warnings,
+        when the selection holds no joints.
+        """
         opts = self._joint_mode_options()
         sel = cmds.ls(sl=True, long=True) or []
         try:
             joints = gather_joints(sel, True, opts.chain, opts.skip_end_joints)
         except ValueError as e:
-            cmds.warning("Wire Shapes: {0}".format(e))
-            return
+            if not quiet:
+                cmds.warning("Wire Shapes: {0}".format(e))
+            return False
         if not joints:
-            cmds.warning("Wire Shapes: Select the joint(s) of a chain first.")
-            return
-        self.joint_table.setRowCount(0)
-        for jnt in joints:
-            r = self.joint_table.rowCount()
-            self.joint_table.insertRow(r)
-            item = QtWidgets.QTableWidgetItem(jnt.split("|")[-1])
-            item.setData(QtCore.Qt.UserRole, jnt)
-            item.setToolTip(jnt)
-            self.joint_table.setItem(r, 0, item)
-            self.joint_table.setCellWidget(r, 1, self._shape_combo())
-            self.joint_table.setItem(r, 2, QtWidgets.QTableWidgetItem(""))
+            if not quiet:
+                cmds.warning("Wire Shapes: Select the joint(s) of a chain first.")
+            return False
+        previous = {}
+        for r in range(self.joint_table.rowCount()):
+            jnt = self.joint_table.item(r, 0).data(QtCore.Qt.UserRole)
+            spin = self.joint_table.cellWidget(r, 2)
+            previous[jnt] = (self.joint_table.cellWidget(r, 1).currentData(),
+                             spin.value(), spin.property("edited"))
+        self._filling_list = True
+        try:
+            self.joint_table.setRowCount(0)
+            for jnt in joints:
+                key, size, edited = previous.get(jnt, (BEST_SHAPE, self.size_spin.value(), False))
+                r = self.joint_table.rowCount()
+                self.joint_table.insertRow(r)
+                item = QtWidgets.QTableWidgetItem(jnt.split("|")[-1])
+                item.setData(QtCore.Qt.UserRole, jnt)
+                item.setToolTip(jnt)
+                self.joint_table.setItem(r, 0, item)
+                self.joint_table.setCellWidget(r, 1, self._shape_combo(key))
+                spin = self._size_spin(size)
+                spin.setProperty("edited", edited)
+                self.joint_table.setCellWidget(r, 2, spin)
+                self.joint_table.setItem(r, 3, QtWidgets.QTableWidgetItem(""))
+        finally:
+            self._filling_list = False
+        if not quiet:
+            self._list_edited = False
         self._refresh_joint_table_names()
+        return True
+
+    def _auto_load_joint_list(self, *_):
+        """Pre-load the selection while the list is open and not hand-edited."""
+        try:
+            if not (self._per_joint_active() and self.dlg.isVisible()):
+                return
+            if self._list_edited and self.joint_table.rowCount():
+                return
+            self._on_load_joint_list(quiet=True)
+        except RuntimeError:
+            pass        # window already deleted
+
+    def _start_selection_job(self):
+        global _SELECTION_JOB
+        _kill_selection_job()
+        try:
+            _SELECTION_JOB = cmds.scriptJob(event=["SelectionChanged", _on_selection_changed])
+        except Exception:
+            _SELECTION_JOB = None
 
     def _joint_table_rows(self):
+        """[(joint, shape key, size)] in list order."""
         rows = []
         for r in range(self.joint_table.rowCount()):
             jnt = self.joint_table.item(r, 0).data(QtCore.Qt.UserRole)
-            rows.append((jnt, self.joint_table.cellWidget(r, 1).currentData()))
+            rows.append((jnt, self.joint_table.cellWidget(r, 1).currentData(),
+                         self.joint_table.cellWidget(r, 2).value()))
         return rows
 
     def _refresh_joint_table_names(self, *_):
@@ -2127,7 +2255,7 @@ class WireShapeToolUI:
         pattern = self.name_edit.text()
         if len(rows) > 1 and pattern_needs_number(pattern):
             pattern = pattern.strip() + "_#"
-        for r, (jnt, key) in enumerate(rows):
+        for r, (jnt, key, _size) in enumerate(rows):
             combo = self.joint_table.cellWidget(r, 1)
             try:
                 best = self._defs_by_key.get(best_shape_key(jnt, bool(_child_joints(jnt))))
@@ -2135,7 +2263,7 @@ class WireShapeToolUI:
                 best = None
             combo.setItemText(0, "Best: " + (best.label if best else "Circle Y"))
             name = format_control_name(pattern, self.start_spin.value() + r, jnt)
-            self.joint_table.item(r, 2).setText(name)
+            self.joint_table.item(r, 3).setText(name)
 
     def _assign_rows(self, key, all_rows=False):
         """Give the selected rows (or every row) of the joint list a shape."""
@@ -2156,11 +2284,12 @@ class WireShapeToolUI:
         if not rows:
             cmds.warning("Wire Shapes: Load the joints first (Load Joints from Selection).")
             return
-        missing = [j for j, _ in rows if not cmds.objExists(j)]
+        missing = [j for j, _, _ in rows if not cmds.objExists(j)]
         if missing:
             cmds.warning("Wire Shapes: Some listed joints no longer exist; load the joints again.")
             return
-        self._build_on_joints([j for j, _ in rows], [k for _, k in rows], "per-joint")
+        self._build_on_joints([j for j, _, _ in rows], [k for _, k, _ in rows], "per-joint",
+                              sizes=[sz for _, _, sz in rows])
 
     def _update_joint_mode_ui(self, *_):
         if not hasattr(self, "_best_container"):
@@ -2209,6 +2338,7 @@ class WireShapeToolUI:
         if self._per_joint_active() and self.joint_table.rowCount():
             key = shape.key if isinstance(shape, ShapeDef) else shape
             if self._assign_rows(key):
+                self._list_edited = True
                 return
             cmds.warning("Wire Shapes: Select rows in the per-joint list to assign "
                          "this shape, or click Build Controls.")
@@ -2226,11 +2356,11 @@ class WireShapeToolUI:
         label = shape.label if isinstance(shape, ShapeDef) else "Best option"
         self._build_on_joints(joints, shape, label)
 
-    def _build_on_joints(self, joints, shapes, label):
+    def _build_on_joints(self, joints, shapes, label, sizes=None):
         opts = self._joint_mode_options()
         cmds.undoInfo(openChunk=True, chunkName="WireShapesJointMode")
         try:
-            built = create_joint_controls(shapes, joints, opts)
+            built = create_joint_controls(shapes, joints, opts, sizes=sizes)
         except Exception as e:
             cmds.warning("Wire Shapes: Failed to create '{0}' controls on joints: {1}".format(
                 label, e))
@@ -2670,9 +2800,54 @@ class WireShapeToolUI:
         self.dlg.show()
         self.dlg.raise_()
         self.dlg.activateWindow()
+        self._start_selection_job()
+        job = _SELECTION_JOB
+        self.dlg.finished.connect(lambda *_: _kill_selection_job(job))
+        self.dlg.destroyed.connect(lambda *_: _kill_selection_job(job))
+        self._auto_load_joint_list()
 
 
 _UI_INSTANCE = None
+_SELECTION_JOB = None
+
+
+def _on_selection_changed():
+    """SelectionChanged scriptJob: keep the per-joint list on the selection."""
+    ui = _UI_INSTANCE
+    if ui is None:
+        _kill_selection_job()
+        return
+    ui._auto_load_joint_list()
+
+
+def _kill_selection_job(only=None):
+    """Kill the selection scriptJob (only if it is ``only``, when given)."""
+    global _SELECTION_JOB
+    if only is not None and only != _SELECTION_JOB:
+        return          # an older window closing: its job is already gone
+    job, _SELECTION_JOB = _SELECTION_JOB, None
+    if job is None:
+        return
+    try:
+        if cmds.scriptJob(exists=job):
+            cmds.scriptJob(kill=job, force=True)
+    except Exception:
+        pass
+
+
+def shutdown():
+    """Release the selection scriptJob and close the window.
+
+    Called by the ATK toolbar before Reload Scripts and when Maya quits.
+    """
+    global _UI_INSTANCE
+    _kill_selection_job()
+    ui, _UI_INSTANCE = _UI_INSTANCE, None
+    if ui is not None:
+        try:
+            ui.dlg.close()
+        except RuntimeError:
+            pass
 
 
 def show():

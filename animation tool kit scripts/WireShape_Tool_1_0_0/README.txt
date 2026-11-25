@@ -198,12 +198,21 @@ If you prefer to install by hand, copy the files yourself:
                      joint -> FK ring. The row below holds the
                      shapes that suit joint controls best.
 
-  Per-joint shapes   (Multi-Joint) Click "Per-joint shapes...",
-                     select the chain and "Load Joints from
-                     Selection". Each joint gets a row: choose its
-                     shape in the list, or select rows and click any
-                     shape button to assign it. "Build Controls"
-                     builds them all in one undo step.
+  Per-joint shapes   (Multi-Joint) Click "Per-joint shapes...". The
+                     list loads the current joint selection and
+                     follows the selection until you edit it ("Load
+                     Selection" reloads it and keeps each joint's
+                     settings). Each joint gets a row:
+                       Shape - pick it in the row, or select rows
+                               and click any shape button
+                       Size  - that control's size, read like the
+                               Size field (x Radius, x Bone or
+                               units). Rows you have not edited
+                               follow the Size field; with several
+                               rows selected, editing one sets them
+                               all; "All: Size" resets every row.
+                     "Build Controls" builds them all in one undo
+                     step.
 
   Batch Rename tab   Renames the selection in selection order from
                      a pattern (# numbers, {name} = current name)
