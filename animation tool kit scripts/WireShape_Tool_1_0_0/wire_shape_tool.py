@@ -7,6 +7,9 @@ Maya Wire Shape Tool
 - Adds a library of rig-ready controller shapes (COG, pole vector, IK foot,
   lollipop pins, gear switches, aim targets, ...) in pure Python, organised
   into categories.
+- Joint Mode: builds controls on selected joints (one joint, or a whole chain
+  as an FK hierarchy) aligned to each joint's pivot and rotation axes, with a
+  naming pattern such as FlagPole_#_CTRL.
 - Includes an Offset Dummy builder: a null/gizmo control wrapped in any number
   of offset groups, plus a helper that wraps existing objects in matched
   offset groups.
@@ -634,6 +637,402 @@ def add_offset_groups(count: int = 1):
         cmds.select(wrapped, replace=True)
     print("Wire Shapes: Added {0} offset group(s) to {1} object(s).".format(count, len(wrapped)))
     return cmds.ls(outermost_ids, long=True) or []
+
+
+# ── Joint Mode ───────────────────────────────────────────────────────────────
+#
+# Builds controls that sit on joints with the joint's own rotation axes, so
+# rotating a control X/Y/Z turns the joint about the same X/Y/Z.  The shape
+# itself is turned (in its CVs, not its channels) so that it faces down the
+# chain: a circle rings the bone whichever axis the chain is oriented along.
+
+# The axis each shape "faces" when it is built at the origin (its normal for
+# flat shapes, its up/length axis for 3D ones).  Joint Mode maps this axis
+# onto the joint's chosen axis.  Shapes not listed face +Y.
+SHAPE_FACING = {
+    "circleX": (1, 0, 0),
+    "circleY": (0, 1, 0),
+    "circleZ": (0, 0, 1),
+    "arrow": (1, 0, 0),           # MEL arrow lies in the YZ plane
+    "diamond": (0, 0, 1),         # XY plane
+    "star": (0, 0, 1),
+    "fourWayArrow": (0, 0, 1),
+    "lollipop": (0, 0, 1),
+    "paddle": (0, 0, 1),
+    "eyeTarget": (0, 0, 1),
+    "flag": (0, 0, 1),
+    "bulb": (0, 0, 1),
+}
+
+AXIS_VECTORS = {
+    "+X": (1, 0, 0), "+Y": (0, 1, 0), "+Z": (0, 0, 1),
+    "-X": (-1, 0, 0), "-Y": (0, -1, 0), "-Z": (0, 0, -1),
+}
+
+FACING_AUTO = "auto"      # face down the chain (the joint's aim axis)
+FACING_KEEP = "keep"      # keep the shape as built, only orient it to the joint
+
+CHAIN_BELOW = "below"     # each selected joint and every joint below it
+CHAIN_RANGE = "range"     # from the first selected joint to the second
+
+SIZE_RADIUS = "radius"
+SIZE_BONE = "bone"
+SIZE_FIXED = "fixed"
+
+CONSTRAINT_NONE = "none"
+CONSTRAINT_ORIENT = "orient"
+CONSTRAINT_PARENT = "parent"
+
+
+@dataclass
+class JointModeOptions:
+    multi: bool = False                 # False: Single Joint, True: Multi-Joint chain
+    chain: str = CHAIN_BELOW
+    skip_end_joints: bool = True        # multi only: no control on joints without child joints
+    facing: str = FACING_AUTO           # FACING_AUTO, FACING_KEEP or a key of AXIS_VECTORS
+    size_mode: str = SIZE_RADIUS
+    size: float = 2.0
+    name_pattern: str = "{joint}_CTRL"
+    start_number: int = 1
+    zero_group: bool = True
+    group_suffix: str = "GRP"
+    parent_chain: bool = True           # multi only: FK hierarchy
+    constraint: str = CONSTRAINT_NONE
+
+
+def dominant_axis(vec):
+    """Return the signed unit axis (x, y, z) closest to ``vec``, or None."""
+    comps = [float(c) for c in vec]
+    idx = max(range(3), key=lambda i: abs(comps[i]))
+    if abs(comps[idx]) < 1e-9:
+        return None
+    axis = [0, 0, 0]
+    axis[idx] = 1 if comps[idx] > 0 else -1
+    return tuple(axis)
+
+
+def axis_align_rotation(src, dst):
+    """Euler rotation (degrees, any order) that turns unit axis src onto dst.
+
+    Both must be signed unit axes such as (0, 1, 0) or (-1, 0, 0).  Every
+    answer turns about a single axis, so the rotate order does not matter.
+    """
+    src = tuple(int(round(c)) for c in src)
+    dst = tuple(int(round(c)) for c in dst)
+    if src == dst:
+        return (0.0, 0.0, 0.0)
+    if src == tuple(-c for c in dst):
+        # Half turn about any axis perpendicular to src.
+        perp = (0, 0, 1) if src[2] == 0 else (1, 0, 0)
+        return tuple(180.0 * c for c in perp)
+    # Perpendicular unit axes: a quarter turn about src x dst.
+    cross = (src[1] * dst[2] - src[2] * dst[1],
+             src[2] * dst[0] - src[0] * dst[2],
+             src[0] * dst[1] - src[1] * dst[0])
+    return tuple(90.0 * c for c in cross)
+
+
+def format_control_name(pattern, number, joint=""):
+    """Build a control name from a naming pattern.
+
+    ``#`` is replaced by the number, padded to the length of the run of
+    hashes (``#`` -> 1, ``##`` -> 01).  ``{joint}`` is replaced by the
+    joint's short name.  Characters Maya does not allow become ``_``.
+    """
+    pattern = (pattern or "").strip() or "{joint}_CTRL"
+    short = joint.split("|")[-1].split(":")[-1]
+    name = pattern.replace("{joint}", short)
+    name = re.sub(r"#+", lambda m: str(int(number)).zfill(len(m.group(0))), name)
+    name = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    if not name or name[0].isdigit():
+        name = "_" + name
+    return name
+
+
+def pattern_needs_number(pattern):
+    """True when a pattern would give every control the same name."""
+    pattern = (pattern or "").strip() or "{joint}_CTRL"
+    return "#" not in pattern and "{joint}" not in pattern
+
+
+def _matrix_without_scale(m):
+    """Return a 4x4 (flat list) world matrix with its axes made unit length."""
+    out = list(m)
+    for row in range(3):
+        v = out[row * 4: row * 4 + 3]
+        length = math.sqrt(sum(c * c for c in v)) or 1.0
+        for i in range(3):
+            out[row * 4 + i] = v[i] / length
+    return out
+
+
+def _world_pos(node):
+    return cmds.xform(node, q=True, ws=True, t=True)
+
+
+def _child_joints(jnt):
+    return cmds.listRelatives(jnt, children=True, type="joint", fullPath=True) or []
+
+
+def _parent_joint(jnt):
+    parent = cmds.listRelatives(jnt, parent=True, fullPath=True) or []
+    if parent and cmds.nodeType(parent[0]) == "joint":
+        return parent[0]
+    return None
+
+
+def _bone_vector(jnt):
+    """World-space vector along the bone this joint drives.
+
+    Towards the farthest child joint; for an end joint, the bone coming in
+    from its parent.  None for a lone joint.
+    """
+    pos = _world_pos(jnt)
+    best, best_len = None, 0.0
+    for child in _child_joints(jnt):
+        cpos = _world_pos(child)
+        vec = [cpos[i] - pos[i] for i in range(3)]
+        length = math.sqrt(sum(c * c for c in vec))
+        if length > best_len:
+            best, best_len = vec, length
+    if best is not None and best_len > 1e-6:
+        return best
+    parent = _parent_joint(jnt)
+    if parent:
+        ppos = _world_pos(parent)
+        vec = [pos[i] - ppos[i] for i in range(3)]
+        if math.sqrt(sum(c * c for c in vec)) > 1e-6:
+            return vec
+    return None
+
+
+def joint_aim_axis(jnt):
+    """The joint's local axis that points down the chain, e.g. (1, 0, 0).
+
+    Reads the joint's world orientation (rotate + jointOrient) and finds the
+    local axis the bone runs along.  Returns (axis, alignment) where
+    alignment is 1.0 when the bone lies exactly on that axis and lower when
+    the joint is not oriented along its bone.  Falls back to +X, Maya's
+    default aim axis, for a joint with no bone.
+    """
+    vec = _bone_vector(jnt)
+    if vec is None:
+        return (1, 0, 0), 1.0
+    m = _matrix_without_scale(cmds.xform(jnt, q=True, ws=True, m=True))
+    local = [sum(vec[i] * m[row * 4 + i] for i in range(3)) for row in range(3)]
+    length = math.sqrt(sum(c * c for c in local)) or 1.0
+    axis = dominant_axis(local) or (1, 0, 0)
+    alignment = max(abs(c) for c in local) / length
+    return axis, alignment
+
+
+def _bone_length(jnt):
+    vec = _bone_vector(jnt)
+    if vec is None:
+        return 1.0
+    return math.sqrt(sum(c * c for c in vec)) or 1.0
+
+
+def _sort_by_depth(joints):
+    return sorted(joints, key=lambda j: j.count("|"))
+
+
+def _descendant_joints(root):
+    """root and every joint below it, depth first in outliner order."""
+    out = [root]
+    for child in _child_joints(root):
+        out.extend(_descendant_joints(child))
+    return out
+
+
+def gather_joints(selection, multi, chain=CHAIN_BELOW, skip_end_joints=True):
+    """Resolve the joints Joint Mode will build controls on, root first.
+
+    Single Joint: every selected joint.  Multi-Joint, CHAIN_BELOW: each
+    selected joint and all joints below it.  Multi-Joint, CHAIN_RANGE: the
+    joints from the first selected joint down to the second.
+    """
+    joints = []
+    for node in selection or []:
+        found = cmds.ls(node, long=True, type="joint") or []
+        for j in found:
+            if j not in joints:
+                joints.append(j)
+    if not joints or not multi:
+        return joints
+
+    if chain == CHAIN_RANGE:
+        if len(joints) < 2:
+            raise ValueError("Start -> End needs two joints selected: "
+                             "the start joint, then the end joint.")
+        start, end = joints[0], joints[1]
+        if not end.startswith(start + "|"):
+            start, end = end, start
+            if not end.startswith(start + "|"):
+                raise ValueError("The two selected joints are not in the same chain.")
+        result = []
+        node = end
+        while node and node != start:
+            result.append(node)
+            node = _parent_joint(node)
+        result.append(start)
+        result.reverse()
+    else:
+        result = []
+        for root in _sort_by_depth(joints):
+            for j in _descendant_joints(root):
+                if j not in result:
+                    result.append(j)
+
+    if skip_end_joints:
+        trimmed = [j for j in result if _child_joints(j)]
+        result = trimmed or result
+    return result
+
+
+def _uuid(node):
+    return (cmds.ls(node, uuid=True) or [None])[0]
+
+
+def _node_path(uuid):
+    found = cmds.ls(uuid, long=True) if uuid else None
+    return found[0] if found else None
+
+
+def _match_to_joint(node, jnt):
+    """Put node on the joint's pivot with the joint's axes (no scale)."""
+    try:
+        cmds.setAttr(node + ".rotateOrder", cmds.getAttr(jnt + ".rotateOrder"))
+    except Exception:
+        pass
+    m = _matrix_without_scale(cmds.xform(jnt, q=True, ws=True, m=True))
+    cmds.xform(node, ws=True, m=m)
+    try:
+        cmds.setAttr(node + ".scale", 1, 1, 1, type="double3")
+    except Exception:
+        pass
+
+
+def _bake_shape_transform(node, rotation, scale):
+    """Turn and scale the shape in its CVs, leaving clean channels."""
+    try:
+        cmds.delete(node, constructionHistory=True)
+    except Exception:
+        pass
+    cmds.xform(node, ws=False, t=(0, 0, 0), ro=rotation, s=(scale, scale, scale))
+    if cmds.listRelatives(node, shapes=True, type="nurbsCurve"):
+        cmds.makeIdentity(node, apply=True, t=True, r=True, s=True, n=0)
+    else:
+        cmds.xform(node, ro=(0, 0, 0), s=(1, 1, 1))
+        for shape in cmds.listRelatives(node, shapes=True, type="locator", fullPath=True) or []:
+            cmds.setAttr(shape + ".localScale", scale, scale, scale, type="double3")
+
+
+def create_joint_controls(shape_def, joints, options=None):
+    """Create one ``shape_def`` control per joint, aligned to each joint.
+
+    Each control is placed on the joint's pivot with the joint's rotation
+    axes and rotate order, its shape turned to face the chain (see
+    ``JointModeOptions.facing``), named from the naming pattern and, as
+    chosen, zeroed under a group, parented into an FK hierarchy and used to
+    constrain its joint.  Returns a list of (joint, control, top_node).
+    """
+    opts = options or JointModeOptions()
+    pattern = opts.name_pattern
+    if len(joints) > 1 and pattern_needs_number(pattern):
+        pattern = (pattern or "").strip() + "_#"
+    src_axis = SHAPE_FACING.get(shape_def.key, (0, 1, 0))
+    results = []
+
+    for i, jnt in enumerate(joints):
+        aim, alignment = joint_aim_axis(jnt)
+        if alignment < 0.9:
+            cmds.warning(
+                "Wire Shapes: '{0}' is not oriented along its bone; the control "
+                "uses its closest axis. Orient the joints for a cleaner result."
+                .format(jnt.split("|")[-1]))
+        if opts.facing == FACING_KEEP:
+            rotation = (0.0, 0.0, 0.0)
+        elif opts.facing in AXIS_VECTORS:
+            rotation = axis_align_rotation(src_axis, AXIS_VECTORS[opts.facing])
+        else:
+            rotation = axis_align_rotation(src_axis, aim)
+
+        if opts.size_mode == SIZE_BONE:
+            scale = _bone_length(jnt) * opts.size
+        elif opts.size_mode == SIZE_RADIUS:
+            try:
+                radius = float(cmds.getAttr(jnt + ".radius"))
+            except Exception:
+                radius = 1.0
+            scale = (radius or 1.0) * opts.size
+        else:
+            scale = opts.size
+        scale = max(scale, 1e-4)
+
+        cmds.select(clear=True)
+        created = shape_def.creator()
+        if not created:
+            raise RuntimeError("no object created for '{0}'".format(shape_def.label))
+        ctrl = created[0]
+        for extra in created[1:]:
+            try:
+                cmds.delete(extra)
+            except Exception:
+                pass
+
+        # Track by UUID: renaming and parenting change names and DAG paths.
+        ctrl_id = _uuid(ctrl)
+        _bake_shape_transform(_node_path(ctrl_id), rotation, scale)
+        cmds.rename(_node_path(ctrl_id),
+                    format_control_name(pattern, opts.start_number + i, jnt))
+        ctrl = _node_path(ctrl_id)
+
+        top_id = ctrl_id
+        if opts.zero_group:
+            suffix = (opts.group_suffix or "GRP").strip("_ ") or "GRP"
+            short = ctrl.split("|")[-1]
+            grp = cmds.group(empty=True, world=True, name="{0}_{1}".format(short, suffix))
+            top_id = _uuid(grp)
+            grp = _node_path(top_id)
+            _match_to_joint(grp, jnt)
+            try:
+                cmds.setAttr(ctrl + ".rotateOrder", cmds.getAttr(jnt + ".rotateOrder"))
+            except Exception:
+                pass
+            # Relative parenting keeps the control's zeroed channels, so it
+            # lands exactly on the group (and the joint) with nothing to clean.
+            cmds.parent(ctrl, grp, relative=True)
+        else:
+            _match_to_joint(ctrl, jnt)
+        results.append((jnt, ctrl_id, top_id))
+
+    ids = [c for _, c, _ in results]
+    top_ids = [t for _, _, t in results]
+    _path = _node_path
+
+    if opts.multi and opts.parent_chain and len(results) > 1:
+        joint_index = {jnt: i for i, (jnt, _, _) in enumerate(results)}
+        for i, (jnt, _, _) in enumerate(results):
+            parent = _parent_joint(jnt)
+            while parent and parent not in joint_index:
+                parent = _parent_joint(parent)
+            if parent is None:
+                continue
+            cmds.parent(_path(top_ids[i]), _path(ids[joint_index[parent]]))
+
+    if opts.constraint in (CONSTRAINT_ORIENT, CONSTRAINT_PARENT):
+        fn = cmds.orientConstraint if opts.constraint == CONSTRAINT_ORIENT else cmds.parentConstraint
+        for i, (jnt, _, _) in enumerate(results):
+            try:
+                fn(_path(ids[i]), jnt, maintainOffset=True)
+            except Exception as e:
+                cmds.warning("Wire Shapes: Could not constrain '{0}': {1}".format(
+                    jnt.split("|")[-1], e))
+
+    out = [(jnt, _path(ids[i]), _path(top_ids[i])) for i, (jnt, _, _) in enumerate(results)]
+    cmds.select([c for _, c, _ in out if c], replace=True)
+    return out
 # -----------------------------
 # Registry
 # -----------------------------
@@ -906,7 +1305,42 @@ QCheckBox {
     font-size: 11px;
     spacing: 6px;
 }
-QSpinBox {
+QFrame#joint_panel {
+    background-color: #353535;
+    border: 1px solid #525252;
+    border-radius: 4px;
+}
+QCheckBox#cb_joint_mode {
+    font-size: 12px;
+    font-weight: bold;
+    color: #ffffff;
+}
+QRadioButton {
+    color: #cccccc;
+    font-size: 11px;
+    spacing: 4px;
+}
+QRadioButton:disabled, QCheckBox:disabled, QLabel:disabled {
+    color: #6a6a6a;
+}
+QComboBox {
+    background-color: #4a4a4a;
+    color: #dddddd;
+    border: 1px solid #666666;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    min-height: 22px;
+}
+QComboBox:disabled {
+    color: #777777;
+}
+QComboBox QAbstractItemView {
+    background-color: #4a4a4a;
+    color: #dddddd;
+    selection-background-color: #2e6da4;
+}
+QSpinBox, QDoubleSpinBox {
     background-color: #4a4a4a;
     color: #dddddd;
     border: 1px solid #666666;
@@ -915,7 +1349,7 @@ QSpinBox {
     font-size: 12px;
     min-height: 22px;
 }
-QSpinBox:focus {
+QSpinBox:focus, QDoubleSpinBox:focus {
     border-color: #2e6da4;
 }
 QToolButton {
@@ -992,7 +1426,7 @@ class WireShapeToolUI:
         self.dlg.setObjectName(self.OBJECT_NAME)
         self.dlg.setWindowTitle("Wire Shapes")
         self.dlg.setMinimumWidth(540)
-        self.dlg.resize(560, 720)
+        self.dlg.resize(580, 820)
         self.dlg.setWindowFlags(
             QtCore.Qt.Window
             | QtCore.Qt.WindowTitleHint
@@ -1036,7 +1470,11 @@ class WireShapeToolUI:
         self.search.setPlaceholderText("Search shapes...")
         self.search.setClearButtonEnabled(True)
         main.addWidget(self.search)
-        main.addSpacing(12)
+        main.addSpacing(10)
+
+        # Joint Mode panel
+        self._build_joint_mode_panel(main)
+        main.addSpacing(10)
 
         # Scrollable body with category sections
         scroll = QtWidgets.QScrollArea()
@@ -1081,6 +1519,227 @@ class WireShapeToolUI:
         close_btn.clicked.connect(self.dlg.close)
         footer.addWidget(close_btn)
         main.addLayout(footer)
+
+    # ── Joint Mode panel ─────────────────────────────────────────────────────
+
+    def _build_joint_mode_panel(self, main):
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("joint_panel")
+        outer = QtWidgets.QVBoxLayout(frame)
+        outer.setContentsMargins(10, 8, 10, 8)
+        outer.setSpacing(6)
+
+        head = QtWidgets.QHBoxLayout()
+        self.joint_mode_cb = QtWidgets.QCheckBox("Joint Mode")
+        self.joint_mode_cb.setObjectName("cb_joint_mode")
+        self.joint_mode_cb.setToolTip(
+            "Build controls on the selected joints: each control sits on the joint's\n"
+            "pivot with the joint's rotation axes, and its shape faces down the chain."
+        )
+        head.addWidget(self.joint_mode_cb)
+        head.addStretch(1)
+        self.single_rb = QtWidgets.QRadioButton("Single Joint")
+        self.single_rb.setToolTip("One control on each selected joint.")
+        self.multi_rb = QtWidgets.QRadioButton("Multi-Joint Chain")
+        self.multi_rb.setToolTip(
+            "Walk the chain from the selection and build a control on every joint,\n"
+            "set up as an FK hierarchy."
+        )
+        self.single_rb.setChecked(True)
+        head.addWidget(self.single_rb)
+        head.addWidget(self.multi_rb)
+        outer.addLayout(head)
+
+        self._joint_body = QtWidgets.QWidget()
+        form = QtWidgets.QGridLayout(self._joint_body)
+        form.setContentsMargins(0, 4, 0, 0)
+        form.setHorizontalSpacing(8)
+        form.setVerticalSpacing(6)
+        row = 0
+
+        def label(text):
+            lbl = QtWidgets.QLabel(text)
+            lbl.setObjectName("lbl_subtitle")
+            return lbl
+
+        # Naming
+        form.addWidget(label("Name:"), row, 0)
+        self.name_edit = QtWidgets.QLineEdit("{joint}_CTRL")
+        self.name_edit.setPlaceholderText("e.g. FlagPole_#_CTRL")
+        self.name_edit.setToolTip(
+            "Controller naming pattern.\n"
+            "  #        the control's number (## pads to 01, ### to 001)\n"
+            "  {joint}  the joint's name\n"
+            "Example: FlagPole_#_CTRL gives FlagPole_1_CTRL, FlagPole_2_CTRL, ..."
+        )
+        form.addWidget(self.name_edit, row, 1)
+        form.addWidget(label("Start #:"), row, 2)
+        self.start_spin = QtWidgets.QSpinBox()
+        self.start_spin.setRange(0, 9999)
+        self.start_spin.setValue(1)
+        self.start_spin.setToolTip("Number given to the first control in the chain.")
+        form.addWidget(self.start_spin, row, 3)
+        row += 1
+        self.name_preview = QtWidgets.QLabel()
+        self.name_preview.setObjectName("lbl_desc")
+        form.addWidget(self.name_preview, row, 1, 1, 3)
+        row += 1
+
+        # Facing / axis
+        form.addWidget(label("Shape faces:"), row, 0)
+        self.facing_combo = QtWidgets.QComboBox()
+        self.facing_combo.addItem("Down the chain (auto)", FACING_AUTO)
+        for key in ("+X", "+Y", "+Z", "-X", "-Y", "-Z"):
+            self.facing_combo.addItem("Joint " + key, key)
+        self.facing_combo.addItem("Keep shape as built", FACING_KEEP)
+        self.facing_combo.setToolTip(
+            "Which of the joint's local axes the shape faces.\n"
+            "Auto reads each joint's orientation and faces the axis that points\n"
+            "to the next joint, so circles ring the bone. The control's own\n"
+            "rotation axes always match the joint's."
+        )
+        form.addWidget(self.facing_combo, row, 1)
+
+        form.addWidget(label("Size:"), row, 2)
+        size_row = QtWidgets.QHBoxLayout()
+        self.size_spin = QtWidgets.QDoubleSpinBox()
+        self.size_spin.setRange(0.01, 1000.0)
+        self.size_spin.setDecimals(2)
+        self.size_spin.setSingleStep(0.25)
+        self.size_spin.setValue(2.0)
+        self.size_spin.setMaximumWidth(72)
+        self.size_combo = QtWidgets.QComboBox()
+        self.size_combo.addItem("x Radius", SIZE_RADIUS)
+        self.size_combo.addItem("x Bone", SIZE_BONE)
+        self.size_combo.addItem("units", SIZE_FIXED)
+        self.size_combo.setToolTip(
+            "Control size: a multiple of each joint's radius, a multiple of its\n"
+            "bone length, or a fixed size in scene units.")
+        size_row.addWidget(self.size_spin)
+        size_row.addWidget(self.size_combo)
+        form.addLayout(size_row, row, 3)
+        row += 1
+
+        # Setup
+        self.zero_cb = QtWidgets.QCheckBox("Zero group")
+        self.zero_cb.setChecked(True)
+        self.zero_cb.setToolTip(
+            "Put each control under a group matched to the joint, so the\n"
+            "control's translate and rotate channels start at zero."
+        )
+        self.group_suffix_edit = QtWidgets.QLineEdit("GRP")
+        self.group_suffix_edit.setToolTip("Suffix for the zero group: <control>_GRP")
+        self.group_suffix_edit.setMaximumWidth(90)
+        form.addWidget(label("Setup:"), row, 0)
+        zero_row = QtWidgets.QHBoxLayout()
+        zero_row.addWidget(self.zero_cb)
+        zero_row.addWidget(self.group_suffix_edit)
+        zero_row.addStretch(1)
+        form.addLayout(zero_row, row, 1)
+        form.addWidget(label("Constrain:"), row, 2)
+        self.constraint_combo = QtWidgets.QComboBox()
+        self.constraint_combo.addItem("None", CONSTRAINT_NONE)
+        self.constraint_combo.addItem("Orient", CONSTRAINT_ORIENT)
+        self.constraint_combo.addItem("Parent", CONSTRAINT_PARENT)
+        self.constraint_combo.setToolTip("Constrain each joint to its new control.")
+        form.addWidget(self.constraint_combo, row, 3)
+        row += 1
+
+        # Multi-joint options
+        self._multi_widgets = []
+        form.addWidget(label("Chain:"), row, 0)
+        self.chain_combo = QtWidgets.QComboBox()
+        self.chain_combo.addItem("Selected joint + all below", CHAIN_BELOW)
+        self.chain_combo.addItem("Start -> End (select 2 joints)", CHAIN_RANGE)
+        self.chain_combo.setToolTip(
+            "Selected + below: every joint under each selected joint.\n"
+            "Start -> End: select the first joint, then the last joint."
+        )
+        form.addWidget(self.chain_combo, row, 1)
+        self.skip_end_cb = QtWidgets.QCheckBox("Skip end joints")
+        self.skip_end_cb.setChecked(True)
+        self.skip_end_cb.setToolTip("No control on the last joint of a chain (it has nothing to rotate).")
+        checks = QtWidgets.QHBoxLayout()
+        checks.setSpacing(14)
+        checks.addWidget(self.skip_end_cb)
+        self.parent_cb = QtWidgets.QCheckBox("FK hierarchy")
+        self.parent_cb.setChecked(True)
+        self.parent_cb.setToolTip("Parent each control under the control of the joint above it.")
+        checks.addWidget(self.parent_cb)
+        checks.addStretch(1)
+        form.addLayout(checks, row, 2, 1, 2)
+        self._multi_widgets = [self.chain_combo, self.skip_end_cb, self.parent_cb]
+        form.setColumnStretch(1, 3)
+        form.setColumnStretch(3, 2)
+
+        outer.addWidget(self._joint_body)
+        main.addWidget(frame)
+
+        self.joint_mode_cb.toggled.connect(self._update_joint_mode_ui)
+        self.multi_rb.toggled.connect(self._update_joint_mode_ui)
+        self.zero_cb.toggled.connect(self.group_suffix_edit.setEnabled)
+        self.name_edit.textChanged.connect(self._update_name_preview)
+        self.start_spin.valueChanged.connect(self._update_name_preview)
+        self._update_joint_mode_ui()
+        self._update_name_preview()
+
+    def _update_joint_mode_ui(self, *_):
+        on = self.joint_mode_cb.isChecked()
+        self._joint_body.setVisible(on)
+        self.single_rb.setEnabled(on)
+        self.multi_rb.setEnabled(on)
+        self.snap_cb.setEnabled(not on)
+        multi = self.multi_rb.isChecked()
+        for w in self._multi_widgets:
+            w.setEnabled(multi)
+
+    def _update_name_preview(self, *_):
+        pattern = self.name_edit.text()
+        if pattern_needs_number(pattern):
+            pattern = pattern.strip() + "_#"
+        start = self.start_spin.value()
+        names = [format_control_name(pattern, start + i, "joint{0}".format(i + 1))
+                 for i in range(3)]
+        self.name_preview.setText("Preview: " + ", ".join(names) + ", ...")
+
+    def _joint_mode_options(self):
+        return JointModeOptions(
+            multi=self.multi_rb.isChecked(),
+            chain=self.chain_combo.currentData(),
+            skip_end_joints=self.skip_end_cb.isChecked(),
+            facing=self.facing_combo.currentData(),
+            size_mode=self.size_combo.currentData(),
+            size=self.size_spin.value(),
+            name_pattern=self.name_edit.text(),
+            start_number=self.start_spin.value(),
+            zero_group=self.zero_cb.isChecked(),
+            group_suffix=self.group_suffix_edit.text(),
+            parent_chain=self.parent_cb.isChecked(),
+            constraint=self.constraint_combo.currentData(),
+        )
+
+    def _on_create_joint_mode(self, shape_def: ShapeDef):
+        opts = self._joint_mode_options()
+        sel = cmds.ls(sl=True, long=True) or []
+        try:
+            joints = gather_joints(sel, opts.multi, opts.chain, opts.skip_end_joints)
+        except ValueError as e:
+            cmds.warning("Wire Shapes: {0}".format(e))
+            return
+        if not joints:
+            cmds.warning("Wire Shapes: Joint Mode is on - select one or more joints.")
+            return
+        cmds.undoInfo(openChunk=True, chunkName="WireShapesJointMode")
+        try:
+            built = create_joint_controls(shape_def, joints, opts)
+        except Exception as e:
+            cmds.warning("Wire Shapes: Failed to create '{0}' on joints: {1}".format(
+                shape_def.label, e))
+            return
+        finally:
+            cmds.undoInfo(closeChunk=True)
+        print("Wire Shapes: Created {0} '{1}' control(s) on joints.".format(
+            len(built), shape_def.label))
 
     # ── Section builders ─────────────────────────────────────────────────────
 
@@ -1226,6 +1885,9 @@ class WireShapeToolUI:
             pass
 
     def _on_create(self, shape_def: ShapeDef):
+        if self.joint_mode_cb.isChecked():
+            self._on_create_joint_mode(shape_def)
+            return
         # Capture selection before creation for snap-to-selection
         prev_sel = cmds.ls(sl=True, long=True) or []
         # The classic MEL shapes build one copy per selected object so each

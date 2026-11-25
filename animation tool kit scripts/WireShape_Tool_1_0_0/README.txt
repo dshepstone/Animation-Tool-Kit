@@ -144,6 +144,45 @@ If you prefer to install by hand, copy the files yourself:
   Search box         - Filter shapes by name in real time; empty
                        sections hide while filtering.
 
+  Joint Mode         - Tick "Joint Mode", select joints, then click
+                       any shape. Each control is placed on the
+                       joint's pivot with the joint's rotation axes
+                       and rotate order, so rotating the control X
+                       turns the joint about the same X.
+
+    Single Joint       One control on each selected joint.
+    Multi-Joint Chain  Walks the chain and builds a control on
+                       every joint:
+                         Selected joint + all below - everything
+                           under each selected joint
+                         Start -> End - select the first joint,
+                           then the last joint
+                       Skip end joints  - no control on the tip
+                       FK hierarchy     - each control's group is
+                                          parented under the
+                                          control above it
+    Name               Naming pattern. # is the number (## pads to
+                       01), {joint} is the joint's name.
+                       FlagPole_#_CTRL -> FlagPole_1_CTRL,
+                       FlagPole_2_CTRL, ...  Start # sets the first
+                       number.
+    Shape faces        "Down the chain (auto)" reads each joint's
+                       orientation and turns the shape to face the
+                       axis pointing at the next joint, so circles
+                       ring the bone. Or pick a joint axis, or keep
+                       the shape as built. Works with every shape.
+    Size               A multiple of the joint radius or bone
+                       length, or a fixed size in units.
+    Zero group         Puts each control under <control>_GRP
+                       matched to the joint, so its channels start
+                       at zero.
+    Constrain          None, Orient or Parent - constrains each
+                       joint to its new control.
+
+  Joints should be oriented (Skeleton > Orient Joint) for the
+  cleanest result; a warning names any joint whose axes do not
+  follow its bone. One click is one undo step.
+
   All shapes are created at the world origin (or snapped to
   selection) and named with a _CTRL suffix.
 
