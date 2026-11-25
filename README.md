@@ -2,12 +2,12 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.29** fixes two small issues from 1.1.28: **Reload Scripts** closes
-and reopens floating tool windows such as Tangent Tools again, and **Wire Shapes**
-2.3.2 **Batch Rename** no longer errors when a child is selected before its
-parent. It keeps everything from 1.1.28, including Wire Shapes Joint Mode, Batch
-Rename and shapes that align to the selection.
-See [release notes](Animation_Tool_Kit_v1.1.29_Release_Notes.md).
+Version **1.1.31** improves **Smart Select Sets** (2.6.0): pop-out pickers stay
+open after the main window is closed, and stay in front of Maya without covering
+other applications; buttons can be dragged into a new position within a
+category; and a deleted category name can be created again. It keeps everything
+from 1.1.29.
+See [release notes](Animation_Tool_Kit_v1.1.31_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.
