@@ -30,7 +30,7 @@ from PySide6 import QtCore, QtWidgets, QtGui
 
 TOOL_NAME = "SmartSelectSetsToolV2"
 TOOL_TITLE = "Smart Select Sets"
-TOOL_VERSION = "2.6.0"
+TOOL_VERSION = "2.6.1"
 SCHEMA_VERSION = 2
 SCENE_NODE_NAME = "ConestogaSelectionGroupNode"
 SCENE_ATTR_NAME = "groupsData"
@@ -2086,6 +2086,8 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
         self._drag_active = False
         self._drag_offset = QtCore.QPoint()
         self._opacity_value = 100
+        self._closing = False
+        self._host_notified = False
 
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
@@ -2217,7 +2219,9 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
         self.close_button.setObjectName("PopupCloseButton")
         self.close_button.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.close_button.setFixedSize(24, 24)
-        self.close_button.clicked.connect(self.close)
+        # Close on press, not on click: in Maya the release of a click on
+        # this frameless pop-out could be lost, so clicked() never fired.
+        self.close_button.pressed.connect(self.close_popout)
         header_layout.addWidget(self.close_button, 0, QtCore.Qt.AlignTop)
 
         self.scroll_area = QtWidgets.QScrollArea()
@@ -2242,7 +2246,9 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
             if event.type() == QtCore.QEvent.MouseButtonPress and event.button() == QtCore.Qt.LeftButton:
                 child = self.childAt(self.mapFromGlobal(event.globalPosition().toPoint()))
                 if child is self.close_button or self.close_button.isAncestorOf(child):
-                    return super().eventFilter(obj, event)
+                    # The press reached the header instead of the button
+                    self.close_popout()
+                    return True
                 self._drag_active = True
                 self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 return True
@@ -2326,11 +2332,35 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
         self.content_layout.insertLayout(self.content_layout.count() - 1, flow)
 
     def reject(self) -> None:
-        self.close()  # Esc closes (and deletes) the pop-out like its x button
+        self.close_popout()  # Esc closes (and deletes) the pop-out like its x button
+
+    def close_popout(self) -> None:
+        """Close and delete the pop-out (its x button, Esc)."""
+        if self._closing:
+            return
+        self._closing = True
+        self._drag_active = False
+        self.close()
+        try:
+            still_open = isValid(self) and self.isVisible()
+        except RuntimeError:
+            return
+        if still_open:
+            # A close Qt refused (an ignored close event) must not leave the
+            # pop-out stuck on screen: hide it and tell the host directly.
+            self.hide()
+            self._notify_host_closed()
+            self.deleteLater()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         # Not QDialog.closeEvent: it calls reject(), which calls close() again
         event.accept()
+        self._notify_host_closed()
+
+    def _notify_host_closed(self) -> None:
+        if self._host_notified:
+            return
+        self._host_notified = True
         host = self.host_window
         try:
             if host is not None and isValid(host):
