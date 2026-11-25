@@ -298,7 +298,8 @@ def _token_spans(name, token):
 
     '_' / string edges match any case (lf_arm, arm_L, L_arm); camelCase
     edges match Title or UPPER case tokens of two or more letters
-    (armLeft, handLF_ctrl), so 'rt' inside 'shirt' never matches.
+    (armLeft, handLF_ctrl) and upper-case single-letter suffixes (armL,
+    handR_ctrl), so 'rt' inside 'shirt' never matches.
     """
     spans = []
     pat = r"(?:(?<=_)|(?<=\A))" + re.escape(token) + r"(?=_|\Z)"
@@ -310,6 +311,12 @@ def _token_spans(name, token):
             for m in re.finditer(pat, name):
                 if m.span() not in spans:
                     spans.append(m.span())
+    else:
+        # Single-letter camelCase suffix: armL, handR_ctrl, legL1.
+        pat = r"(?<=[a-z])" + re.escape(token.upper()) + r"(?=[0-9_]|\Z)"
+        for m in re.finditer(pat, name):
+            if m.span() not in spans:
+                spans.append(m.span())
     return sorted(spans)
 
 
@@ -759,7 +766,18 @@ def _mirror(selected_only):
 
 
 def _mirror_character(char, targets, to_deg):
-    """Sample the rest pose, solve and write the mirrored pose."""
+    """Sample the rest pose, solve and write the mirrored pose.
+
+    Auto-key is put back to the user's setting whatever happens.
+    """
+    auto_key = cmds.autoKeyframe(query=True, state=True)
+    try:
+        return _mirror_character_inner(char, targets, to_deg, auto_key)
+    finally:
+        cmds.autoKeyframe(state=auto_key)
+
+
+def _mirror_character_inner(char, targets, to_deg, auto_key):
     controls = char.controls
     # 1. Current pose of every control (and the values to restore).
     current = {}
@@ -778,7 +796,6 @@ def _mirror_character(char, targets, to_deg):
 
     # 2. Rest pose: sample, then restore. Undo and auto-key are off so the
     #    round trip leaves no trace.
-    auto_key = cmds.autoKeyframe(query=True, state=True)
     undo_on = cmds.undoInfo(query=True, state=True)
     samples = {}
     changed = {}

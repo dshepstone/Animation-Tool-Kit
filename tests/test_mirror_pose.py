@@ -315,6 +315,11 @@ class NamingTests(unittest.TestCase):
         self.assertEqual(side("shirt_ctrl"), "middle")
         self.assertEqual(side("spine_pelvisMain_ctrl"), "middle")
         self.assertEqual(side("chest_ctrl"), "middle")
+        self.assertEqual(side("armL"), "left")
+        self.assertEqual(side("armR_ctrl"), "right")
+        self.assertEqual(side("legL1_ctrl"), "left")
+        self.assertEqual(side("headLook_ctrl"), "middle")
+        self.assertEqual(side("spineIK_ctrl"), "middle")
 
     def test_partner_names_keep_case(self):
         cands = self.mp.partner_candidates
@@ -322,6 +327,7 @@ class NamingTests(unittest.TestCase):
         self.assertIn("L_hand", cands("R_hand"))
         self.assertIn("armRight_ctrl", cands("armLeft_ctrl"))
         self.assertEqual(cands("spine_ctrl"), [])
+        self.assertEqual(cands("armL_ctrl"), ["armR_ctrl"])
 
     def test_placement_names(self):
         p = self.mp.is_placement_name
@@ -444,6 +450,20 @@ class SceneTests(unittest.TestCase):
         mp.mirror_pose()
         self.assertEqual(len(scene.dialogs), 1)
         self.assertIn("head_ctrl.rotateY", scene.dialogs[0]["message"])
+
+    def test_auto_key_comes_back_when_rest_pose_fails(self):
+        scene, mp, n = self.build()
+        scene.auto_key = True
+        real = scene.setAttr
+
+        def refuse(plug, value):
+            raise RuntimeError("refused")
+        scene.setAttr = refuse
+        self.assertIsNone(mp.mirror_pose())
+        scene.setAttr = real
+        self.assertTrue(scene.auto_key)
+        self.assertTrue(scene.undo_state)
+        self.assertTrue(scene.dialogs)
 
     def test_selected_only_leaves_the_rest(self):
         scene, mp, n = self.build()
