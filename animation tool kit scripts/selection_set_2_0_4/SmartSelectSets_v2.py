@@ -24,19 +24,20 @@ from typing import Dict, List, Optional, Tuple
 import maya.cmds as cmds
 import maya.mel as mel
 import maya.OpenMayaUI as omui
-from shiboken6 import wrapInstance
+from shiboken6 import isValid, wrapInstance
 from PySide6 import QtCore, QtWidgets, QtGui
 
 
 TOOL_NAME = "SmartSelectSetsToolV2"
 TOOL_TITLE = "Smart Select Sets"
-TOOL_VERSION = "2.5.1"
+TOOL_VERSION = "2.6.0"
 SCHEMA_VERSION = 2
 SCENE_NODE_NAME = "ConestogaSelectionGroupNode"
 SCENE_ATTR_NAME = "groupsData"
 DEFAULT_CATEGORY = "Uncategorized"
 HIGHLIGHT_COLOR = [1.0, 0.95, 0.55]
 HEADER_ACCENT = "#2e6da4"  # ATK toolbar blue
+GROUP_MIME = "application/x-smartselect-group-id"
 
 
 # ------------------------------
@@ -53,6 +54,9 @@ class SelectionGroup:
     notes: str = ""
     created_at: float = field(default_factory=time.time)
     modified_at: float = field(default_factory=time.time)
+    # Position of the button inside its category (0 = first). Sets saved
+    # before 2.6.0 have none (-1) and are numbered alphabetically on load.
+    order: int = -1
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -68,6 +72,7 @@ class SelectionGroup:
             notes=str(data.get("notes", "")),
             created_at=float(data.get("created_at", time.time())),
             modified_at=float(data.get("modified_at", time.time())),
+            order=int(data.get("order", -1)),
         )
 
 
@@ -170,8 +175,10 @@ class SmartSelectSetsManager:
                 del self.groups[group.group_id]
         else:
             self.ensure_category(DEFAULT_CATEGORY)
+            to_affect.sort(key=lambda g: (g.order, g.name.lower()))
             for group in to_affect:
                 group.category = DEFAULT_CATEGORY
+                group.order = self._next_order(DEFAULT_CATEGORY)
                 group.modified_at = time.time()
 
     def set_category_prefix(self, category_name: str, new_prefix: str, remap_objects: bool = True) -> None:
@@ -214,6 +221,7 @@ class SmartSelectSetsManager:
             objects=long_paths,
             color=list(color or [0.7, 0.7, 0.7]),
             notes=notes,
+            order=self._next_order(category),
         )
         return group_id
 
@@ -236,9 +244,58 @@ class SmartSelectSetsManager:
         return len(to_delete)
 
     def move_group(self, group_id: int, new_category: str) -> None:
+        """Move a set to the end of another category."""
         group = self.require_group(group_id)
-        group.category = self.ensure_category(new_category).name
+        new_category = self.ensure_category(new_category).name
+        if group.category == new_category:
+            return
+        old_category = group.category
+        group.category = new_category
+        group.order = self._next_order(new_category, exclude=group_id)
         group.modified_at = time.time()
+        self._renumber(old_category)
+
+    def reorder_group(self, group_id: int, target_id: int, after: bool = False) -> None:
+        """Place a set just before (or after) another set.
+
+        The set joins the target's category if it was in a different one,
+        so dropping a button onto a button in another category both moves
+        and positions it.
+        """
+        group = self.require_group(group_id)
+        target = self.require_group(target_id)
+        if group_id == target_id:
+            return
+        old_category = group.category
+        category = target.category
+        siblings = [g for g in self.groups_in_category(category) if g.group_id != group_id]
+        index = next(i for i, g in enumerate(siblings) if g.group_id == target_id)
+        siblings.insert(index + 1 if after else index, group)
+        group.category = category
+        for position, sibling in enumerate(siblings):
+            sibling.order = position
+        group.modified_at = time.time()
+        if old_category != category:
+            self._renumber(old_category)
+
+    def groups_in_category(self, category_name: str) -> List[SelectionGroup]:
+        """The sets of a category in button order."""
+        groups = [g for g in self.groups.values() if g.category == category_name]
+        groups.sort(key=lambda g: (g.order < 0, g.order, g.name.lower(), g.group_id))
+        return groups
+
+    def _next_order(self, category_name: str, exclude: Optional[int] = None) -> int:
+        orders = [g.order for g in self.groups.values()
+                  if g.category == category_name and g.group_id != exclude]
+        return max(orders, default=-1) + 1
+
+    def _renumber(self, category_name: str) -> None:
+        for position, group in enumerate(self.groups_in_category(category_name)):
+            group.order = position
+
+    def _renumber_all(self) -> None:
+        for category_name in {g.category for g in self.groups.values()}:
+            self._renumber(category_name)
 
     def replace_group_members(self, group_id: int, objects: List[str]) -> None:
         group = self.require_group(group_id)
@@ -281,6 +338,8 @@ class SmartSelectSetsManager:
             color=list(source.color),
             notes=source.notes,
         )
+        # The copy sits right after the original
+        self.reorder_group(new_id, group_id, after=True)
         return new_id
 
     def require_group(self, group_id: int) -> SelectionGroup:
@@ -425,6 +484,9 @@ class SmartSelectSetsManager:
 
         next_group_id = int(payload.get("next_group_id", max_group_id + 1))
         self.next_group_id = max(next_group_id, max_group_id + 1)
+        # Older data has no button order: number it alphabetically, which is
+        # how those versions showed the buttons.
+        self._renumber_all()
 
     def reset(self) -> None:
         """Forget every category and set (used when a different scene opens)."""
@@ -532,9 +594,22 @@ class SmartSelectSetsManager:
 # ------------------------------
 
 
+def _dragged_group_id(event) -> Optional[int]:
+    """The set id carried by a Smart Select Sets drag, or None."""
+    mime = event.mimeData()
+    if not mime.hasFormat(GROUP_MIME):
+        return None
+    try:
+        return int(bytes(mime.data(GROUP_MIME)).decode("utf-8"))
+    except Exception:
+        return None
+
+
 class GroupButton(QtWidgets.QPushButton):
     clickedWithId = QtCore.Signal(int)
     contextMenuRequestedForId = QtCore.Signal(int, QtCore.QPoint)
+    # (dragged set id, this button's set id, True = drop after this button)
+    groupDroppedOnGroup = QtCore.Signal(int, int, bool)
 
     def __init__(self, group_id: int, label: str, color: List[float], parent=None):
         super().__init__(label, parent)
@@ -542,6 +617,9 @@ class GroupButton(QtWidgets.QPushButton):
         self.base_color = color
         self._drag_start_pos: Optional[QtCore.QPoint] = None
         self._drag_started = False
+        # Which side of this button a dragged set would land on (None = no drag)
+        self._drop_side: Optional[str] = None
+        self.setAcceptDrops(True)
         self.setFixedHeight(44)
         self.setCursor(QtCore.Qt.PointingHandCursor)
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -575,7 +653,7 @@ class GroupButton(QtWidgets.QPushButton):
 
         self._drag_started = True
         mime = QtCore.QMimeData()
-        mime.setData("application/x-smartselect-group-id", str(self.group_id).encode("utf-8"))
+        mime.setData(GROUP_MIME, str(self.group_id).encode("utf-8"))
 
         drag = QtGui.QDrag(self)
         drag.setMimeData(mime)
@@ -591,6 +669,64 @@ class GroupButton(QtWidgets.QPushButton):
     def _reset_drag_state(self):
         self._drag_start_pos = None
         self._drag_started = False
+
+    # ----- dropping another set onto this button reorders it -----
+    def _side_for(self, event) -> str:
+        return "after" if event.position().x() >= self.width() / 2.0 else "before"
+
+    def _set_drop_side(self, side: Optional[str]) -> None:
+        if side != self._drop_side:
+            self._drop_side = side
+            self.update()
+
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
+        self.dragMoveEvent(event)
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:
+        dragged = _dragged_group_id(event)
+        if dragged is None:
+            event.ignore()
+            return
+        # Over itself: accept so the drop is a no-op (rather than reaching
+        # the category box behind, which would move the set to the end).
+        self._set_drop_side(None if dragged == self.group_id else self._side_for(event))
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event: QtGui.QDragLeaveEvent) -> None:
+        self._set_drop_side(None)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event: QtGui.QDropEvent) -> None:
+        side = self._side_for(event)
+        self._set_drop_side(None)
+        dragged = _dragged_group_id(event)
+        if dragged is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        if dragged == self.group_id:
+            return
+        # Emit after the drop finishes: the handler rebuilds the buttons,
+        # this one included, which must not happen inside its own dropEvent.
+        target, after = self.group_id, side == "after"
+        QtCore.QTimer.singleShot(0, lambda: self._emit_drop(dragged, target, after))
+
+    def _emit_drop(self, dragged: int, target: int, after: bool) -> None:
+        try:
+            self.groupDroppedOnGroup.emit(dragged, target, after)
+        except RuntimeError:
+            pass  # the button was rebuilt in the meantime
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        super().paintEvent(event)
+        if not self._drop_side:
+            return
+        # A bright bar on the side the dragged set will be inserted
+        painter = QtGui.QPainter(self)
+        bar = 4
+        x = self.width() - bar if self._drop_side == "after" else 0
+        painter.fillRect(QtCore.QRect(x, 0, bar, self.height()), QtGui.QColor("#4aa3ff"))
+        painter.end()
 
     def apply_color(self, color: List[float]) -> None:
         self.base_color = list(color)
@@ -612,7 +748,52 @@ class GroupButton(QtWidgets.QPushButton):
         )
 
 
-class CategoryDropBox(QtWidgets.QGroupBox):
+class _CategoryDropMixin:
+    """Accepts a dragged set button and reports it with ``groupDropped``."""
+
+    category_name = ""
+
+    def _set_drag_hover(self, value: bool) -> None:
+        self.setProperty("dragHover", value)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
+        if event.mimeData().hasFormat(GROUP_MIME):
+            event.acceptProposedAction()
+            self._set_drag_hover(True)
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:
+        if event.mimeData().hasFormat(GROUP_MIME):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event: QtGui.QDragLeaveEvent) -> None:
+        self._set_drag_hover(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event: QtGui.QDropEvent) -> None:
+        self._set_drag_hover(False)
+        group_id = _dragged_group_id(event)
+        if group_id is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        category = self.category_name
+        # Deferred for the same reason as GroupButton.dropEvent
+        QtCore.QTimer.singleShot(0, lambda: self._emit_group_dropped(group_id, category))
+
+    def _emit_group_dropped(self, group_id: int, category: str) -> None:
+        try:
+            self.groupDropped.emit(group_id, category)
+        except RuntimeError:
+            pass
+
+
+class CategoryDropBox(_CategoryDropMixin, QtWidgets.QGroupBox):
     groupDropped = QtCore.Signal(int, str)
 
     def __init__(self, category_name: str, title: str, parent=None):
@@ -620,41 +801,15 @@ class CategoryDropBox(QtWidgets.QGroupBox):
         self.category_name = category_name
         self.setAcceptDrops(True)
 
-    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
-        if event.mimeData().hasFormat("application/x-smartselect-group-id"):
-            event.acceptProposedAction()
-            self.setProperty("dragHover", True)
-            self.style().unpolish(self)
-            self.style().polish(self)
-        else:
-            event.ignore()
 
-    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:
-        if event.mimeData().hasFormat("application/x-smartselect-group-id"):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
+class PopoutDropArea(_CategoryDropMixin, QtWidgets.QWidget):
+    """The button area of a pop-out: dropping a set here moves it in."""
+    groupDropped = QtCore.Signal(int, str)
 
-    def dragLeaveEvent(self, event: QtGui.QDragLeaveEvent) -> None:
-        self.setProperty("dragHover", False)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        super().dragLeaveEvent(event)
-
-    def dropEvent(self, event: QtGui.QDropEvent) -> None:
-        self.setProperty("dragHover", False)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        if not event.mimeData().hasFormat("application/x-smartselect-group-id"):
-            event.ignore()
-            return
-        try:
-            group_id = int(bytes(event.mimeData().data("application/x-smartselect-group-id")).decode("utf-8"))
-        except Exception:
-            event.ignore()
-            return
-        self.groupDropped.emit(group_id, self.category_name)
-        event.acceptProposedAction()
+    def __init__(self, category_name: str, parent=None):
+        super().__init__(parent)
+        self.category_name = category_name
+        self.setAcceptDrops(True)
 
 
 class SmartSelectSetsWindow(QtWidgets.QDialog):
@@ -679,6 +834,10 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         # fresh scene (or one whose saved categories hold no sets) starts
         # with no boxes at all.
         self._session_categories: set = set()
+        # Set while the window is really going away (not just hiding
+        # behind its pop-outs) - see closeEvent.
+        self._force_close = False
+        self._tearing_down = False
 
         self._build_ui()
         self._connect_scene_jobs()
@@ -996,6 +1155,32 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         except Exception as exc:
             cmds.warning(f"Failed to auto-save Smart Select Sets: {exc}")
 
+        if not self._force_close and self.live_popouts():
+            # Pop-outs keep working after the main window is closed. They
+            # use this window's data and scene callbacks, so it only hides;
+            # it closes for real once the last pop-out closes, and opening
+            # Smart Select Sets again brings it back.
+            event.ignore()
+            self.hide()
+            return
+
+        self._teardown()
+        # Accept directly: QDialog.closeEvent would call reject(), which is
+        # routed back to close() above and makes Qt ignore this close.
+        event.accept()
+
+    def reject(self) -> None:
+        # Esc: close like the title bar button (saves, keeps pop-outs alive)
+        # instead of QDialog's plain hide.
+        self.close()
+
+    def shutdown_window(self) -> None:
+        """Close the window and every pop-out for good."""
+        self._force_close = True
+        self.close()
+
+    def _teardown(self) -> None:
+        self._tearing_down = True
         # Kill the scene-open scriptJobs; leaving them alive fires callbacks
         # into a deleted window on every scene change after closing.
         for job_id in getattr(self, "_script_jobs", []):
@@ -1007,12 +1192,40 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
 
         for popup in list(self.popout_windows.values()):
             try:
-                popup.close()
-                popup.deleteLater()
+                if isValid(popup):
+                    popup.close()
+                    popup.deleteLater()
             except Exception:
                 pass
         self.popout_windows.clear()
-        super().closeEvent(event)
+
+    def live_popouts(self) -> List["CategoryPopoutWindow"]:
+        popups = []
+        for popup in self.popout_windows.values():
+            try:
+                if popup is not None and isValid(popup) and popup.isVisible():
+                    popups.append(popup)
+            except RuntimeError:
+                continue
+        return popups
+
+    def _on_popout_closed(self, popup: "CategoryPopoutWindow") -> None:
+        for name, known in list(self.popout_windows.items()):
+            if known is popup:
+                self.popout_windows.pop(name, None)
+        if self._tearing_down:
+            return
+        # The main window was closed while pop-outs were open: now that the
+        # last one is gone, finish closing it.
+        if self.isHidden() and not self.live_popouts():
+            QtCore.QTimer.singleShot(0, self._close_if_unused)
+
+    def _close_if_unused(self) -> None:
+        try:
+            if self.isHidden() and not self.live_popouts():
+                self.shutdown_window()
+        except RuntimeError:
+            pass
 
     def _connect_scene_jobs(self) -> None:
         self._script_jobs = []
@@ -1053,8 +1266,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
 
         for category_name in category_names:
             category = self.manager.categories[category_name]
-            groups = [g for g in self.manager.groups.values() if g.category == category_name]
-            groups.sort(key=lambda g: g.name.lower())
+            groups = self.manager.groups_in_category(category_name)
 
             # A category box only renders once it actually holds sets (or was
             # created/used this session, so it can serve as a drop target).
@@ -1105,7 +1317,10 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
 
             outer.addLayout(top_row)
 
-            hint = QtWidgets.QLabel("Tip: drag a selection button onto another category to move it.")
+            hint = QtWidgets.QLabel(
+                "Tip: drag a button onto another button to reorder it, "
+                "or onto another category to move it.")
+            hint.setWordWrap(True)
             hint.setStyleSheet("color: #8d8d8d; font-size: 11px;")
             outer.addWidget(hint)
 
@@ -1121,9 +1336,10 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
                     )
                     button.setStyleSheet(button.styleSheet() + "QPushButton { border: 2px solid #c98500; }")
                 else:
-                    button.setToolTip("All objects resolved. Drag to another category to move it.")
+                    button.setToolTip("All objects resolved. Drag onto another button or category to move it.")
                 button.clickedWithId.connect(self.on_group_button_clicked)
                 button.contextMenuRequestedForId.connect(self.show_group_context_menu)
+                button.groupDroppedOnGroup.connect(self._reorder_group_from_drop)
                 self.group_buttons[group.group_id] = button
                 flow.addWidget(button)
 
@@ -1152,17 +1368,18 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         existing_categories = set(self.manager.categories.keys())
         for category_name in list(self.popout_windows.keys()):
             popup = self.popout_windows.get(category_name)
-            if category_name not in existing_categories:
-                if popup:
+            alive = popup is not None and isValid(popup)
+            if category_name not in existing_categories or not alive:
+                self.popout_windows.pop(category_name, None)
+                if alive:
                     try:
                         popup.close()
                         popup.deleteLater()
                     except Exception:
                         pass
-                self.popout_windows.pop(category_name, None)
 
         for category_name, popup in list(self.popout_windows.items()):
-            if popup:
+            if popup is not None and isValid(popup):
                 popup.refresh_buttons()
 
     def open_category_popout(self, category_name: str) -> None:
@@ -1172,9 +1389,8 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             return
 
         popup = self.popout_windows.get(category_name)
-        if popup is None or popup.isHidden():
+        if popup is None or not isValid(popup) or popup.isHidden():
             popup = CategoryPopoutWindow(category_name, self.manager, self)
-            popup.destroyed.connect(lambda *_ , c=category_name: self.popout_windows.pop(c, None))
             self.popout_windows[category_name] = popup
 
         popup.refresh_buttons()
@@ -1196,14 +1412,31 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         text, ok = QtWidgets.QInputDialog.getText(self, "Create Category", "Category name:")
         if not ok:
             return
+        name = (text or "").strip()
         try:
-            self.manager.create_category(text)
+            if name in self.manager.categories and not self._is_category_shown(name):
+                # The name is still in the data but has no box on screen: an
+                # empty category loaded from the scene (for example one that
+                # was deleted but restored by Load or a scene reopen). Show
+                # it again instead of refusing the name as a duplicate.
+                self._session_categories.add(name)
+                self.refresh_ui()
+                return
+            self.manager.create_category(name)
             # User-created categories render immediately (even while empty)
             # so they can act as drag-and-drop targets.
-            self._session_categories.add((text or "").strip())
+            self._session_categories.add(name)
             self.refresh_ui()
         except Exception as exc:
             self._show_error(str(exc))
+
+    def _is_category_shown(self, category_name: str) -> bool:
+        """True when the category gets a box (it holds sets or was used)."""
+        if category_name not in self.manager.categories:
+            return False
+        if category_name in self._session_categories:
+            return True
+        return any(g.category == category_name for g in self.manager.groups.values())
 
     def delete_category_dialog(self) -> None:
         category_names = [name for name in sorted(self.manager.categories.keys()) if name != DEFAULT_CATEGORY]
@@ -1222,6 +1455,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             return
         try:
             self.manager.delete_category(category)
+            self._session_categories.discard(category)
             self.refresh_ui()
         except Exception as exc:
             self._show_error(str(exc))
@@ -1233,7 +1467,12 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             return
 
         category_pairs = []
-        for category_name in sorted(self.manager.categories.keys()):
+        # Only offer categories that have a box on screen; hidden empty ones
+        # can still be reused by typing their name as a new category.
+        shown = [c for c in self.manager.categories if self._is_category_shown(c)]
+        if DEFAULT_CATEGORY in self.manager.categories and DEFAULT_CATEGORY not in shown:
+            shown.append(DEFAULT_CATEGORY)
+        for category_name in sorted(shown):
             category_pairs.append((self.manager.get_category_label(category_name), category_name))
 
         dialog = CreateGroupDialog(category_pairs, self)
@@ -1244,6 +1483,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
         color = dialog.chosen_color
         try:
             self.manager.create_group(group_name, category_name, selection, color=color)
+            self._session_categories.add((category_name or "").strip() or DEFAULT_CATEGORY)
             self.refresh_ui()
         except Exception as exc:
             self._show_error(str(exc))
@@ -1272,19 +1512,23 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             self._show_error(str(exc))
 
     def _flash_button(self, group_id: int) -> None:
-        button = self.group_buttons.get(group_id)
         group = self.manager.groups.get(group_id)
-        if not button or not group:
+        buttons = [self.group_buttons.get(group_id)]
+        buttons += [p.group_buttons.get(group_id) for p in self.live_popouts()]
+        buttons = [b for b in buttons if b is not None and isValid(b)]
+        if not buttons or not group:
             return
-        button.apply_color(HIGHLIGHT_COLOR)
+        for button in buttons:
+            button.apply_color(HIGHLIGHT_COLOR)
         timer = QtCore.QTimer(self)
         timer.setSingleShot(True)
 
         def _restore():
-            try:
-                button.apply_color(group.color)
-            except RuntimeError:
-                pass  # button was rebuilt/deleted in the meantime
+            for button in buttons:
+                try:
+                    button.apply_color(group.color)
+                except RuntimeError:
+                    pass  # button was rebuilt/deleted in the meantime
             if timer in self._timers:
                 self._timers.remove(timer)
             timer.deleteLater()
@@ -1467,13 +1711,66 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             self._show_error(str(exc))
 
     def _move_group_to_category_from_drop(self, group_id: int, category_name: str) -> None:
+        """A set was dropped on a category's free space: put it last there."""
         try:
             group = self.manager.require_group(group_id)
+            if category_name not in self.manager.categories:
+                return
             if group.category == category_name:
+                siblings = self.manager.groups_in_category(category_name)
+                if not siblings or siblings[-1].group_id == group_id:
+                    return
+                self.manager.reorder_group(group_id, siblings[-1].group_id, after=True)
+                self.refresh_ui(revalidate=False)
+                self.status_label.setText(f"Moved '{group.name}' to the end.")
                 return
             self.manager.move_group(group_id, category_name)
             self.refresh_ui()
             self.status_label.setText(f"Moved '{group.name}' to '{self.manager.get_category_label(category_name)}'.")
+        except Exception as exc:
+            self._show_error(str(exc))
+
+    def _reorder_group_from_drop(self, group_id: int, target_id: int, after: bool) -> None:
+        """A set was dropped onto another set's button: place it beside it."""
+        try:
+            group = self.manager.require_group(group_id)
+            target = self.manager.require_group(target_id)
+            moved_category = group.category != target.category
+            self.manager.reorder_group(group_id, target_id, after=after)
+            self.refresh_ui(revalidate=moved_category)
+            where = "after" if after else "before"
+            self.status_label.setText(f"Moved '{group.name}' {where} '{target.name}'.")
+        except Exception as exc:
+            self._show_error(str(exc))
+
+    def rename_category_dialog(self, category_name: str) -> None:
+        if category_name not in self.manager.categories:
+            self._show_info(f"Category '{category_name}' no longer exists.")
+            return
+        current = self.manager.get_category_label(category_name)
+        text, ok = QtWidgets.QInputDialog.getText(
+            self, "Rename Category", "New category name:", text=current)
+        if not ok:
+            return
+        new_name = (text or "").strip()
+        if not new_name or new_name == current:
+            return
+        try:
+            if (category_name != DEFAULT_CATEGORY and new_name in self.manager.categories
+                    and not self._is_category_shown(new_name)
+                    and not any(g.category == new_name for g in self.manager.groups.values())):
+                # Free the name from a hidden, empty category left in the data
+                del self.manager.categories[new_name]
+            self.manager.rename_category(category_name, new_name)
+            if category_name != DEFAULT_CATEGORY:
+                if category_name in self._session_categories:
+                    self._session_categories.discard(category_name)
+                self._session_categories.add(new_name)
+                popup = self.popout_windows.pop(category_name, None)
+                if popup is not None and isValid(popup):
+                    popup.category_name = new_name
+                    self.popout_windows[new_name] = popup
+            self.refresh_ui(revalidate=False)
         except Exception as exc:
             self._show_error(str(exc))
 
@@ -1525,6 +1822,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
 
         try:
             self.manager.delete_category(category_name, delete_groups=delete_groups)
+            self._session_categories.discard(category_name)
             self.refresh_ui()
             if category_name == DEFAULT_CATEGORY:
                 self._show_info(f"Deleted the '{DEFAULT_CATEGORY}' category block.")
@@ -1683,7 +1981,11 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             "- 'Add Button to Maya Shelf' creates a self-contained shelf button on the\n"
             "  active shelf that reselects the set even when this window is closed\n"
             "  (Shift+click the shelf button to add to the selection).\n"
-            "- You can drag a selection button onto another category block to move it there.\n\n"
+            "- Drag a button onto another button to reorder it: drop on the right half\n"
+            "  to place it after that button, on the left half to place it before.\n"
+            "  This works inside a category and across categories, in pop-outs too.\n"
+            "- Drag a button onto the free space of another category block to move it\n"
+            "  to the end of that category.\n\n"
             "Saving\n"
             "- Save to Scene stores the data inside the current Maya file.\n"
             "- Load from Scene restores saved groups from the Maya file.\n"
@@ -1697,7 +1999,9 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             "  prefix or editing the group membership.\n\n"
             "Pop-Out Windows\n"
             "- Pop-out windows are small floating pickers for one category.\n"
-            "- They can stay open even if the main window is minimized.\n"
+            "- They stay open when the main window is minimized or closed. Open Smart\n"
+            "  Select Sets again to bring the main window back.\n"
+            "- They stay in front of Maya but not in front of other applications.\n"
             "- Each pop-out has its own opacity slider and close button.\n\n"
             "Tips\n"
             "- Make one category per character or rig for cleaner organization.\n"
@@ -1717,7 +2021,7 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
             "focused animation work.\n\n"
             "Main features\n"
             "- Category-based selection buttons\n"
-            "- Drag and drop buttons between categories\n"
+            "- Drag and drop buttons to reorder them or move them between categories\n"
             "- Add any selection button to a Maya shelf\n"
             "- Prefix remapping for category-based namespaces\n"
             "- Pop-out picker windows for individual categories\n"
@@ -1771,7 +2075,9 @@ class SmartSelectSetsWindow(QtWidgets.QDialog):
 class CategoryPopoutWindow(QtWidgets.QDialog):
     def __init__(self, category_name: str, manager: SmartSelectSetsManager, host_window: SmartSelectSetsWindow):
         # Parent the popout to Maya's main window instead of the main Smart Select Sets window
-        # so the popout stays open when the main manager window is minimized.
+        # so the popout stays open when the main manager window is minimized
+        # or closed. Being owned by Maya's window is also what keeps it in
+        # front of Maya - see the window flags below.
         super().__init__(maya_main_window())
         self.manager = manager
         self.host_window = host_window
@@ -1784,10 +2090,13 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setObjectName(f"{TOOL_NAME}_{category_name}_Popout")
+        # No WindowStaysOnTopHint: that put the pop-out above every app on
+        # the desktop (a browser included). A Tool window owned by Maya's
+        # main window stays above Maya only, and goes behind another app
+        # together with Maya.
         self.setWindowFlags(
             QtCore.Qt.Tool |
-            QtCore.Qt.FramelessWindowHint |
-            QtCore.Qt.WindowStaysOnTopHint
+            QtCore.Qt.FramelessWindowHint
         )
         self.resize(360, 220)
         self.setMinimumSize(240, 120)
@@ -1882,7 +2191,7 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
         self.title_label.setObjectName("PopupTitle")
         label_col.addWidget(self.title_label)
 
-        self.subtitle_label = QtWidgets.QLabel("Click to select. Right-click for group options.")
+        self.subtitle_label = QtWidgets.QLabel("Click to select. Drag to reorder. Right-click for options.")
         self.subtitle_label.setObjectName("PopupSubtitle")
         label_col.addWidget(self.subtitle_label)
 
@@ -1916,7 +2225,9 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
         self.scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
         chrome_layout.addWidget(self.scroll_area, 1)
 
-        self.content_widget = QtWidgets.QWidget()
+        self.content_widget = PopoutDropArea(self.category_name)
+        self.content_widget.groupDropped.connect(
+            lambda group_id, _c: self.host_window._move_group_to_category_from_drop(group_id, self.category_name))
         self.content_layout = QtWidgets.QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.content_layout.setSpacing(8)
@@ -1981,8 +2292,8 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
         self._clear_content()
 
         flow = FlowLayout()
-        groups = [g for g in self.manager.groups.values() if g.category == self.category_name]
-        groups.sort(key=lambda g: g.name.lower())
+        self.content_widget.category_name = self.category_name
+        groups = self.manager.groups_in_category(self.category_name)
         # Reuse the host window's cached validation instead of re-resolving
         # every stored object each time the popout refreshes.
         validation = self.host_window.current_validation()
@@ -2005,13 +2316,27 @@ class CategoryPopoutWindow(QtWidgets.QDialog):
                 )
                 button.setStyleSheet(button.styleSheet() + "QPushButton { border: 2px solid #c98500; }")
             else:
-                button.setToolTip("All objects resolved.")
+                button.setToolTip("All objects resolved. Drag onto another button to reorder.")
             button.clickedWithId.connect(self.host_window.on_group_button_clicked)
             button.contextMenuRequestedForId.connect(self.host_window.show_group_context_menu)
+            button.groupDroppedOnGroup.connect(self.host_window._reorder_group_from_drop)
             self.group_buttons[group.group_id] = button
             flow.addWidget(button)
 
         self.content_layout.insertLayout(self.content_layout.count() - 1, flow)
+
+    def reject(self) -> None:
+        self.close()  # Esc closes (and deletes) the pop-out like its x button
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        # Not QDialog.closeEvent: it calls reject(), which calls close() again
+        event.accept()
+        host = self.host_window
+        try:
+            if host is not None and isValid(host):
+                host._on_popout_closed(self)
+        except RuntimeError:
+            pass
 
 
 class CreateGroupDialog(QtWidgets.QDialog):
@@ -2196,22 +2521,64 @@ def maya_main_window():
 _window = None  # keeps the window alive when launched without a Maya parent
 
 
+def _existing_windows() -> List[QtWidgets.QWidget]:
+    found = []
+    for widget in QtWidgets.QApplication.topLevelWidgets():
+        try:
+            if isValid(widget) and widget.objectName() == SmartSelectSetsWindow.WINDOW_OBJECT_NAME:
+                found.append(widget)
+        except RuntimeError:
+            continue
+    return found
+
+
+def _close_for_good(widget: QtWidgets.QWidget) -> None:
+    try:
+        if hasattr(widget, "shutdown_window"):
+            widget.shutdown_window()
+        else:
+            widget.close()
+        widget.deleteLater()
+    except Exception:
+        pass
+
+
 def show_smart_select_sets() -> SmartSelectSetsWindow:
     global _window
 
-    for widget in QtWidgets.QApplication.topLevelWidgets():
-        if widget.objectName() == SmartSelectSetsWindow.WINDOW_OBJECT_NAME:
-            try:
-                widget.close()
-                widget.deleteLater()
-            except Exception:
-                pass
+    reuse = None
+    for widget in _existing_windows():
+        # A window from this module that was closed while pop-outs stayed
+        # open is only hidden: bring it back so it stays in sync with them.
+        # Anything else (a window from older code) is replaced.
+        if reuse is None and type(widget) is SmartSelectSetsWindow and not widget._tearing_down:
+            reuse = widget
+        else:
+            _close_for_good(widget)
 
-    _window = SmartSelectSetsWindow()
+    if reuse is not None:
+        _window = reuse
+        _window.refresh_ui()
+    else:
+        _window = SmartSelectSetsWindow()
     _window.show()
+    if _window.isMinimized():
+        _window.showNormal()
     _window.raise_()
     _window.activateWindow()
     return _window
+
+
+def shutdown() -> None:
+    """Close the window and its pop-outs (Reload Scripts and Maya quit).
+
+    The window saves the sets to the scene and kills its scriptJobs on the
+    way out.
+    """
+    global _window
+    for widget in _existing_windows():
+        _close_for_good(widget)
+    _window = None
 
 
 # Legacy-friendly alias for shelf buttons / old launchers.
