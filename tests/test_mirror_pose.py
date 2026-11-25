@@ -448,8 +448,21 @@ class SceneTests(unittest.TestCase):
         scene, mp, n = self.build()
         scene.nodes[n["head"]]["locked"].add("rotateY")
         mp.mirror_pose()
-        self.assertEqual(len(scene.dialogs), 1)
-        self.assertIn("head_ctrl.rotateY", scene.dialogs[0]["message"])
+        # Logged to the Script Editor, not a pop-up; the channel is untouched.
+        self.assertEqual(scene.dialogs, [])
+        self.assertEqual(scene.nodes[n["head"]]["attrs"]["rotateY"], 25.0)
+        self.assertEqual(scene.nodes[n["head"]]["attrs"]["rotateZ"], -5.0)
+
+    def test_one_sided_control_flips_in_place_without_a_popup(self):
+        scene, mp, n = self.build()
+        hair = scene.add("Delta_rig:R_hair_E0_Ik_ctrl", n["head"],
+                         t=(-0.5, 1, 0), r=(10, 20, 30))
+        mp.mirror_pose()
+        self.assertEqual(scene.dialogs, [])
+        a = scene.nodes[hair]["attrs"]
+        self.assertTrue(close([a["rotateX"], a["rotateY"], a["rotateZ"]],
+                              [10, -20, -30]))
+        self.assertAlmostEqual(a["translateX"], 0.5)
 
     def test_auto_key_comes_back_when_rest_pose_fails(self):
         scene, mp, n = self.build()

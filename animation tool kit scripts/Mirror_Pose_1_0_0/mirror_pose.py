@@ -610,10 +610,12 @@ class _Character(object):
                     and not self._excluded(partner):
                 self.partner[ctrl] = partner
                 self.partner[partner] = ctrl
-            elif side_of(base_name(ctrl)) == "middle":
-                self.centres.append(ctrl)
             else:
-                self.unmatched.append(ctrl)
+                # Centre controls, and one-sided parts with no partner (a
+                # hair strand only on the right), flip in place.
+                self.centres.append(ctrl)
+                if side_of(base_name(ctrl)) != "middle":
+                    self.unmatched.append(ctrl)
 
     def left_right_pairs(self):
         done, out = set(), []
@@ -723,25 +725,29 @@ def _mirror(selected_only):
                 "{}: no left / right pairs were found, so only centre controls "
                 "were flipped. Check the side names (lf/rt, l/r, left/right) or "
                 "add manual pairs in Character Snapshot.".format(name))
-        if char.unmatched and not selected_only:
-            names = [base_name(c) for c in char.unmatched]
-            problems.append("{}: {} sided control{} had no partner and kept "
-                            "their pose: {}{}".format(
-                                name, len(names), "" if len(names) == 1 else "s",
-                                ", ".join(names[:8]),
-                                " ..." if len(names) > 8 else ""))
+        # One-sided controls and locked / driven channels are normal on
+        # production rigs: list them in the Script Editor, no pop-up.
+        notes = []
+        if char.unmatched:
+            notes.append("{} one-sided control{} flipped in place (no "
+                         "partner): {}".format(
+                             len(char.unmatched),
+                             "" if len(char.unmatched) == 1 else "s",
+                             ", ".join(base_name(c) for c in char.unmatched)))
         if result["skipped"]:
-            plugs = result["skipped"]
-            problems.append("{}: {} channel{} could not be set (locked or "
-                            "driven): {}{}".format(
-                                name, len(plugs), "" if len(plugs) == 1 else "s",
-                                ", ".join(plugs[:6]),
-                                " ..." if len(plugs) > 6 else ""))
+            notes.append("{} locked or driven channel{} left as they were: "
+                         "{}".format(len(result["skipped"]),
+                                     "" if len(result["skipped"]) == 1 else "s",
+                                     ", ".join(result["skipped"])))
+        for note in notes:
+            print("[{}] {}: {}".format(TOOL_TITLE, name, note))
         if result["failed"]:
             problems.append("{}: could not solve the mirror for {}".format(
                 name, ", ".join(base_name(c) for c in result["failed"][:6])))
-        print("[{}] {}: plane normal {}, {} pairs, {} centres, kept in place: "
-              "{}".format(TOOL_TITLE, name,
+        print("[{}] {}: pairs from {}, plane normal {}, {} pairs, {} centres, "
+              "kept in place: {}".format(
+                          TOOL_TITLE, name,
+                          "Character Snapshot + names" if snap else "names",
                           [round(v, 3) for v in result["normal"]],
                           len(char.left_right_pairs()), len(char.centres),
                           ", ".join(base_name(c) for c in char.placement)

@@ -13,6 +13,8 @@ into its mirror image:
 - centre controls (COG, pelvis, spine, chest, neck, head, jaw) flip across the
   character, so a body that turns, leans or shifts to the left now does it to
   the right
+- one-sided parts with no partner (a hair strand or prop only on one side)
+  flip in place, the same way as centre controls
 - controls that place the character in the shot (world, global, main,
   placement...) stay where they are, so the character mirrors in place
   instead of jumping across the scene
@@ -39,10 +41,11 @@ pose.
 
 ### Never fails silently
 
-A pop-up explains anything that stops or limits the mirror: nothing selected,
-no rig controls in the selection, no left/right pairs found, sided controls
-without a partner, channels that are locked or driven, or an unexpected Maya
-error. The same report goes to the Script Editor.
+A pop-up explains anything that stops the mirror: nothing selected, no rig
+controls in the selection, no left/right pairs found, or an unexpected Maya
+error. The Script Editor lists the details of every run: where the pairs
+came from, the one-sided controls flipped in place, and any locked or driven
+channels that were left as they were.
 
 With auto-key on, channels that already have keys are keyed on the current
 frame.
