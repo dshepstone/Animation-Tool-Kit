@@ -40,7 +40,10 @@ to-do:
 # Built-in
 import os
 import urllib.request, urllib.error, urllib.parse
-import xml.etree.cElementTree as etree
+try:
+    import xml.etree.cElementTree as etree
+except ImportError:  # cElementTree was removed in Python 3.9
+    import xml.etree.ElementTree as etree
 
 # Third-party
 import maya.cmds as mc
@@ -275,7 +278,7 @@ class TMData(object):
                         set_element.text = " ".join(setobjs)
             # Otherwise get the data from the node
             else:
-                self.root = etree.XML(mc.getAttr(node + ".data"))
+                self.root = etree.XML(mc.getAttr(self.node + ".data"))
                 self.tree = etree.ElementTree(self.root)
         # Otherwise start from scratch
         else:
@@ -296,6 +299,8 @@ class TMData(object):
         # Next: replace existing data with new XML data
         if newnodes:
             self.node = newnodes[0]
+            if not mc.attributeQuery("data", node=self.node, exists=True):
+                mc.addAttr(self.node, longName="data", dataType="string")
         else:
             # Capture former selection
             selection = mc.ls(sl=True)
@@ -316,13 +321,16 @@ class TMData(object):
         self.group_root = self.root.find("groups")
         for group in self.group_root.findall("group"):
             # Build a group node
-            self.groups.append(TMGroup(group))
+            self.groups.append(TMGroup(self, group))
 
     def save_data(self):
         """
         Save everything to the data node
         """
-        mc.setAttr(self.node + ".data", etree.tostring(self.root), type="string")
+        # tostring() returns bytes in Python 3 unless asked for text; Maya's
+        # setAttr rejects bytes ("Error reading data element number 1").
+        xml_text = etree.tostring(self.root, encoding="unicode")
+        mc.setAttr(self.node + ".data", xml_text, type="string")
 
     def add_group(self, name):
         """
