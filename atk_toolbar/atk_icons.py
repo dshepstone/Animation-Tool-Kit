@@ -225,6 +225,7 @@ def _draw_symbol(painter, icon_key, accent, size):
         "wire":    _draw_wire,
         "reset":   _draw_reset,
         "mirror":  _draw_mirror,
+        "mirror_pose": _draw_mirror_pose,
         "save":     _draw_save,
         "library":  _draw_library,
         "user_dir": _draw_user_dir,
@@ -572,6 +573,36 @@ def _draw_mirror(painter, accent, s, m):
     ])
     painter.drawPolygon(left)
     painter.drawPolygon(right)
+
+
+def _draw_mirror_pose(painter, accent, s, m):
+    """A running figure and its mirror image either side of a dashed line."""
+    cx = s / 2.0
+    dash = QtGui.QPen(accent, max(1.0, s * 0.03))
+    dash.setStyle(QtCore.Qt.DashLine)
+    painter.setPen(dash)
+    painter.drawLine(QtCore.QPointF(cx, m), QtCore.QPointF(cx, s - m))
+
+    # (x, y) in 0..1 of the left half; mirrored for the right figure.
+    head = (0.27, 0.20)
+    limbs = [((0.27, 0.28), (0.31, 0.55)),
+             ((0.28, 0.34), (0.14, 0.42)), ((0.14, 0.42), (0.10, 0.31)),
+             ((0.28, 0.34), (0.41, 0.39)), ((0.41, 0.39), (0.45, 0.28)),
+             ((0.31, 0.55), (0.44, 0.66)), ((0.44, 0.66), (0.41, 0.83)),
+             ((0.31, 0.55), (0.20, 0.69)), ((0.20, 0.69), (0.09, 0.72))]
+    for colour, flip in ((accent, False), (accent.lighter(160), True)):
+        def pt(p):
+            x = (1.0 - p[0]) if flip else p[0]
+            return QtCore.QPointF(x * s, p[1] * s)
+        pen = _pen(colour, s * 0.06)
+        pen.setCapStyle(QtCore.Qt.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.NoBrush)
+        for a, b in limbs:
+            painter.drawLine(pt(a), pt(b))
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QBrush(colour))
+        painter.drawEllipse(pt(head), s * 0.075, s * 0.075)
 
 
 def _draw_library(painter, accent, s, m):
