@@ -74,15 +74,15 @@ jobs:
           python -m pytest tests -q -p no:cacheprovider
       - name: Every shipped Python file compiles
         run: python -m compileall -q "animation tool kit scripts" atk_toolbar
-      - run: python package_atk_release.py --version 1.1.23
+      - run: python package_atk_release.py --version 1.1.28
       - name: Upload the test build of the release ZIP
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: AnimationToolKit_v1_1_23-test-build
+          name: AnimationToolKit_v1_1_28-test-build
           path: |
-            dist/AnimationToolKit_v1_1_23.zip
-            dist/AnimationToolKit_v1_1_23.zip.sha256
+            dist/AnimationToolKit_v1_1_28.zip
+            dist/AnimationToolKit_v1_1_28.zip.sha256
           if-no-files-found: error
   release:
     needs: test
@@ -95,13 +95,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python package_atk_release.py --version 1.1.23
-      - name: Publish verified ATK 1.1.23 release once
+      - run: python package_atk_release.py --version 1.1.28
+      - name: Publish verified ATK 1.1.28 release once
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view ATK_1.1.23 >/dev/null 2>&1; then
+          if gh release view ATK_1.1.28 >/dev/null 2>&1; then
             echo 'Release already exists; preserving published assets.'
           else
-            gh release create ATK_1.1.23 dist/AnimationToolKit_v1_1_23.zip dist/AnimationToolKit_v1_1_23.zip.sha256 --target "$GITHUB_SHA" --title 'Animation Tool Kit v1.1.23' --notes-file Animation_Tool_Kit_v1.1.23_Release_Notes.md --latest
+            gh release create ATK_1.1.28 dist/AnimationToolKit_v1_1_28.zip dist/AnimationToolKit_v1_1_28.zip.sha256 --target "$GITHUB_SHA" --title 'Animation Tool Kit v1.1.28' --notes-file Animation_Tool_Kit_v1.1.28_Release_Notes.md --latest
           fi

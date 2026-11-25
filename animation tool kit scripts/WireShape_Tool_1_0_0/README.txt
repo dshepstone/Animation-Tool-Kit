@@ -137,15 +137,110 @@ If you prefer to install by hand, copy the files yourself:
                        matched groups above the selected objects
                        without changing their world position.
 
-  Snap to Selection  - When checked, the created control moves
-                       to the pivot of your current selection
-                       automatically.
+  Snap to Selection  - When checked and something is selected,
+                       one control is built on each selected
+                       object, at its pivot (rotate pivot), or at
+                       the centre of selected components (vertices,
+                       edges, faces, CVs). A selected shape node
+                       counts as its transform. With nothing
+                       selected, controls are built at 0,0,0.
+  Match Rotation     - Also turns each control to the object's
+                       world orientation (rotation, joint orient,
+                       rotate axis and parents included) and copies
+                       its rotate order. Scale, shear and mirroring
+                       (negative scale) are not copied, so the
+                       control keeps scale 1. Off: position only.
+                       The control's pivot stays at the shape's own
+                       origin, so it turns about the object's pivot.
 
   Search box         - Filter shapes by name in real time; empty
                        sections hide while filtering.
 
+  Joint Mode         - Tick "Joint Mode", select joints, then click
+                       any shape. Each control is placed on the
+                       joint's pivot with the joint's rotation axes
+                       and rotate order, so rotating the control X
+                       turns the joint about the same X.
+
+    Single Joint       One control on each selected joint.
+    Multi-Joint Chain  Walks the chain and builds a control on
+                       every joint:
+                         Selected joint + all below - everything
+                           under each selected joint
+                         Start -> End - select the first joint,
+                           then the last joint
+                       Skip end joints  - no control on the tip
+    Link controls      How each control follows the one above it
+                       (Multi-Joint):
+                         Parent-constraint chain (FK) - every
+                           <control>_GRP stays flat in the
+                           outliner and is parent-constrained to
+                           the control above (default)
+                         Nested hierarchy (FK) - each group is
+                           parented under the control above
+                         Not linked - independent controls
+    Drive joints       No constraint, Parent, Orient or Point +
+                       Orient constraint from each control to its
+                       joint. Joints are never re-parented. A joint
+                       that already has that constraint is skipped
+                       with a warning (a second target would blend
+                       old and new controls).
+    Name               Naming pattern. # is the number (## pads to
+                       01), {joint} is the joint's name.
+                       FlagPole_#_CTRL -> FlagPole_1_CTRL,
+                       FlagPole_2_CTRL, ...  Start # sets the first
+                       number.
+    Shape faces        "Down the chain (auto)" reads each joint's
+                       orientation and turns the shape to face the
+                       axis pointing at the next joint, so circles
+                       ring the bone. Or pick a joint axis, or keep
+                       the shape as built. Works with every shape.
+    Size               A multiple of the joint radius or bone
+                       length, or a fixed size in units.
+    Zero group         Puts each control under <control>_GRP
+                       matched to the joint, so its channels start
+                       at zero.
+
+  Best for Joints    (shown in Joint Mode) "Best Option" picks the
+                     shape per joint from its name: root/world ->
+                     Root, COG/pelvis/hips -> Circle 4-Arrow,
+                     head/chest -> Cube, eye -> Sphere, jaw/
+                     clavicle/toe -> Half Circle, hand -> Square,
+                     _end/_tip joints -> Diamond 3D, any other
+                     joint -> FK ring. The row below holds the
+                     shapes that suit joint controls best.
+
+  Per-joint shapes   (Multi-Joint) Click "Per-joint shapes...". The
+                     list loads the current joint selection and
+                     follows the selection until you edit it ("Load
+                     Selection" reloads it and keeps each joint's
+                     settings). Each joint gets a row:
+                       Shape - pick it in the row, or select rows
+                               and click any shape button
+                       Size  - that control's size, read like the
+                               Size field (x Radius, x Bone or
+                               units). Rows you have not edited
+                               follow the Size field; with several
+                               rows selected, editing one sets them
+                               all; "All: Size" resets every row.
+                     "Build Controls" builds them all in one undo
+                     step.
+
+  Batch Rename tab   Renames the selection in selection order from
+                     a pattern (# numbers, {name} = current name)
+                     with a start number and step. "Include
+                     children (same type)" renames a whole joint
+                     chain from its root. Also Search and Replace,
+                     and Prefix / Suffix. Shapes are renamed to
+                     match; one undo step per click.
+
+  Joints should be oriented (Skeleton > Orient Joint) for the
+  cleanest result; a warning names any joint whose axes do not
+  follow its bone. One click is one undo step.
+
   All shapes are created at the world origin (or snapped to
-  selection) and named with a _CTRL suffix.
+  selection) and named with a _CTRL suffix. One click is one
+  undo step.
 
 
 ================================================================
