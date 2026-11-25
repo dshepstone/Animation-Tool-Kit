@@ -97,6 +97,11 @@ class ManualSteps(unittest.TestCase):
         self.assertNotIn('Product** tab', text)
         self.assertIn('- boom', text)
 
+    def test_keep_old_files_never_says_delete(self):
+        text = gr.manual_steps('1.1.30', None, ['boom'], True, False, keep_old=True)
+        self.assertNotIn('delete', text)
+        self.assertIn('keep the older', text)
+
 
 class TransportErrors(unittest.TestCase):
     def test_connection_failure_becomes_gumroad_error(self):

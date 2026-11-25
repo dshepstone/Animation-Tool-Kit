@@ -277,7 +277,7 @@ class Gumroad:
 
 # ---------------------------------------------------------------- main
 
-def manual_steps(version, zip_path, reasons, description_done, file_done):
+def manual_steps(version, zip_path, reasons, description_done, file_done, keep_old=False):
     lines = ['## Gumroad needs a manual update for ATK %s' % version, '']
     lines += ['The release workflow could not finish everything through the Gumroad API:', '']
     lines += ['- %s' % reason for reason in reasons] + ['']
@@ -289,9 +289,10 @@ def manual_steps(version, zip_path, reasons, description_done, file_done):
         step += 1
     if not file_done:
         name = zip_path.name if zip_path else 'AnimationToolKit_v%s.zip' % version.replace('.', '_')
-        lines.append('%d. **Content** tab: upload `%s` from the GitHub release, then delete the previous '
-                     'AnimationToolKit ZIP. If a content page embeds the old ZIP, put the new one in its place.'
-                     % (step, name))
+        old = ('keep the older AnimationToolKit ZIPs' if keep_old
+               else 'then delete the older AnimationToolKit ZIPs')
+        lines.append('%d. **Content** tab: upload `%s` from the GitHub release and %s. If a content page '
+                     'embeds an old ZIP, put the new one in its place.' % (step, name, old))
         step += 1
     lines.append('%d. Click **Save changes**, then open %s to check the page.' % (step, PRODUCT_URL))
     return '\n'.join(lines) + '\n'
@@ -381,7 +382,7 @@ def main():
                     reasons.append('Replacing the downloadable file failed: %s' % error)
 
     if reasons:
-        steps = manual_steps(version, zip_path, reasons, description_done, file_done)
+        steps = manual_steps(version, zip_path, reasons, description_done, file_done, keep_old)
         manual_file.write_text(steps, encoding='utf-8')
         log += ['', steps]
     else:
