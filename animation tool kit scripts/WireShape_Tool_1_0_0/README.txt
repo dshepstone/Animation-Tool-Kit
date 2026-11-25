@@ -158,9 +158,21 @@ If you prefer to install by hand, copy the files yourself:
                          Start -> End - select the first joint,
                            then the last joint
                        Skip end joints  - no control on the tip
-                       FK hierarchy     - each control's group is
-                                          parented under the
-                                          control above it
+    Link controls      How each control follows the one above it
+                       (Multi-Joint):
+                         Parent-constraint chain (FK) - every
+                           <control>_GRP stays flat in the
+                           outliner and is parent-constrained to
+                           the control above (default)
+                         Nested hierarchy (FK) - each group is
+                           parented under the control above
+                         Not linked - independent controls
+    Drive joints       No constraint, Parent, Orient or Point +
+                       Orient constraint from each control to its
+                       joint. Joints are never re-parented. A joint
+                       that already has that constraint is skipped
+                       with a warning (a second target would blend
+                       old and new controls).
     Name               Naming pattern. # is the number (## pads to
                        01), {joint} is the joint's name.
                        FlagPole_#_CTRL -> FlagPole_1_CTRL,
@@ -176,8 +188,30 @@ If you prefer to install by hand, copy the files yourself:
     Zero group         Puts each control under <control>_GRP
                        matched to the joint, so its channels start
                        at zero.
-    Constrain          None, Orient or Parent - constrains each
-                       joint to its new control.
+
+  Best for Joints    (shown in Joint Mode) "Best Option" picks the
+                     shape per joint from its name: root/world ->
+                     Root, COG/pelvis/hips -> Circle 4-Arrow,
+                     head/chest -> Cube, eye -> Sphere, jaw/
+                     clavicle/toe -> Half Circle, hand -> Square,
+                     _end/_tip joints -> Diamond 3D, any other
+                     joint -> FK ring. The row below holds the
+                     shapes that suit joint controls best.
+
+  Per-joint shapes   (Multi-Joint) Click "Per-joint shapes...",
+                     select the chain and "Load Joints from
+                     Selection". Each joint gets a row: choose its
+                     shape in the list, or select rows and click any
+                     shape button to assign it. "Build Controls"
+                     builds them all in one undo step.
+
+  Batch Rename tab   Renames the selection in selection order from
+                     a pattern (# numbers, {name} = current name)
+                     with a start number and step. "Include
+                     children (same type)" renames a whole joint
+                     chain from its root. Also Search and Replace,
+                     and Prefix / Suffix. Shapes are renamed to
+                     match; one undo step per click.
 
   Joints should be oriented (Skeleton > Orient Joint) for the
   cleanest result; a warning names any joint whose axes do not

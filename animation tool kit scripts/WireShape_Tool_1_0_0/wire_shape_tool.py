@@ -8,8 +8,11 @@ Maya Wire Shape Tool
   lollipop pins, gear switches, aim targets, ...) in pure Python, organised
   into categories.
 - Joint Mode: builds controls on selected joints (one joint, or a whole chain
-  as an FK hierarchy) aligned to each joint's pivot and rotation axes, with a
-  naming pattern such as FlagPole_#_CTRL.
+  as an FK parent-constraint chain or nested hierarchy) aligned to each
+  joint's pivot and rotation axes, with a naming pattern such as
+  FlagPole_#_CTRL, a Best Option shape per joint and per-joint shapes.
+- Batch Rename tab: pattern rename (whole joint chains), search/replace and
+  prefix/suffix.
 - Includes an Offset Dummy builder: a null/gizmo control wrapped in any number
   of offset groups, plus a helper that wraps existing objects in matched
   offset groups.
@@ -682,6 +685,14 @@ SIZE_FIXED = "fixed"
 CONSTRAINT_NONE = "none"
 CONSTRAINT_ORIENT = "orient"
 CONSTRAINT_PARENT = "parent"
+CONSTRAINT_POINT_ORIENT = "pointOrient"
+
+# How the controls of a Multi-Joint chain are linked to each other.
+HIER_NONE = "none"                  # independent controls
+HIER_PARENT = "parent"              # nested: each group parented under the control above
+HIER_CONSTRAINT = "constraint"      # flat: each group parent-constrained to the control above
+
+BEST_SHAPE = "best"                 # pick the shape per joint (see best_shape_key)
 
 
 @dataclass
@@ -696,8 +707,8 @@ class JointModeOptions:
     start_number: int = 1
     zero_group: bool = True
     group_suffix: str = "GRP"
-    parent_chain: bool = True           # multi only: FK hierarchy
-    constraint: str = CONSTRAINT_NONE
+    hierarchy: str = HIER_CONSTRAINT    # multi only: HIER_NONE, HIER_PARENT or HIER_CONSTRAINT
+    constraint: str = CONSTRAINT_NONE   # how each control drives its joint
 
 
 def dominant_axis(vec):
@@ -928,23 +939,158 @@ def _bake_shape_transform(node, rotation, scale):
             cmds.setAttr(shape + ".localScale", scale, scale, scale, type="double3")
 
 
+# ── Best shape per joint ────────────────────────────────────────────────────
+
+# (keywords, shape key).  A joint whose name contains one of the keywords as a
+# word gets that shape; first match wins.
+_BEST_SHAPE_RULES = (
+    (("root", "world", "master", "global", "main"), "rootControl"),
+    (("cog", "pelvis", "hips", "center", "centre"), "circleArrow4"),
+    (("head",), "cube"),
+    (("eye",), "sphere"),
+    (("jaw",), "halfCircle"),
+    (("clavicle", "clav", "collar", "scapula"), "halfCircle"),
+    (("toe", "toes", "ball"), "halfCircle"),
+    (("hand", "palm"), "square"),
+    (("chest", "torso", "ribcage"), "cube"),
+    (("prop", "weapon", "sword", "gun"), "cube"),
+)
+_BEST_DEFAULT = "circleY"           # FK ring around the bone (faces the chain)
+_BEST_END = "diamond3D"             # tip joints with nothing below them
+
+
+def _name_words(name):
+    """Lower-case words of a node name: 'L_UpperArm2' -> ['l', 'upper', 'arm']."""
+    short = name.split("|")[-1].split(":")[-1]
+    short = re.sub(r"([a-z])([A-Z])", r"\1 \2", short)
+    return re.findall(r"[a-z]+", short.lower())
+
+
+def best_shape_key(jnt, has_children=True):
+    """The recommended control shape key for a joint.
+
+    Reads the joint's name (root, COG/pelvis, head, jaw, clavicle, hand,
+    toe, ..., and _end / _tip / _nub for tip joints) and falls back to an FK ring for chain joints and a small 3D
+    diamond for end joints.
+    """
+    words = _name_words(jnt)
+    if any(w in ("end", "tip", "nub") for w in words):
+        return _BEST_END
+    for keywords, key in _BEST_SHAPE_RULES:
+        for word in words:
+            if any(word == k or (len(k) > 3 and word.startswith(k)) for k in keywords):
+                return key
+    return _BEST_DEFAULT if has_children else _BEST_END
+
+
+def shape_defs_by_key():
+    return {d.key: d for d in get_shape_defs()}
+
+
+def resolve_joint_shapes(joints, shapes):
+    """One ShapeDef per joint.
+
+    ``shapes`` is a ShapeDef (used for every joint), BEST_SHAPE / None (best
+    shape per joint), or a list matching ``joints`` whose items are any of
+    those or a shape key.
+    """
+    defs = None
+
+    def lookup(item, jnt):
+        nonlocal defs
+        if isinstance(item, ShapeDef):
+            return item
+        if defs is None:
+            defs = shape_defs_by_key()
+        if item in (None, BEST_SHAPE):
+            key = best_shape_key(jnt, bool(_child_joints(jnt)))
+            return defs.get(key) or defs[_BEST_DEFAULT]
+        if item in defs:
+            return defs[item]
+        raise ValueError("unknown shape '{0}'".format(item))
+
+    if isinstance(shapes, (list, tuple)):
+        if len(shapes) != len(joints):
+            raise ValueError("one shape per joint is needed")
+        return [lookup(item, j) for item, j in zip(shapes, joints)]
+    return [lookup(shapes, j) for j in joints]
+
+
+def _existing_constraint(jnt, kind):
+    """Name of a constraint of ``kind`` already driving the joint, or None."""
+    try:
+        found = cmds.listRelatives(jnt, children=True, type=kind, fullPath=True) or []
+    except Exception:
+        found = []
+    return found[0] if found else None
+
+
+def _constrain(driver, driven, kind, label):
+    """Constrain driven to driver unless it already has that constraint.
+
+    A second constraint call would add a target to the existing constraint
+    and blend the old and new controls, so that case is skipped with a
+    warning instead.
+    """
+    fns = {
+        "parentConstraint": cmds.parentConstraint,
+        "orientConstraint": cmds.orientConstraint,
+        "pointConstraint": cmds.pointConstraint,
+    }
+    existing = _existing_constraint(driven, kind)
+    if existing:
+        cmds.warning(
+            "Wire Shapes: '{0}' already has {1} '{2}'; not adding another target "
+            "(it would blend the controls). Delete the old constraint to rebuild."
+            .format(driven.split("|")[-1], label, existing.split("|")[-1]))
+        return None
+    try:
+        return fns[kind](driver, driven, maintainOffset=True)
+    except Exception as e:
+        cmds.warning("Wire Shapes: Could not {0} '{1}': {2}".format(
+            label, driven.split("|")[-1], e))
+        return None
+
+
 def create_joint_controls(shape_def, joints, options=None):
-    """Create one ``shape_def`` control per joint, aligned to each joint.
+    """Create one control per joint, aligned to each joint.
+
+    ``shape_def`` is a ShapeDef for every joint, BEST_SHAPE for the best
+    shape per joint, or a list with one entry per joint (see
+    ``resolve_joint_shapes``).
 
     Each control is placed on the joint's pivot with the joint's rotation
     axes and rotate order, its shape turned to face the chain (see
     ``JointModeOptions.facing``), named from the naming pattern and, as
-    chosen, zeroed under a group, parented into an FK hierarchy and used to
-    constrain its joint.  Returns a list of (joint, control, top_node).
+    chosen, zeroed under a group, linked to the control above it (nested or
+    by parent constraint) and used to constrain its joint.  Returns a list
+    of (joint, control, top_node).
     """
     opts = options or JointModeOptions()
+    shapes = resolve_joint_shapes(joints, shape_def)
     pattern = opts.name_pattern
     if len(joints) > 1 and pattern_needs_number(pattern):
         pattern = (pattern or "").strip() + "_#"
-    src_axis = SHAPE_FACING.get(shape_def.key, (0, 1, 0))
-    results = []
+    hierarchy = opts.hierarchy if opts.multi else HIER_NONE
+    # A constraint chain drives the zero groups; constraining the controls
+    # themselves would lock their channels, so it always builds groups.
+    zero_group = opts.zero_group or hierarchy == HIER_CONSTRAINT
+    suffix = (opts.group_suffix or "GRP").strip("_ ") or "GRP"
 
+    names = [format_control_name(pattern, opts.start_number + i, j)
+             for i, j in enumerate(joints)]
+    taken = [n for n in names if cmds.objExists(n)]
+    if taken:
+        cmds.warning(
+            "Wire Shapes: {0} already exist{1} ({2}); Maya will number the new "
+            "controls. Change the name or delete the old controls for clean names."
+            .format(len(taken), "s" if len(taken) == 1 else "",
+                    ", ".join(taken[:3]) + (", ..." if len(taken) > 3 else "")))
+
+    results = []
     for i, jnt in enumerate(joints):
+        shape = shapes[i]
+        src_axis = SHAPE_FACING.get(shape.key, (0, 1, 0))
         aim, alignment = joint_aim_axis(jnt)
         if alignment < 0.9:
             cmds.warning(
@@ -971,9 +1117,9 @@ def create_joint_controls(shape_def, joints, options=None):
         scale = max(scale, 1e-4)
 
         cmds.select(clear=True)
-        created = shape_def.creator()
+        created = shape.creator()
         if not created:
-            raise RuntimeError("no object created for '{0}'".format(shape_def.label))
+            raise RuntimeError("no object created for '{0}'".format(shape.label))
         ctrl = created[0]
         for extra in created[1:]:
             try:
@@ -984,13 +1130,12 @@ def create_joint_controls(shape_def, joints, options=None):
         # Track by UUID: renaming and parenting change names and DAG paths.
         ctrl_id = _uuid(ctrl)
         _bake_shape_transform(_node_path(ctrl_id), rotation, scale)
-        cmds.rename(_node_path(ctrl_id),
-                    format_control_name(pattern, opts.start_number + i, jnt))
+        cmds.rename(_node_path(ctrl_id), names[i])
         ctrl = _node_path(ctrl_id)
+        _rename_shapes(ctrl)
 
         top_id = ctrl_id
-        if opts.zero_group:
-            suffix = (opts.group_suffix or "GRP").strip("_ ") or "GRP"
+        if zero_group:
             short = ctrl.split("|")[-1]
             grp = cmds.group(empty=True, world=True, name="{0}_{1}".format(short, suffix))
             top_id = _uuid(grp)
@@ -1011,7 +1156,7 @@ def create_joint_controls(shape_def, joints, options=None):
     top_ids = [t for _, _, t in results]
     _path = _node_path
 
-    if opts.multi and opts.parent_chain and len(results) > 1:
+    if hierarchy in (HIER_PARENT, HIER_CONSTRAINT) and len(results) > 1:
         joint_index = {jnt: i for i, (jnt, _, _) in enumerate(results)}
         for i, (jnt, _, _) in enumerate(results):
             parent = _parent_joint(jnt)
@@ -1019,20 +1164,135 @@ def create_joint_controls(shape_def, joints, options=None):
                 parent = _parent_joint(parent)
             if parent is None:
                 continue
-            cmds.parent(_path(top_ids[i]), _path(ids[joint_index[parent]]))
+            parent_ctrl = _path(ids[joint_index[parent]])
+            if hierarchy == HIER_PARENT:
+                cmds.parent(_path(top_ids[i]), parent_ctrl)
+            else:
+                _constrain(parent_ctrl, _path(top_ids[i]), "parentConstraint",
+                           "parent-constrain the group of")
 
-    if opts.constraint in (CONSTRAINT_ORIENT, CONSTRAINT_PARENT):
-        fn = cmds.orientConstraint if opts.constraint == CONSTRAINT_ORIENT else cmds.parentConstraint
-        for i, (jnt, _, _) in enumerate(results):
-            try:
-                fn(_path(ids[i]), jnt, maintainOffset=True)
-            except Exception as e:
-                cmds.warning("Wire Shapes: Could not constrain '{0}': {1}".format(
-                    jnt.split("|")[-1], e))
+    constraint_kinds = {
+        CONSTRAINT_ORIENT: [("orientConstraint", "orient-constrain")],
+        CONSTRAINT_PARENT: [("parentConstraint", "parent-constrain")],
+        CONSTRAINT_POINT_ORIENT: [("pointConstraint", "point-constrain"),
+                                  ("orientConstraint", "orient-constrain")],
+    }.get(opts.constraint, [])
+    for i, (jnt, _, _) in enumerate(results):
+        for kind, label in constraint_kinds:
+            _constrain(_path(ids[i]), jnt, kind, label)
 
     out = [(jnt, _path(ids[i]), _path(top_ids[i])) for i, (jnt, _, _) in enumerate(results)]
     cmds.select([c for _, c, _ in out if c], replace=True)
     return out
+
+
+def _rename_shapes(node):
+    """Name a transform's shapes <node>Shape, <node>Shape1, ..."""
+    short = node.split("|")[-1]
+    shapes = cmds.listRelatives(node, shapes=True, fullPath=True) or []
+    for i, shape in enumerate(shapes):
+        try:
+            cmds.rename(shape, "{0}Shape{1}".format(short, i or ""))
+        except Exception:
+            pass
+
+
+# ── Batch rename ─────────────────────────────────────────────────────────────
+
+def expand_hierarchy(nodes):
+    """Each node followed by its descendants of the same node type.
+
+    Selecting the root of a joint chain gives the whole chain, root first;
+    shapes and nodes of other types (constraints, controls) are left out.
+    """
+    out = []
+    for node in nodes:
+        kind = cmds.nodeType(node)
+        stack = [node]
+        while stack:
+            current = stack.pop(0)
+            if current not in out:
+                out.append(current)
+            kids = cmds.listRelatives(current, children=True, fullPath=True, type=kind) or []
+            stack = kids + stack
+    return out
+
+
+def format_rename(pattern, number, old_name=""):
+    """Name from a rename pattern: # numbers (## pads), {name} = old name."""
+    short = old_name.split("|")[-1].split(":")[-1]
+    pattern = (pattern or "").strip() or "{name}"
+    name = pattern.replace("{name}", short)
+    name = re.sub(r"#+", lambda m: str(int(number)).zfill(len(m.group(0))), name)
+    name = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    if not name or name[0].isdigit():
+        name = "_" + name
+    return name
+
+
+def _apply_renames(nodes, new_names, rename_shapes=True):
+    """Rename nodes (tracked by UUID) in two passes so names can swap."""
+    ids = [_uuid(n) for n in nodes]
+    pairs = [(i, n) for i, n in zip(ids, new_names) if i]
+    for k, (uuid, _) in enumerate(pairs):
+        cmds.rename(_node_path(uuid), "atkRenameTmp{0}_".format(k))
+    result = []
+    for uuid, name in pairs:
+        cmds.rename(_node_path(uuid), name)
+        path = _node_path(uuid)
+        if rename_shapes and cmds.listRelatives(path, shapes=True):
+            _rename_shapes(path)
+        result.append(path)
+    return result
+
+
+def batch_rename(nodes, pattern, start=1, step=1, hierarchy=False, rename_shapes=True):
+    """Rename nodes in order from a pattern such as 'FlagPole_#_JNT'.
+
+    ``hierarchy`` also renames every descendant of the same type, so
+    selecting a chain's root joint renames the whole chain.  Returns the new
+    long names.
+    """
+    shapes = set(cmds.ls(nodes, long=True, shapes=True) or [])
+    nodes = [n for n in (cmds.ls(nodes, long=True) or []) if n not in shapes]
+    if hierarchy:
+        nodes = expand_hierarchy(nodes)
+    if not nodes:
+        return []
+    if len(nodes) > 1 and "#" not in (pattern or "") and "{name}" not in (pattern or ""):
+        pattern = (pattern or "").strip() + "_#"
+    names = [format_rename(pattern, start + i * step, n) for i, n in enumerate(nodes)]
+    return _apply_renames(nodes, names, rename_shapes)
+
+
+def search_replace_names(nodes, search, replace="", hierarchy=False, rename_shapes=True):
+    """Replace text in node names.  Returns the renamed nodes' long names."""
+    if not search:
+        return []
+    nodes = cmds.ls(nodes, long=True) or []
+    if hierarchy:
+        nodes = expand_hierarchy(nodes)
+    todo, names = [], []
+    for n in nodes:
+        short = n.split("|")[-1]
+        new = format_rename(short.replace(search, replace), 0)
+        if new != short:
+            todo.append(n)
+            names.append(new)
+    return _apply_renames(todo, names, rename_shapes)
+
+
+def prefix_suffix_names(nodes, prefix="", suffix="", hierarchy=False, rename_shapes=True):
+    """Add a prefix and/or suffix to node names."""
+    if not (prefix or suffix):
+        return []
+    nodes = cmds.ls(nodes, long=True) or []
+    if hierarchy:
+        nodes = expand_hierarchy(nodes)
+    names = [format_rename(prefix + n.split("|")[-1] + suffix, 0) for n in nodes]
+    return _apply_renames(nodes, names, rename_shapes)
+
+
 # -----------------------------
 # Registry
 # -----------------------------
@@ -1305,6 +1565,56 @@ QCheckBox {
     font-size: 11px;
     spacing: 6px;
 }
+QTabWidget::pane {
+    border: none;
+    border-top: 1px solid #525252;
+}
+QTabBar::tab {
+    background: #444444;
+    color: #bbbbbb;
+    border: 1px solid #555555;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    padding: 6px 16px;
+    margin-right: 2px;
+    font-size: 11px;
+}
+QTabBar::tab:selected {
+    background: #2e6da4;
+    color: #ffffff;
+    border-color: #4088c0;
+}
+QTabBar::tab:hover:!selected {
+    background: #505050;
+}
+QTableWidget {
+    background-color: #3a3a3a;
+    alternate-background-color: #404040;
+    color: #dddddd;
+    gridline-color: #4a4a4a;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    font-size: 11px;
+    selection-background-color: #2e6da4;
+}
+QHeaderView::section {
+    background-color: #474747;
+    color: #bbbbbb;
+    border: none;
+    border-right: 1px solid #555555;
+    padding: 4px 6px;
+    font-size: 10px;
+}
+QPushButton:checked {
+    background-color: #2e6da4;
+    border-color: #4088c0;
+    color: #ffffff;
+}
+QPushButton:disabled {
+    color: #6a6a6a;
+    background-color: #474747;
+}
 QFrame#joint_panel {
     background-color: #353535;
     border: 1px solid #525252;
@@ -1425,8 +1735,8 @@ class WireShapeToolUI:
         self.dlg = QtWidgets.QDialog(parent)
         self.dlg.setObjectName(self.OBJECT_NAME)
         self.dlg.setWindowTitle("Wire Shapes")
-        self.dlg.setMinimumWidth(540)
-        self.dlg.resize(580, 820)
+        self.dlg.setMinimumWidth(560)
+        self.dlg.resize(600, 880)
         self.dlg.setWindowFlags(
             QtCore.Qt.Window
             | QtCore.Qt.WindowTitleHint
@@ -1465,23 +1775,32 @@ class WireShapeToolUI:
         main.addLayout(header)
         main.addSpacing(12)
 
+        self.tabs = QtWidgets.QTabWidget()
+        main.addWidget(self.tabs, 1)
+
+        # ── Shapes tab ──────────────────────────────────────────────────────
+        shapes_tab = QtWidgets.QWidget()
+        shapes_layout = QtWidgets.QVBoxLayout(shapes_tab)
+        shapes_layout.setContentsMargins(0, 10, 0, 0)
+        shapes_layout.setSpacing(0)
+        self.tabs.addTab(shapes_tab, "Shapes")
+
         # Search
         self.search = QtWidgets.QLineEdit()
         self.search.setPlaceholderText("Search shapes...")
         self.search.setClearButtonEnabled(True)
-        main.addWidget(self.search)
-        main.addSpacing(10)
+        shapes_layout.addWidget(self.search)
+        shapes_layout.addSpacing(10)
 
-        # Joint Mode panel
-        self._build_joint_mode_panel(main)
-        main.addSpacing(10)
+        self._shape_defs = get_shape_defs()
+        self._defs_by_key = {d.key: d for d in self._shape_defs}
 
-        # Scrollable body with category sections
+        # Scrollable body: Joint Mode panel, then the shape sections
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(_frame_no_frame())
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        main.addWidget(scroll, 1)
+        shapes_layout.addWidget(scroll, 1)
 
         body = QtWidgets.QWidget()
         scroll.setWidget(body)
@@ -1489,7 +1808,9 @@ class WireShapeToolUI:
         self._body_layout.setContentsMargins(0, 0, 6, 0)
         self._body_layout.setSpacing(0)
 
-        self._shape_defs = get_shape_defs()
+        self._build_joint_mode_panel(self._body_layout)
+        self._body_layout.addSpacing(12)
+        self._add_best_section()
         for category in CATEGORY_ORDER:
             defs = [d for d in self._shape_defs if d.category == category]
             if defs:
@@ -1499,6 +1820,10 @@ class WireShapeToolUI:
         self._body_layout.addStretch()
 
         self.search.textChanged.connect(self._apply_filter)
+
+        # ── Batch Rename tab ────────────────────────────────────────────────
+        self._build_rename_tab()
+        self._update_joint_mode_ui()
 
         # Footer
         main.addSpacing(10)
@@ -1525,6 +1850,7 @@ class WireShapeToolUI:
     def _build_joint_mode_panel(self, main):
         frame = QtWidgets.QFrame()
         frame.setObjectName("joint_panel")
+        frame.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
         outer = QtWidgets.QVBoxLayout(frame)
         outer.setContentsMargins(10, 8, 10, 8)
         outer.setSpacing(6)
@@ -1625,7 +1951,8 @@ class WireShapeToolUI:
         self.zero_cb.setChecked(True)
         self.zero_cb.setToolTip(
             "Put each control under a group matched to the joint, so the\n"
-            "control's translate and rotate channels start at zero."
+            "control's translate and rotate channels start at zero.\n"
+            "Always on for a parent-constraint chain."
         )
         self.group_suffix_edit = QtWidgets.QLineEdit("GRP")
         self.group_suffix_edit.setToolTip("Suffix for the zero group: <control>_GRP")
@@ -1636,17 +1963,20 @@ class WireShapeToolUI:
         zero_row.addWidget(self.group_suffix_edit)
         zero_row.addStretch(1)
         form.addLayout(zero_row, row, 1)
-        form.addWidget(label("Constrain:"), row, 2)
+        form.addWidget(label("Drive joints:"), row, 2)
         self.constraint_combo = QtWidgets.QComboBox()
-        self.constraint_combo.addItem("None", CONSTRAINT_NONE)
-        self.constraint_combo.addItem("Orient", CONSTRAINT_ORIENT)
-        self.constraint_combo.addItem("Parent", CONSTRAINT_PARENT)
-        self.constraint_combo.setToolTip("Constrain each joint to its new control.")
+        self.constraint_combo.addItem("No constraint", CONSTRAINT_NONE)
+        self.constraint_combo.addItem("Parent constraint", CONSTRAINT_PARENT)
+        self.constraint_combo.addItem("Orient constraint", CONSTRAINT_ORIENT)
+        self.constraint_combo.addItem("Point + Orient", CONSTRAINT_POINT_ORIENT)
+        self.constraint_combo.setToolTip(
+            "Constrain each joint to its new control (control drives joint).\n"
+            "Nothing is parented: the joints stay where they are in the outliner.\n"
+            "A joint that already has that constraint is skipped with a warning.")
         form.addWidget(self.constraint_combo, row, 3)
         row += 1
 
         # Multi-joint options
-        self._multi_widgets = []
         form.addWidget(label("Chain:"), row, 0)
         self.chain_combo = QtWidgets.QComboBox()
         self.chain_combo.addItem("Selected joint + all below", CHAIN_BELOW)
@@ -1659,16 +1989,33 @@ class WireShapeToolUI:
         self.skip_end_cb = QtWidgets.QCheckBox("Skip end joints")
         self.skip_end_cb.setChecked(True)
         self.skip_end_cb.setToolTip("No control on the last joint of a chain (it has nothing to rotate).")
-        checks = QtWidgets.QHBoxLayout()
-        checks.setSpacing(14)
-        checks.addWidget(self.skip_end_cb)
-        self.parent_cb = QtWidgets.QCheckBox("FK hierarchy")
-        self.parent_cb.setChecked(True)
-        self.parent_cb.setToolTip("Parent each control under the control of the joint above it.")
-        checks.addWidget(self.parent_cb)
-        checks.addStretch(1)
-        form.addLayout(checks, row, 2, 1, 2)
-        self._multi_widgets = [self.chain_combo, self.skip_end_cb, self.parent_cb]
+        form.addWidget(self.skip_end_cb, row, 2, 1, 2)
+        row += 1
+
+        form.addWidget(label("Link controls:"), row, 0)
+        self.link_combo = QtWidgets.QComboBox()
+        self.link_combo.addItem("Parent-constraint chain (FK)", HIER_CONSTRAINT)
+        self.link_combo.addItem("Nested hierarchy (FK)", HIER_PARENT)
+        self.link_combo.addItem("Not linked", HIER_NONE)
+        self.link_combo.setToolTip(
+            "How each control follows the control above it:\n"
+            "  Parent-constraint chain - every <control>_GRP stays flat in the\n"
+            "      outliner and is parent-constrained to the control above.\n"
+            "  Nested hierarchy - each <control>_GRP is parented under the\n"
+            "      control above.\n"
+            "  Not linked - independent controls.")
+        form.addWidget(self.link_combo, row, 1)
+        self.per_joint_btn = QtWidgets.QPushButton("Per-joint shapes...")
+        self.per_joint_btn.setCheckable(True)
+        self.per_joint_btn.setToolTip(
+            "List the chain's joints and pick a different shape for each one.")
+        form.addWidget(self.per_joint_btn, row, 2, 1, 2)
+        row += 1
+
+        self._per_joint_box = self._build_per_joint_box()
+        form.addWidget(self._per_joint_box, row, 0, 1, 4)
+        self._multi_widgets = [self.chain_combo, self.skip_end_cb, self.link_combo,
+                               self.per_joint_btn]
         form.setColumnStretch(1, 3)
         form.setColumnStretch(3, 2)
 
@@ -1677,13 +2024,147 @@ class WireShapeToolUI:
 
         self.joint_mode_cb.toggled.connect(self._update_joint_mode_ui)
         self.multi_rb.toggled.connect(self._update_joint_mode_ui)
-        self.zero_cb.toggled.connect(self.group_suffix_edit.setEnabled)
+        self.per_joint_btn.toggled.connect(self._update_joint_mode_ui)
+        self.link_combo.currentIndexChanged.connect(self._update_joint_mode_ui)
+        self.zero_cb.toggled.connect(self._update_joint_mode_ui)
         self.name_edit.textChanged.connect(self._update_name_preview)
         self.start_spin.valueChanged.connect(self._update_name_preview)
-        self._update_joint_mode_ui()
         self._update_name_preview()
 
+    # ── Per-joint shape list ─────────────────────────────────────────────────
+
+    def _build_per_joint_box(self):
+        box = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(box)
+        v.setContentsMargins(0, 4, 0, 0)
+        v.setSpacing(6)
+
+        hint = QtWidgets.QLabel(
+            "Load the chain, pick a shape per joint (or select rows and click a "
+            "shape below), then Build Controls.")
+        hint.setObjectName("lbl_desc")
+        hint.setWordWrap(True)
+        v.addWidget(hint)
+
+        buttons = QtWidgets.QHBoxLayout()
+        load = QtWidgets.QPushButton("Load Joints from Selection")
+        load.setToolTip("Fill the list with the joints the chain options select.")
+        load.clicked.connect(self._on_load_joint_list)
+        best = QtWidgets.QPushButton("All: Best Option")
+        best.setToolTip("Set every row to the recommended shape for its joint.")
+        best.clicked.connect(lambda: self._assign_rows(BEST_SHAPE, all_rows=True))
+        clear = QtWidgets.QPushButton("Clear")
+        clear.clicked.connect(lambda: self.joint_table.setRowCount(0))
+        for b in (load, best, clear):
+            buttons.addWidget(b)
+        buttons.addStretch(1)
+        v.addLayout(buttons)
+
+        self.joint_table = QtWidgets.QTableWidget(0, 3)
+        self.joint_table.setHorizontalHeaderLabels(["Joint", "Shape", "Control name"])
+        self.joint_table.verticalHeader().setVisible(False)
+        self.joint_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.joint_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        header = self.joint_table.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        self.joint_table.setMinimumHeight(150)
+        self.joint_table.setMaximumHeight(190)
+        v.addWidget(self.joint_table)
+
+        self.build_list_btn = QtWidgets.QPushButton("Build Controls")
+        self.build_list_btn.setObjectName("btn_primary")
+        self.build_list_btn.setToolTip("Build one control per listed joint with its chosen shape.")
+        self.build_list_btn.clicked.connect(self._on_build_joint_list)
+        v.addWidget(self.build_list_btn)
+        return box
+
+    def _shape_combo(self, value=BEST_SHAPE):
+        combo = QtWidgets.QComboBox()
+        combo.addItem("Best option", BEST_SHAPE)
+        for d in self._shape_defs:
+            combo.addItem(d.label, d.key)
+        idx = combo.findData(value.key if isinstance(value, ShapeDef) else value)
+        combo.setCurrentIndex(max(idx, 0))
+        combo.currentIndexChanged.connect(self._refresh_joint_table_names)
+        return combo
+
+    def _on_load_joint_list(self):
+        opts = self._joint_mode_options()
+        sel = cmds.ls(sl=True, long=True) or []
+        try:
+            joints = gather_joints(sel, True, opts.chain, opts.skip_end_joints)
+        except ValueError as e:
+            cmds.warning("Wire Shapes: {0}".format(e))
+            return
+        if not joints:
+            cmds.warning("Wire Shapes: Select the joint(s) of a chain first.")
+            return
+        self.joint_table.setRowCount(0)
+        for jnt in joints:
+            r = self.joint_table.rowCount()
+            self.joint_table.insertRow(r)
+            item = QtWidgets.QTableWidgetItem(jnt.split("|")[-1])
+            item.setData(QtCore.Qt.UserRole, jnt)
+            item.setToolTip(jnt)
+            self.joint_table.setItem(r, 0, item)
+            self.joint_table.setCellWidget(r, 1, self._shape_combo())
+            self.joint_table.setItem(r, 2, QtWidgets.QTableWidgetItem(""))
+        self._refresh_joint_table_names()
+
+    def _joint_table_rows(self):
+        rows = []
+        for r in range(self.joint_table.rowCount()):
+            jnt = self.joint_table.item(r, 0).data(QtCore.Qt.UserRole)
+            rows.append((jnt, self.joint_table.cellWidget(r, 1).currentData()))
+        return rows
+
+    def _refresh_joint_table_names(self, *_):
+        if not hasattr(self, "joint_table"):
+            return
+        rows = self._joint_table_rows()
+        pattern = self.name_edit.text()
+        if len(rows) > 1 and pattern_needs_number(pattern):
+            pattern = pattern.strip() + "_#"
+        for r, (jnt, key) in enumerate(rows):
+            combo = self.joint_table.cellWidget(r, 1)
+            try:
+                best = self._defs_by_key.get(best_shape_key(jnt, bool(_child_joints(jnt))))
+            except Exception:
+                best = None
+            combo.setItemText(0, "Best: " + (best.label if best else "Circle Y"))
+            name = format_control_name(pattern, self.start_spin.value() + r, jnt)
+            self.joint_table.item(r, 2).setText(name)
+
+    def _assign_rows(self, key, all_rows=False):
+        """Give the selected rows (or every row) of the joint list a shape."""
+        rows = range(self.joint_table.rowCount()) if all_rows else sorted(
+            {i.row() for i in self.joint_table.selectionModel().selectedRows()})
+        for r in rows:
+            combo = self.joint_table.cellWidget(r, 1)
+            combo.setCurrentIndex(max(combo.findData(key), 0))
+        self._refresh_joint_table_names()
+        return len(rows)
+
+    def _per_joint_active(self):
+        return (self.joint_mode_cb.isChecked() and self.multi_rb.isChecked()
+                and self.per_joint_btn.isChecked())
+
+    def _on_build_joint_list(self):
+        rows = self._joint_table_rows()
+        if not rows:
+            cmds.warning("Wire Shapes: Load the joints first (Load Joints from Selection).")
+            return
+        missing = [j for j, _ in rows if not cmds.objExists(j)]
+        if missing:
+            cmds.warning("Wire Shapes: Some listed joints no longer exist; load the joints again.")
+            return
+        self._build_on_joints([j for j, _ in rows], [k for _, k in rows], "per-joint")
+
     def _update_joint_mode_ui(self, *_):
+        if not hasattr(self, "_best_container"):
+            return          # still building the window
         on = self.joint_mode_cb.isChecked()
         self._joint_body.setVisible(on)
         self.single_rb.setEnabled(on)
@@ -1692,6 +2173,10 @@ class WireShapeToolUI:
         multi = self.multi_rb.isChecked()
         for w in self._multi_widgets:
             w.setEnabled(multi)
+        self._per_joint_box.setVisible(multi and self.per_joint_btn.isChecked())
+        chain = multi and self.link_combo.currentData() == HIER_CONSTRAINT
+        self.group_suffix_edit.setEnabled(self.zero_cb.isChecked() or chain)
+        self._apply_filter(self.search.text())
 
     def _update_name_preview(self, *_):
         pattern = self.name_edit.text()
@@ -1701,6 +2186,7 @@ class WireShapeToolUI:
         names = [format_control_name(pattern, start + i, "joint{0}".format(i + 1))
                  for i in range(3)]
         self.name_preview.setText("Preview: " + ", ".join(names) + ", ...")
+        self._refresh_joint_table_names()
 
     def _joint_mode_options(self):
         return JointModeOptions(
@@ -1714,11 +2200,19 @@ class WireShapeToolUI:
             start_number=self.start_spin.value(),
             zero_group=self.zero_cb.isChecked(),
             group_suffix=self.group_suffix_edit.text(),
-            parent_chain=self.parent_cb.isChecked(),
+            hierarchy=self.link_combo.currentData(),
             constraint=self.constraint_combo.currentData(),
         )
 
-    def _on_create_joint_mode(self, shape_def: ShapeDef):
+    def _on_create_joint_mode(self, shape):
+        """Build ``shape`` (a ShapeDef or BEST_SHAPE) on the selected joints."""
+        if self._per_joint_active() and self.joint_table.rowCount():
+            key = shape.key if isinstance(shape, ShapeDef) else shape
+            if self._assign_rows(key):
+                return
+            cmds.warning("Wire Shapes: Select rows in the per-joint list to assign "
+                         "this shape, or click Build Controls.")
+            return
         opts = self._joint_mode_options()
         sel = cmds.ls(sl=True, long=True) or []
         try:
@@ -1729,17 +2223,237 @@ class WireShapeToolUI:
         if not joints:
             cmds.warning("Wire Shapes: Joint Mode is on - select one or more joints.")
             return
+        label = shape.label if isinstance(shape, ShapeDef) else "Best option"
+        self._build_on_joints(joints, shape, label)
+
+    def _build_on_joints(self, joints, shapes, label):
+        opts = self._joint_mode_options()
         cmds.undoInfo(openChunk=True, chunkName="WireShapesJointMode")
         try:
-            built = create_joint_controls(shape_def, joints, opts)
+            built = create_joint_controls(shapes, joints, opts)
         except Exception as e:
-            cmds.warning("Wire Shapes: Failed to create '{0}' on joints: {1}".format(
-                shape_def.label, e))
+            cmds.warning("Wire Shapes: Failed to create '{0}' controls on joints: {1}".format(
+                label, e))
             return
         finally:
             cmds.undoInfo(closeChunk=True)
-        print("Wire Shapes: Created {0} '{1}' control(s) on joints.".format(
-            len(built), shape_def.label))
+        print("Wire Shapes: Created {0} '{1}' control(s) on joints.".format(len(built), label))
+
+    # ── Best for Joints section ──────────────────────────────────────────────
+
+    _BEST_KEYS = ("circleY", "square", "hexagon", "cube", "sphere",
+                  "halfCircle", "lollipop", "spinArrows", "diamond3D", "circleArrow4",
+                  "rootControl")
+
+    def _add_best_section(self):
+        container = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        v.addWidget(self._section_label("Best for Joints"))
+        v.addSpacing(8)
+
+        self.best_btn = QtWidgets.QPushButton("Best Option  -  pick the right shape per joint")
+        self.best_btn.setObjectName("btn_primary")
+        self.best_btn.setToolTip(
+            "Builds the recommended control on each joint:\n"
+            "  root / world / master -> Root     COG / pelvis / hips -> Circle 4-Arrow\n"
+            "  head / chest -> Cube              eye -> Sphere\n"
+            "  jaw / clavicle / toe -> Half Circle   hand / palm -> Square\n"
+            "  any other chain joint -> FK ring (Circle)   end joint -> Diamond 3D")
+        self.best_btn.clicked.connect(lambda: self._on_create_joint_mode(BEST_SHAPE))
+        v.addWidget(self.best_btn)
+        v.addSpacing(8)
+
+        grid_host = QtWidgets.QWidget()
+        grid = QtWidgets.QGridLayout(grid_host)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        labels = {"circleY": "FK Ring", "circleArrow4": "COG"}
+        buttons = []
+        defs = [self._defs_by_key[k] for k in self._BEST_KEYS if k in self._defs_by_key]
+        for i, d in enumerate(defs):
+            btn = QtWidgets.QToolButton()
+            btn.setToolButtonStyle(_tool_button_text_under_icon())
+            btn.setText(labels.get(d.key, d.label))
+            btn.setIcon(_load_icon(d.icon_candidates))
+            btn.setIconSize(QtCore.QSize(24, 24))
+            btn.setMinimumSize(90, 62)
+            btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+            btn.setToolTip(d.tooltip)
+            btn.setProperty("shape_key", d.key)
+            btn.clicked.connect(lambda _=False, dd=d: self._on_create(dd))
+            grid.addWidget(btn, i // 4, i % 4)
+            buttons.append(btn)
+        for cidx in range(4):
+            grid.setColumnStretch(cidx, 1)
+        v.addWidget(grid_host)
+        v.addSpacing(14)
+        sep = QtWidgets.QFrame()
+        sep.setObjectName("separator")
+        sep.setFrameShape(QtWidgets.QFrame.HLine)
+        v.addWidget(sep)
+        v.addSpacing(12)
+
+        self._body_layout.addWidget(container)
+        self._best_container = container
+        self._best_buttons = buttons
+
+    # ── Batch Rename tab ─────────────────────────────────────────────────────
+
+    def _build_rename_tab(self):
+        tab = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(tab)
+        v.setContentsMargins(0, 12, 0, 0)
+        v.setSpacing(6)
+        self.tabs.addTab(tab, "Batch Rename")
+
+        desc = QtWidgets.QLabel(
+            "Rename the selected objects in selection order. Tick 'Include "
+            "children' and select a chain's root joint to rename the whole chain.")
+        desc.setObjectName("lbl_desc")
+        desc.setWordWrap(True)
+        v.addWidget(desc)
+        v.addSpacing(6)
+
+        def label(text):
+            lbl = QtWidgets.QLabel(text)
+            lbl.setObjectName("lbl_subtitle")
+            return lbl
+
+        v.addWidget(self._section_label("Rename"))
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        grid.addWidget(label("Name:"), 0, 0)
+        self.rn_pattern = QtWidgets.QLineEdit()
+        self.rn_pattern.setPlaceholderText("e.g. FlagPole_#_JNT")
+        self.rn_pattern.setToolTip(
+            "  #       the number (## pads to 01, ### to 001)\n"
+            "  {name}  the object's current name\n"
+            "FlagPole_#_JNT gives FlagPole_1_JNT, FlagPole_2_JNT, ...")
+        grid.addWidget(self.rn_pattern, 0, 1, 1, 3)
+        grid.addWidget(label("Start #:"), 1, 0)
+        self.rn_start = QtWidgets.QSpinBox()
+        self.rn_start.setRange(0, 99999)
+        self.rn_start.setValue(1)
+        grid.addWidget(self.rn_start, 1, 1)
+        grid.addWidget(label("Step:"), 1, 2)
+        self.rn_step = QtWidgets.QSpinBox()
+        self.rn_step.setRange(1, 1000)
+        self.rn_step.setValue(1)
+        grid.addWidget(self.rn_step, 1, 3)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+        v.addLayout(grid)
+        self.rn_preview = QtWidgets.QLabel()
+        self.rn_preview.setObjectName("lbl_desc")
+        v.addWidget(self.rn_preview)
+
+        opts_row = QtWidgets.QHBoxLayout()
+        self.rn_children = QtWidgets.QCheckBox("Include children (same type)")
+        self.rn_children.setToolTip(
+            "Also rename every descendant of the same type as each selected\n"
+            "object - select a root joint to rename the whole joint chain.")
+        self.rn_shapes = QtWidgets.QCheckBox("Rename shapes to match")
+        self.rn_shapes.setChecked(True)
+        opts_row.addWidget(self.rn_children)
+        opts_row.addWidget(self.rn_shapes)
+        opts_row.addStretch(1)
+        v.addLayout(opts_row)
+        btn = QtWidgets.QPushButton("Rename Selected")
+        btn.setObjectName("btn_primary")
+        btn.clicked.connect(self._on_batch_rename)
+        v.addWidget(btn)
+        v.addSpacing(12)
+
+        v.addWidget(self._section_label("Search and Replace"))
+        sr = QtWidgets.QHBoxLayout()
+        self.rn_search = QtWidgets.QLineEdit()
+        self.rn_search.setPlaceholderText("Search")
+        self.rn_replace = QtWidgets.QLineEdit()
+        self.rn_replace.setPlaceholderText("Replace with")
+        sr_btn = QtWidgets.QPushButton("Replace")
+        sr_btn.clicked.connect(self._on_search_replace)
+        sr.addWidget(self.rn_search)
+        sr.addWidget(self.rn_replace)
+        sr.addWidget(sr_btn)
+        v.addLayout(sr)
+        v.addSpacing(12)
+
+        v.addWidget(self._section_label("Prefix / Suffix"))
+        ps = QtWidgets.QHBoxLayout()
+        self.rn_prefix = QtWidgets.QLineEdit()
+        self.rn_prefix.setPlaceholderText("Prefix, e.g. L_")
+        self.rn_suffix = QtWidgets.QLineEdit()
+        self.rn_suffix.setPlaceholderText("Suffix, e.g. _JNT")
+        ps_btn = QtWidgets.QPushButton("Add")
+        ps_btn.clicked.connect(self._on_prefix_suffix)
+        ps.addWidget(self.rn_prefix)
+        ps.addWidget(self.rn_suffix)
+        ps.addWidget(ps_btn)
+        v.addLayout(ps)
+        v.addStretch(1)
+
+        self.rn_pattern.textChanged.connect(self._update_rename_preview)
+        self.rn_start.valueChanged.connect(self._update_rename_preview)
+        self.rn_step.valueChanged.connect(self._update_rename_preview)
+        self._update_rename_preview()
+
+    def _update_rename_preview(self, *_):
+        pattern = self.rn_pattern.text().strip()
+        if not pattern:
+            self.rn_preview.setText("Preview: type a name pattern.")
+            return
+        if "#" not in pattern and "{name}" not in pattern:
+            pattern += "_#"
+        start, step = self.rn_start.value(), self.rn_step.value()
+        names = [format_rename(pattern, start + i * step, "joint{0}".format(i + 1))
+                 for i in range(3)]
+        self.rn_preview.setText("Preview: " + ", ".join(names) + ", ...")
+
+    def _run_rename(self, label, fn):
+        sel = cmds.ls(sl=True, long=True) or []
+        if not sel:
+            cmds.warning("Wire Shapes: Select the objects to rename.")
+            return
+        cmds.undoInfo(openChunk=True, chunkName="WireShapesRename")
+        try:
+            renamed = fn(sel)
+        except Exception as e:
+            cmds.warning("Wire Shapes: {0} failed: {1}".format(label, e))
+            return
+        finally:
+            cmds.undoInfo(closeChunk=True)
+        if renamed:
+            cmds.select(renamed, replace=True)
+        print("Wire Shapes: {0}: renamed {1} object(s).".format(label, len(renamed)))
+
+    def _on_batch_rename(self):
+        pattern = self.rn_pattern.text().strip()
+        if not pattern:
+            cmds.warning("Wire Shapes: Type a name pattern such as FlagPole_#_JNT.")
+            return
+        self._run_rename("Rename", lambda sel: batch_rename(
+            sel, pattern, self.rn_start.value(), self.rn_step.value(),
+            self.rn_children.isChecked(), self.rn_shapes.isChecked()))
+
+    def _on_search_replace(self):
+        if not self.rn_search.text():
+            cmds.warning("Wire Shapes: Type the text to search for.")
+            return
+        self._run_rename("Search and Replace", lambda sel: search_replace_names(
+            sel, self.rn_search.text(), self.rn_replace.text(),
+            self.rn_children.isChecked(), self.rn_shapes.isChecked()))
+
+    def _on_prefix_suffix(self):
+        if not (self.rn_prefix.text() or self.rn_suffix.text()):
+            cmds.warning("Wire Shapes: Type a prefix or a suffix.")
+            return
+        self._run_rename("Prefix / Suffix", lambda sel: prefix_suffix_names(
+            sel, self.rn_prefix.text(), self.rn_suffix.text(),
+            self.rn_children.isChecked(), self.rn_shapes.isChecked()))
 
     # ── Section builders ─────────────────────────────────────────────────────
 
@@ -1856,6 +2570,8 @@ class WireShapeToolUI:
     # ── Filtering ────────────────────────────────────────────────────────────
 
     def _apply_filter(self, text: str):
+        if not hasattr(self, "_dummy_container"):
+            return          # still building the window
         text = (text or "").strip().lower()
 
         for container, buttons in self._sections:
@@ -1870,6 +2586,17 @@ class WireShapeToolUI:
 
         dummy_visible = (text == "") or any(text in k for k in self._DUMMY_KEYWORDS)
         self._dummy_container.setVisible(dummy_visible)
+
+        joint_mode = self.joint_mode_cb.isChecked()
+        any_best = False
+        for btn in self._best_buttons:
+            label = (btn.text() or "").lower()
+            key = (btn.property("shape_key") or "").lower()
+            visible = (text == "") or (text in label) or (text in key)
+            btn.setVisible(visible)
+            any_best = any_best or visible
+        any_best = any_best or text == "" or text in "best option"
+        self._best_container.setVisible(joint_mode and any_best)
 
     # ── Actions ──────────────────────────────────────────────────────────────
 

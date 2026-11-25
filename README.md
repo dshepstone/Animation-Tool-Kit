@@ -2,12 +2,13 @@
 
 Animation Tool Kit (ATK) Toolbar is a dockable Maya toolbar that installs and launches a curated set of animation, rigging, viewport, and pipeline tools.
 
-Version **1.1.25** fixes **Reload Scripts** deleting Maya's Time Slider
-(leaving an empty strip and the toolbar docked at the bottom of Maya). It keeps
-everything from 1.1.24, including **Wire Shapes** 2.1.0 **Joint Mode**: build
-any shape as a control on selected joints, aligned to each joint's pivot and
-rotation axes, for one joint or a whole chain as an FK hierarchy.
-See [release notes](Animation_Tool_Kit_v1.1.25_Release_Notes.md).
+Version **1.1.26** brings **Wire Shapes** 2.2.0: Joint Mode builds FK chains as
+a flat **parent-constraint chain** (or a nested hierarchy), drives joints with
+real constraints only, picks a **Best Option** shape per joint, lets you choose a
+**different shape for each joint**, and adds a **Batch Rename** tab for renaming
+joint chains. It keeps everything from 1.1.25, including the fix that stops
+Reload Scripts deleting Maya's Time Slider.
+See [release notes](Animation_Tool_Kit_v1.1.26_Release_Notes.md).
 
 For an existing video, use **Output → Destination → Force overwrite existing
 output**, or choose a different filename. Failed encoding preserves the old video.

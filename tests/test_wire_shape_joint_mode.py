@@ -57,6 +57,7 @@ class FakeScene(object):
         self.nodes = []
         self.selection = []
         self.constraints = []
+        self.warnings = []
         self.rotations = {}     # uuid -> euler baked into the shape
         self.scales = {}
 
@@ -85,6 +86,8 @@ class FakeScene(object):
     def ls(self, *args, **kw):
         if kw.get("sl") or kw.get("selection"):
             return list(self.selection)
+        if kw.get("shapes"):
+            return []
         items = args[0] if args else []
         items = items if isinstance(items, (list, tuple)) else [items]
         out = []
@@ -163,12 +166,30 @@ class FakeScene(object):
         pass
 
     def warning(self, msg):
-        pass
+        self.warnings.append(msg)
 
-    def orientConstraint(self, ctrl, jnt, **kw):
-        self.constraints.append(("orient", self.find(ctrl).name, self.find(jnt).name))
+    def objExists(self, node):
+        try:
+            self.find(node)
+            return True
+        except KeyError:
+            return False
 
-    parentConstraint = orientConstraint
+    def _constraint(self, kind, driver, driven):
+        d = self.find(driven)
+        node = Node("%s_%s1" % (d.name, kind), kind, d)
+        self.nodes.append(node)
+        self.constraints.append((kind, self.find(driver).name, d.name))
+        return [node.name]
+
+    def parentConstraint(self, driver, driven, **kw):
+        return self._constraint("parentConstraint", driver, driven)
+
+    def orientConstraint(self, driver, driven, **kw):
+        return self._constraint("orientConstraint", driver, driven)
+
+    def pointConstraint(self, driver, driven, **kw):
+        return self._constraint("pointConstraint", driver, driven)
 
 
 _STUBBED = ("maya", "maya.cmds", "maya.mel", "PySide6", "PySide6.QtWidgets",
@@ -295,6 +316,7 @@ class JointScene(unittest.TestCase):
 
         joints = wst.gather_joints(["joint1"], True)
         opts = wst.JointModeOptions(multi=True, name_pattern="FlagPole_#_JNT",
+                                    hierarchy=wst.HIER_PARENT,
                                     constraint=wst.CONSTRAINT_ORIENT)
         built = wst.create_joint_controls(shape, joints, opts)
 
@@ -319,6 +341,128 @@ class JointScene(unittest.TestCase):
         self.assertIs(scene.find(built[2][2]).parent, ctrls[1])
         self.assertEqual([c[1:] for c in scene.constraints],
                          [("FlagPole_%d_JNT" % (i + 1), "joint%d" % (i + 1)) for i in range(3)])
+
+    # -- helpers for the tests below -----------------------------------------
+    def fake_defs(self, scene, wst, keys=("circleY", "cube", "rootControl",
+                                          "diamond3D", "square", "halfCircle")):
+        defs = {}
+        for key in keys:
+            def creator(key=key):
+                n = Node(key + "_CTRL", "transform")
+                n.shape = "nurbsCurve"
+                scene.nodes.append(n)
+                return [n.name]
+            defs[key] = wst.ShapeDef(key, key, creator, [], "", "Primitives")
+        wst.shape_defs_by_key = lambda: dict(defs)
+        return defs
+
+    def test_parent_constraint_chain_is_flat(self):
+        scene = self.build_chain(X_UP)
+        wst = load_tool(scene)
+        defs = self.fake_defs(scene, wst)
+        joints = wst.gather_joints(["joint1"], True)
+        opts = wst.JointModeOptions(multi=True, name_pattern="Sign_CTRL",
+                                    zero_group=False,   # forced on for a chain
+                                    constraint=wst.CONSTRAINT_PARENT)
+        self.assertEqual(opts.hierarchy, wst.HIER_CONSTRAINT)   # the default
+        built = wst.create_joint_controls(defs["circleY"], joints, opts)
+
+        tops = [scene.find(t) for _, _, t in built]
+        ctrls = [scene.find(c) for _, c, _ in built]
+        self.assertEqual([c.name for c in ctrls], ["Sign_CTRL_1", "Sign_CTRL_2", "Sign_CTRL_3"])
+        # Nothing nested: every group stays at the top of the outliner.
+        self.assertEqual([t.name for t in tops],
+                         ["Sign_CTRL_1_GRP", "Sign_CTRL_2_GRP", "Sign_CTRL_3_GRP"])
+        self.assertTrue(all(t.parent is None for t in tops))
+        # Groups follow the control above by parent constraint; joints are
+        # parent-constrained to their controls (never parented).
+        self.assertEqual(scene.constraints, [
+            ("parentConstraint", "Sign_CTRL_1", "Sign_CTRL_2_GRP"),
+            ("parentConstraint", "Sign_CTRL_2", "Sign_CTRL_3_GRP"),
+            ("parentConstraint", "Sign_CTRL_1", "joint1"),
+            ("parentConstraint", "Sign_CTRL_2", "joint2"),
+            ("parentConstraint", "Sign_CTRL_3", "joint3"),
+        ])
+        self.assertEqual(scene.find("joint2").parent.name, "joint1")
+
+    def test_rebuild_skips_joints_that_already_have_the_constraint(self):
+        scene = self.build_chain(X_UP)
+        wst = load_tool(scene)
+        defs = self.fake_defs(scene, wst)
+        joints = wst.gather_joints(["joint1"], True)
+        opts = wst.JointModeOptions(multi=True, name_pattern="Sign_CTRL",
+                                    constraint=wst.CONSTRAINT_PARENT)
+        wst.create_joint_controls(defs["circleY"], joints, opts)
+        before = len([c for c in scene.constraints if c[2].startswith("joint")])
+        wst.create_joint_controls(defs["circleY"], joints, opts)
+        after = len([c for c in scene.constraints if c[2].startswith("joint")])
+        self.assertEqual(before, after)
+        self.assertTrue(any("already has" in w for w in scene.warnings))
+        self.assertTrue(any("already exist" in w for w in scene.warnings))
+
+    def test_best_option_and_per_joint_shapes(self):
+        scene = FakeScene()
+        parent = None
+        for i, name in enumerate(("root", "spine1", "head", "head_end")):
+            parent = scene.add_joint(name, parent, (0, i * 2.0, 0), X_UP)
+        wst = load_tool(scene)
+        defs = self.fake_defs(scene, wst)
+        self.assertEqual(wst.best_shape_key("|root"), "rootControl")
+        self.assertEqual(wst.best_shape_key("L_Clavicle"), "halfCircle")
+        self.assertEqual(wst.best_shape_key("spine1"), "circleY")
+        self.assertEqual(wst.best_shape_key("joint7", has_children=False), "diamond3D")
+        self.assertEqual(wst.best_shape_key("thread"), "circleY")   # 'head' is a word match only
+
+        joints = wst.gather_joints(["root"], True, skip_end_joints=False)
+        resolved = wst.resolve_joint_shapes(joints, wst.BEST_SHAPE)
+        self.assertEqual([d.key for d in resolved],
+                         ["rootControl", "circleY", "cube", "diamond3D"])
+
+        per_joint = ["square", wst.BEST_SHAPE, defs["halfCircle"], "cube"]
+        opts = wst.JointModeOptions(multi=True, name_pattern="{joint}_CTRL",
+                                    hierarchy=wst.HIER_NONE)
+        built = wst.create_joint_controls(per_joint, joints, opts)
+        made = [scene.find(c) for _, c, _ in built]
+        self.assertEqual([c.name for c in made],
+                         ["root_CTRL", "spine1_CTRL", "head_CTRL", "head_end_CTRL"])
+        with self.assertRaises(ValueError):
+            wst.resolve_joint_shapes(joints, ["square"])
+
+
+class BatchRename(unittest.TestCase):
+    def test_rename_chain_from_root(self):
+        scene = FakeScene()
+        parent = None
+        for i in range(4):
+            parent = scene.add_joint("joint%d" % (i + 1), parent, (0, i, 0), X_UP)
+        scene.nodes.append(Node("joint2_parentConstraint1", "parentConstraint",
+                                scene.find("joint2")))
+        wst = load_tool(scene)
+        renamed = wst.batch_rename(["joint1"], "FlagPole_#_JNT", hierarchy=True)
+        self.assertEqual([r.split("|")[-1] for r in renamed],
+                         ["FlagPole_1_JNT", "FlagPole_2_JNT", "FlagPole_3_JNT", "FlagPole_4_JNT"])
+        # The constraint under joint2 is another type and keeps its name.
+        self.assertTrue(scene.objExists("joint2_parentConstraint1"))
+
+    def test_rename_can_swap_names_and_pad(self):
+        scene = FakeScene()
+        a = scene.add_joint("b_2", None, (0, 0, 0), X_UP)
+        b = scene.add_joint("b_1", None, (1, 0, 0), X_UP)
+        wst = load_tool(scene)
+        renamed = wst.batch_rename([a, b], "b_#", start=1)
+        self.assertEqual([r.split("|")[-1] for r in renamed], ["b_1", "b_2"])
+        self.assertEqual(wst.format_rename("Arm_##_JNT", 3), "Arm_03_JNT")
+        self.assertEqual(wst.format_rename("L_{name}", 1, "|x|elbow"), "L_elbow")
+
+    def test_search_replace_and_prefix_suffix(self):
+        scene = FakeScene()
+        j1 = scene.add_joint("joint1", None, (0, 0, 0), X_UP)
+        scene.add_joint("joint2", "joint1", (0, 1, 0), X_UP)
+        wst = load_tool(scene)
+        out = wst.search_replace_names([j1], "joint", "spine", hierarchy=True)
+        self.assertEqual([r.split("|")[-1] for r in out], ["spine1", "spine2"])
+        out = wst.prefix_suffix_names(["spine1"], "C_", "_JNT", hierarchy=True)
+        self.assertEqual([r.split("|")[-1] for r in out], ["C_spine1_JNT", "C_spine2_JNT"])
 
 
 if __name__ == "__main__":
