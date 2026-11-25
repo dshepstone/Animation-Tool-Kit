@@ -236,7 +236,7 @@ TOOL_REGISTRY = [
         "icon_file": "temp-pivot.png",
         "icon_key":  "pivot",
         "group":     "viewport",
-        "version":   "1.0.5",
+        "version":   "1.0.6",
     },
     {
         "id":        "onion_skin",

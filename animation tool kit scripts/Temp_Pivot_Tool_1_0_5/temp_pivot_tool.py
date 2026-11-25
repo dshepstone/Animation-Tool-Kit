@@ -31,10 +31,13 @@ Features:
 - Robust selection: Works on shapes, namespaced nodes, props, locators
 - Dockable UI: workspaceControl support for Maya 2017+
 - Constraint validation: Warns if control has existing constraints
+- Failure report (v7.1): when a pivot cannot be created, set up or toggled,
+  a pop-up lists every reason (locked or connected channels, existing
+  constraints, wrong node type, ...) instead of failing silently
 
 Author: David Shepstone
 License: MIT
-Version: 7.0.0
+Version: 7.1.0 (ATK tool version 1.0.6)
 
 Upgrade notes from v6:
   - null_group_1 now has zeroed rotatePivot/scalePivot (pivot offset baked into pivotOffsetGrp)
@@ -192,10 +195,14 @@ def _teardown_undo_guard():
 # -----------------------------
 
 def _sanitize_name(name: str) -> str:
-    """Create a safe prefix from a control name."""
-    safe = name.split(":")[-1]
-    safe = safe.replace("|", "_").replace(" ", "_")
-    return safe
+    """Create a safe prefix from a control name.
+
+    The namespace is kept (``charA:hand_ctrl`` -> ``charA_hand_ctrl``) so
+    rigs on two referenced characters can be told apart in the Outliner.
+    """
+    safe = name.split("|")[-1]
+    safe = safe.replace(":", "_").replace(" ", "_")
+    return safe.lstrip("_") or "ctrl"
 
 
 def _resolve_transform(node: str) -> str:
@@ -213,10 +220,15 @@ def _resolve_transform(node: str) -> str:
     - namespaced nodes
     - full DAG paths
     """
+    # A component selection ("ctrl.cv[3]", "mesh.vtx[0]") names its shape;
+    # strip the component part so the owning transform can be found.
+    if "." in node:
+        owners = cmds.ls(node, objectsOnly=True, long=True) or []
+        if owners:
+            node = owners[0]
+
     if not cmds.objExists(node):
         return node
-
-    node_type = cmds.nodeType(node)
 
     # If it's a shape node, get the parent transform
     if cmds.objectType(node, isAType="shape"):
@@ -225,6 +237,18 @@ def _resolve_transform(node: str) -> str:
             return parents[0]
 
     return node
+
+
+def _is_transform(node: str) -> bool:
+    """True for transforms and every transform subtype (joints, ikHandles...).
+
+    ``nodeType(node) == "transform"`` rejects joints, so joint-based FK
+    controls used to be skipped without any message.
+    """
+    try:
+        return bool(cmds.objectType(node, isAType="transform"))
+    except Exception:
+        return cmds.nodeType(node) == "transform"
 
 
 def _align_to_target_world_matrix(object_to_align: str, target: str) -> None:
@@ -273,10 +297,18 @@ def _has_constraints(node: str) -> Tuple[bool, List[str]]:
 
     found_constraints = []
 
-    # Method 1: Check children for constraint nodes
+    # Method 1: Check children for constraint nodes.  Some rigs park
+    # constraints under a control that drive a *different* node, so a child
+    # constraint only counts when it actually feeds this node.
     for ctype in constraint_types:
-        constraints = cmds.listRelatives(node, type=ctype) or []
-        found_constraints.extend(constraints)
+        for constraint in cmds.listRelatives(node, type=ctype) or []:
+            driven = cmds.listConnections(
+                constraint, source=False, destination=True, plugs=False
+            ) or []
+            driven_long = set(cmds.ls(driven, long=True) or [])
+            node_long = set(cmds.ls(node, long=True) or [node])
+            if driven_long & node_long and constraint not in found_constraints:
+                found_constraints.append(constraint)
 
     # Method 2: Check connections to translate/rotate attributes
     for attr in ["tx", "ty", "tz", "rx", "ry", "rz"]:
@@ -345,6 +377,286 @@ def _add_bool_attr(node: str, attr: str, value: bool = False) -> None:
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, attributeType="bool")
     cmds.setAttr(f"{node}.{attr}", value)
+
+
+# -----------------------------
+# Diagnostics and failure report
+# -----------------------------
+
+TRANSLATE_AXES = ("x", "y", "z")
+
+# Incoming connections a parentConstraint can live with: ordinary keys
+# (Maya inserts a pairBlend), animation layers, an existing pairBlend and
+# character sets.  Anything else (expressions, set driven keys, direct
+# node connections, other rigs' constraints) means Maya cannot connect the
+# constraint to that channel.
+_ALLOWED_INPUT_TYPES = (
+    "animCurveTL", "animCurveTA", "animCurveTU", "animCurveTT",
+    "pairBlend", "character",
+)
+_ALLOWED_INPUT_PREFIXES = ("animBlendNode",)
+
+
+def _channel_input(node: str, attr: str) -> Optional[str]:
+    """Return the node driving ``node.attr`` (or its compound parent)."""
+    for plug in (f"{node}.{attr}", f"{node}.{attr[0]}"):
+        if not cmds.objExists(plug):
+            continue
+        sources = cmds.listConnections(
+            plug, source=True, destination=False, plugs=False,
+            skipConversionNodes=True
+        ) or []
+        if sources:
+            return sources[0]
+    return None
+
+
+def _channel_problem(node: str, attr: str) -> Optional[str]:
+    """Explain why a parentConstraint could not drive ``node.attr``, or None."""
+    plug = f"{node}.{attr}"
+    if not cmds.objExists(plug):
+        return f"{attr} does not exist"
+    try:
+        if cmds.getAttr(plug, lock=True):
+            return f"{attr} is locked"
+    except Exception:
+        pass
+    source = _channel_input(node, attr)
+    if source:
+        source_type = cmds.nodeType(source)
+        allowed = (source_type in _ALLOWED_INPUT_TYPES
+                   or source_type.startswith(_ALLOWED_INPUT_PREFIXES))
+        if not allowed:
+            if source_type == "expression":
+                return f"{attr} is driven by the expression '{source}'"
+            if source_type.startswith("animCurveU"):
+                return f"{attr} is driven by a set driven key ('{source}')"
+            return f"{attr} is connected to '{source}' ({source_type})"
+    return None
+
+
+def get_channel_report(control: str) -> Dict[str, Any]:
+    """Work out which translate/rotate channels a constraint can drive.
+
+    Returns ``{"skip_translate": [...], "skip_rotate": [...],
+    "problems": [...]}``.  The skip lists are passed straight to
+    ``parentConstraint`` so partly locked controls still work.
+    """
+    skip_translate: List[str] = []
+    skip_rotate: List[str] = []
+    problems: List[str] = []
+    for axis in TRANSLATE_AXES:
+        for channel, skip in ((f"t{axis}", skip_translate), (f"r{axis}", skip_rotate)):
+            problem = _channel_problem(control, channel)
+            if problem:
+                skip.append(axis)
+                problems.append(problem)
+    return {
+        "skip_translate": skip_translate,
+        "skip_rotate": skip_rotate,
+        "problems": problems,
+    }
+
+
+def _constraint_kwargs(control: str) -> Dict[str, Any]:
+    """parentConstraint skip flags for the channels that cannot be driven."""
+    report = get_channel_report(control)
+    kwargs: Dict[str, Any] = {}
+    if report["skip_translate"]:
+        kwargs["skipTranslate"] = report["skip_translate"]
+    if report["skip_rotate"]:
+        kwargs["skipRotate"] = report["skip_rotate"]
+    return kwargs
+
+
+def diagnose_control(control: str, check_existing_rig: bool = True) -> List[str]:
+    """Return every reason a temp pivot cannot be built on ``control``.
+
+    An empty list means the control is fine.  Each entry is one plain
+    sentence suitable for the failure report.
+    """
+    problems: List[str] = []
+    if not control or not cmds.objExists(control):
+        return [f"'{control}' no longer exists in the scene."]
+
+    short = control.split("|")[-1]
+    if not _is_transform(control):
+        return [
+            f"'{short}' is a {cmds.nodeType(control)} node, not a transform. "
+            "Select the control curve (or its transform) in the viewport or Outliner."
+        ]
+
+    if _is_rig_node(control):
+        return [f"'{short}' is part of a Temp Pivot rig, not a rig control."]
+
+    if check_existing_rig:
+        existing = get_rig_for_control(control)
+        if existing:
+            problems.append(
+                f"'{short}' already has a Temp Pivot rig ({existing}). "
+                "Use Toggle, or Delete Pivot Rig first."
+            )
+
+    has_constraints, constraint_list = _has_constraints(control)
+    if has_constraints:
+        names = ", ".join(constraint_list[:3])
+        if len(constraint_list) > 3:
+            names += f" (+{len(constraint_list) - 3} more)"
+        problems.append(
+            f"'{short}' is already driven by a constraint: {names}. A second "
+            "parent constraint would fight it and double the motion. Bake or "
+            "delete that constraint first, or pick the control it drives from."
+        )
+
+    channels = get_channel_report(control)
+    if len(channels["skip_translate"]) == 3 and len(channels["skip_rotate"]) == 3:
+        problems.append(
+            f"None of the translate or rotate channels on '{short}' can be "
+            "driven: " + "; ".join(channels["problems"]) + "."
+        )
+
+    try:
+        matrix = cmds.xform(control, q=True, ws=True, m=True) or []
+        sx = sum(v * v for v in matrix[0:3]) ** 0.5
+        sy = sum(v * v for v in matrix[4:7]) ** 0.5
+        sz = sum(v * v for v in matrix[8:11]) ** 0.5
+        if matrix and min(sx, sy, sz) < 1e-6:
+            problems.append(
+                f"'{short}' has a world scale of zero on one axis, so its "
+                "orientation cannot be read. Set its scale (or its parent's) "
+                "above zero."
+            )
+    except Exception:
+        pass
+
+    return problems
+
+
+def _show_failure_report(title: str, problems: List[str],
+                         details: str = "") -> None:
+    """Pop up a report explaining why an action failed.
+
+    The same text goes to the Script Editor so it can be copied, and a
+    one-line warning appears in Maya's command line.
+    """
+    problems = [p for p in problems if p] or ["Unknown reason (see Script Editor)."]
+    lines = [f"Temp Pivot: {title}", ""]
+    lines += [f"  - {p}" for p in problems]
+    if details:
+        lines += ["", details]
+    report = "\n".join(lines)
+
+    print("\n" + "=" * 70 + "\n" + report + "\n" + "=" * 70)
+    try:
+        cmds.warning(f"Temp Pivot: {title} {problems[0]}")
+    except Exception:
+        pass
+
+    try:
+        if cmds.about(batch=True):
+            return
+    except Exception:
+        pass
+
+    message = "\n\n".join(f"• {p}" for p in problems)
+    if details:
+        message += "\n\n" + details
+    try:
+        cmds.confirmDialog(
+            title=f"Temp Pivot - {title}",
+            message=message,
+            button=["OK"],
+            defaultButton="OK",
+            cancelButton="OK",
+            dismissString="OK",
+            icon="warning",
+        )
+    except Exception:
+        pass
+
+
+def _report_exception(title: str, exc: BaseException) -> str:
+    """Report an unexpected error and return a one-line message for the log."""
+    import traceback
+    traceback.print_exc()
+    reason = str(exc).strip() or exc.__class__.__name__
+    _show_failure_report(
+        title,
+        [f"Maya raised an error: {reason}"],
+        "Any partly built pivot nodes were removed. The full error is in "
+        "the Script Editor.",
+    )
+    return f"{title} {reason}"
+
+
+# -----------------------------
+# Rig naming
+# -----------------------------
+
+_RIG_SUFFIXES = (NULL_GRP_1_SUFFIX, NULL_GRP_2_SUFFIX, OFFSET_GRP_SUFFIX,
+                 SETTINGS_SUFFIX, CONSTRAINT_SUFFIX)
+
+
+def _rig_name_taken(prefix: str) -> bool:
+    for suffix in _RIG_SUFFIXES:
+        if cmds.ls(f"{prefix}{suffix}", recursive=True):
+            return True
+    return False
+
+
+def _unique_prefix(control: str) -> str:
+    """A rig prefix no other rig in the scene uses.
+
+    Two characters referenced with the same control names (``A:hand_ctrl``
+    and ``B:hand_ctrl``) used to get the same prefix, so building the second
+    rig deleted the first rig's constraint.
+    """
+    base = _sanitize_name(control)
+    prefix = base
+    index = 2
+    while _rig_name_taken(prefix):
+        prefix = f"{base}{index}"
+        index += 1
+    return prefix
+
+
+def _rig_prefix(node: str, suffix: str) -> str:
+    """The prefix stored on a rig node, else the one in its name."""
+    if cmds.attributeQuery("rigPrefix", node=node, exists=True):
+        stored = cmds.getAttr(f"{node}.rigPrefix")
+        if stored:
+            return stored
+    return node.split("|")[-1].split(":")[-1].replace(suffix, "")
+
+
+def _rig_suffix_of(node: str) -> Optional[str]:
+    """The Temp Pivot suffix a node name ends with (Maya may add digits)."""
+    import re
+    short = node.split("|")[-1]
+    for suffix in (NULL_GRP_1_SUFFIX, NULL_GRP_2_SUFFIX, OFFSET_GRP_SUFFIX,
+                   SETTINGS_SUFFIX):
+        if re.search(re.escape(suffix) + r"\d*$", short):
+            return suffix
+    return None
+
+
+def _is_rig_node(node: str) -> bool:
+    """True for the tool's own pivot, anchor, offset and settings nodes.
+
+    The old check skipped any selected node whose name merely contained
+    "TMP", so a control called e.g. ``TMP_hand_ctrl`` was ignored silently.
+    """
+    return _rig_suffix_of(node) is not None
+
+
+def _same_node(a: Optional[str], b: Optional[str]) -> bool:
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    la = cmds.ls(a, long=True) or []
+    lb = cmds.ls(b, long=True) or []
+    return bool(la) and la == lb
 
 
 def _create_visual_null(name: str, color: Tuple[float, float, float], size: float = 1.0) -> str:
@@ -443,9 +755,15 @@ def _enter_pivot_adjust_mode(node: str) -> None:
 # -----------------------------
 
 def get_all_pivot_rigs() -> List[str]:
-    """Find all temp pivot rigs in the scene by finding settings nodes."""
-    settings_nodes = cmds.ls(f"*{SETTINGS_SUFFIX}", type="transform") or []
-    return settings_nodes
+    """Find all temp pivot rigs in the scene by finding settings nodes.
+
+    ``recursive=True`` also finds rigs inside namespaces (for example a
+    referenced or imported shot file).
+    """
+    found = cmds.ls(f"*{SETTINGS_SUFFIX}*", type="transform", recursive=True) or []
+    return [n for n in dict.fromkeys(found)
+            if _rig_suffix_of(n) == SETTINGS_SUFFIX
+            and cmds.attributeQuery("targetControl", node=n, exists=True)]
 
 
 def get_rig_for_control(control: str) -> Optional[str]:
@@ -454,7 +772,7 @@ def get_rig_for_control(control: str) -> Optional[str]:
     for settings in settings_nodes:
         if cmds.attributeQuery("targetControl", node=settings, exists=True):
             target = cmds.getAttr(f"{settings}.targetControl")
-            if target == control:
+            if _same_node(_resolve_stored_name(target), control):
                 return settings
     return None
 
@@ -462,16 +780,48 @@ def get_rig_for_control(control: str) -> Optional[str]:
 def get_pending_pivot_for_control(control: str) -> Optional[str]:
     """Find a pending (stage 1) pivot null for a control."""
     # Look for null_group_1 that has a targetControl attr but no setupComplete=True yet
-    pivot_nulls = cmds.ls(f"*{NULL_GRP_1_SUFFIX}", type="transform") or []
-    for pivot in pivot_nulls:
+    pivot_nulls = cmds.ls(f"*{NULL_GRP_1_SUFFIX}*", type="transform", recursive=True) or []
+    for pivot in dict.fromkeys(pivot_nulls):
+        if _rig_suffix_of(pivot) != NULL_GRP_1_SUFFIX:
+            continue
         if cmds.attributeQuery("targetControl", node=pivot, exists=True):
             target = cmds.getAttr(f"{pivot}.targetControl")
-            if target == control:
+            if _same_node(_resolve_stored_name(target), control):
                 # Check if setup is complete
                 if cmds.attributeQuery("setupComplete", node=pivot, exists=True):
                     if not cmds.getAttr(f"{pivot}.setupComplete"):
                         return pivot
     return None
+
+
+def get_settings_for_rig_node(node: str) -> Optional[str]:
+    """Return the settings node of the rig that ``node`` belongs to.
+
+    Rig nodes built by this version carry a ``settingsNode`` attribute.
+    Older rigs are matched by name, as before.
+    """
+    suffix = _rig_suffix_of(node)
+    if suffix is None:
+        return None
+    if suffix == SETTINGS_SUFFIX:
+        return node
+    if cmds.attributeQuery("settingsNode", node=node, exists=True):
+        stored = _resolve_stored_name(cmds.getAttr(f"{node}.settingsNode"))
+        if stored:
+            return stored
+    if suffix == NULL_GRP_1_SUFFIX and cmds.attributeQuery("setupComplete", node=node, exists=True):
+        if not cmds.getAttr(f"{node}.setupComplete"):
+            return None
+    prefix = _rig_prefix(node, suffix)
+    matches = cmds.ls(f"{prefix}{SETTINGS_SUFFIX}", recursive=True) or []
+    return matches[0] if matches else None
+
+
+def _link_to_settings(node: Optional[str], settings_node: str, prefix: str) -> None:
+    """Record the owning rig on a rig node so look-ups survive renames."""
+    if node and cmds.objExists(node):
+        _add_string_attr(node, "settingsNode", settings_node.split("|")[-1])
+        _add_string_attr(node, "rigPrefix", prefix)
 
 
 def _resolve_stored_name(name: Optional[str]) -> Optional[str]:
@@ -551,57 +901,52 @@ def is_rig_active(settings_node: str) -> bool:
 # STAGE 1: Create Pivot Null
 # =============================================================================
 
-def create_pivot_locator(control: str) -> Tuple[bool, str, Optional[str]]:
+def create_pivot_locator(control: str, report: bool = True) -> Tuple[bool, str, Optional[str]]:
     """
     STAGE 1: Create the pivot null (null_group_1) for user pivot positioning.
 
     Process:
     1. Resolve shape nodes to transforms
-    2. Create null_group_1
-    3. Align to the selected control using world matrix
+    2. Check the control can take a pivot rig (see ``diagnose_control``)
+    3. Create null_group_1 at the control's pivot, matching its orientation
     4. Automatically enter pivot adjust mode with Move tool active
     5. User moves the pivot to desired position
     6. Then user clicks "Complete Setup" for Stage 2
 
     Args:
         control: The control to create a pivot for
+        report:  Pop up a report explaining any failure
 
     Returns:
         Tuple of (success, message, null_grp_1_name)
     """
-    # Resolve shape to transform
+    title = "Could not create a temp pivot"
+
+    def fail(problems: List[str]) -> Tuple[bool, str, Optional[str]]:
+        if report:
+            _show_failure_report(title, problems)
+        return False, " ".join(problems), None
+
+    # Resolve shape / component to transform
     control = _resolve_transform(control)
 
     if not cmds.objExists(control):
-        return False, f"Control '{control}' not found.", None
+        return fail([f"'{control}' was not found in the scene."])
 
-    # Ensure it's a transform node
-    if cmds.nodeType(control) != "transform":
-        return False, f"'{control}' is not a transform node.", None
+    # Check if pending pivot exists (not a failure: select it and carry on)
+    pending = get_pending_pivot_for_control(control)
+    if pending:
+        cmds.select(pending)
+        return False, "Pivot null already created. Adjust its pivot, then click 'Complete Setup'.", pending
 
+    problems = diagnose_control(control)
+    if problems:
+        return fail(problems)
+
+    null_grp_1 = None
     cmds.undoInfo(openChunk=True, chunkName="TMP_CreatePivotLocator")
     try:
-        # Check if rig already exists for this control
-        existing = get_rig_for_control(control)
-        if existing:
-            return False, f"Pivot rig already exists for '{control}'. Delete it first or use Toggle.", None
-
-        # Check if pending pivot exists
-        pending = get_pending_pivot_for_control(control)
-        if pending:
-            cmds.select(pending)
-            return False, f"Pivot null already created. Adjust its pivot, then click 'Complete Setup'.", pending
-
-        # Check for existing constraints on the control (could cause double offset)
-        has_constraints, constraint_list = _has_constraints(control)
-        if has_constraints:
-            constraint_names = ", ".join(constraint_list[:3])  # Show first 3
-            if len(constraint_list) > 3:
-                constraint_names += f"... (+{len(constraint_list) - 3} more)"
-            return False, f"Control '{control}' has existing constraints: {constraint_names}. This may cause double transforms.", None
-
-        # Create safe prefix
-        prefix = _sanitize_name(control)
+        prefix = _unique_prefix(control)
 
         # =========================================================================
         # Create null_group_1 (the PIVOT - user will adjust its pivot point)
@@ -611,6 +956,12 @@ def create_pivot_locator(control: str) -> Tuple[bool, str, Optional[str]]:
             UI_COLORS["stage1"],  # Orange for Stage 1
             size=1.0
         )
+
+        # Match the control's rotate order BEFORE copying its world rotation.
+        # ``xform -q -ws -ro`` returns angles in the control's rotate order;
+        # applying them to a default xyz null twisted the pivot on any
+        # control that uses a different order (very common on rigs).
+        _copy_rotate_order(control, null_grp_1)
 
         # Align null_grp_1 to the control's visual pivot (rotatePivot in world
         # space) rather than its local-origin world-matrix translation.
@@ -626,22 +977,49 @@ def create_pivot_locator(control: str) -> Tuple[bool, str, Optional[str]]:
 
         # Store target control reference on the null (for Stage 2)
         _add_string_attr(null_grp_1, "targetControl", control)
+        _add_string_attr(null_grp_1, "rigPrefix", prefix)
         _add_bool_attr(null_grp_1, "setupComplete", False)
 
         # Select the null and enter pivot adjust mode with translate tool
         # Use evalDeferred to ensure proper initialization timing
-        cmds.evalDeferred(lambda: _enter_pivot_adjust_mode(null_grp_1))
+        _node = null_grp_1
+        cmds.evalDeferred(
+            lambda: _enter_pivot_adjust_mode(_node) if cmds.objExists(_node) else None
+        )
 
-        return True, f"Stage 1 complete. Move the PIVOT to your desired position, then click 'Complete Setup'.", null_grp_1
+        message = "Stage 1 complete. Move the PIVOT to your desired position, then click 'Complete Setup'."
+        skipped = get_channel_report(control)["problems"]
+        if skipped:
+            message += " Note: " + "; ".join(skipped) + " - those channels will not follow the pivot."
+        return True, message, null_grp_1
+    except Exception as exc:
+        if null_grp_1 and cmds.objExists(null_grp_1):
+            try:
+                cmds.delete(null_grp_1)
+            except Exception:
+                pass
+        if report:
+            return False, _report_exception(title, exc), None
+        raise
     finally:
         cmds.undoInfo(closeChunk=True)
+
+
+def _copy_rotate_order(source: str, target: str) -> None:
+    src = f"{source}.rotateOrder"
+    dst = f"{target}.rotateOrder"
+    if cmds.objExists(src) and cmds.objExists(dst):
+        try:
+            cmds.setAttr(dst, cmds.getAttr(src))
+        except Exception:
+            pass
 
 
 # =============================================================================
 # STAGE 2: Complete Setup (with pivot freezing)
 # =============================================================================
 
-def complete_setup(null_grp_1: str) -> Tuple[bool, str, Optional[str]]:
+def complete_setup(null_grp_1: str, report: bool = True) -> Tuple[bool, str, Optional[str]]:
     """
     STAGE 2: Complete the pivot rig setup with pivot freezing.
 
@@ -653,6 +1031,10 @@ def complete_setup(null_grp_1: str) -> Tuple[bool, str, Optional[str]]:
     5. Create parentConstraint: null_group_1 → control (maintainOffset)
     6. Create settings node
 
+    If any step fails, everything built so far is removed and the pivot
+    null is put back where it was, so the user can fix the problem and
+    click Complete Setup again.
+
     The resulting hierarchy:
         pivotOffsetGrp (at world position of the pivot point)
             └ null_group_1 (zeroed pivots, clean channels)
@@ -660,25 +1042,56 @@ def complete_setup(null_grp_1: str) -> Tuple[bool, str, Optional[str]]:
 
     Args:
         null_grp_1: The pivot null from Stage 1
+        report:     Pop up a report explaining any failure
 
     Returns:
         Tuple of (success, message, settings_node_name)
     """
+    title = "Could not complete the temp pivot setup"
+
+    def fail(problems: List[str]) -> Tuple[bool, str, Optional[str]]:
+        if report:
+            _show_failure_report(title, problems)
+        return False, " ".join(problems), None
+
     if not cmds.objExists(null_grp_1):
-        return False, "Pivot null not found.", None
+        return fail(["The pivot null no longer exists. Click 'Create Pivot Locator' again."])
 
     # Get target control
     if not cmds.attributeQuery("targetControl", node=null_grp_1, exists=True):
-        return False, "Pivot null is not valid (missing targetControl).", None
+        return fail([f"'{null_grp_1}' is not a Temp Pivot null (it has no targetControl attribute)."])
 
-    control = cmds.getAttr(f"{null_grp_1}.targetControl")
-    if not cmds.objExists(control):
-        return False, f"Target control '{control}' not found.", None
+    stored_control = cmds.getAttr(f"{null_grp_1}.targetControl")
+    control = _resolve_stored_name(stored_control)
+    if not control:
+        return fail([
+            f"The control '{stored_control}' this pivot was made for was deleted "
+            "or renamed. Delete the pivot null and create a new one."
+        ])
 
     # Check if already complete
     if cmds.attributeQuery("setupComplete", node=null_grp_1, exists=True):
         if cmds.getAttr(f"{null_grp_1}.setupComplete"):
             return False, "Setup already complete for this pivot.", None
+
+    # Re-check the control: a constraint or lock may have been added
+    # between Stage 1 and Stage 2.
+    problems = diagnose_control(control)
+    if problems:
+        return fail(problems)
+
+    if cmds.attributeQuery("rigPrefix", node=null_grp_1, exists=True) and \
+            cmds.getAttr(f"{null_grp_1}.rigPrefix"):
+        prefix = cmds.getAttr(f"{null_grp_1}.rigPrefix")
+    else:
+        prefix = _unique_prefix(control)
+
+    # Snapshot for rollback
+    original_parent = cmds.listRelatives(null_grp_1, parent=True, fullPath=True) or []
+    original_matrix = cmds.xform(null_grp_1, q=True, ws=True, m=True)
+    original_pivot_ws = cmds.xform(null_grp_1, q=True, ws=True, rotatePivot=True)
+    pivot_short = null_grp_1.split("|")[-1]
+    created: List[str] = []
 
     cmds.undoInfo(openChunk=True, chunkName="TMP_CompleteSetup")
     try:
@@ -693,8 +1106,6 @@ def complete_setup(null_grp_1: str) -> Tuple[bool, str, Optional[str]]:
         except Exception:
             pass
 
-        prefix = _sanitize_name(control)
-
         # =====================================================================
         # PIVOT FREEZING: Convert pivot offset into offset group hierarchy
         # =====================================================================
@@ -702,37 +1113,37 @@ def complete_setup(null_grp_1: str) -> Tuple[bool, str, Optional[str]]:
         # 1. Read the rotatePivot that the user set during Stage 1
         pivot_ws = cmds.xform(null_grp_1, q=True, ws=True, rotatePivot=True)
 
-        # 2. Read null_grp_1's current world matrix (its position at control)
-        null_grp_1_world_matrix = cmds.xform(null_grp_1, q=True, ws=True, m=True)
-
-        # 3. Create the pivotOffsetGrp
+        # 2. Create the pivotOffsetGrp
         offset_grp = cmds.group(
             empty=True,
+            world=True,
             name=f"{prefix}{OFFSET_GRP_SUFFIX}"
         )
+        created.append(offset_grp)
 
-        # 4. Position pivotOffsetGrp at the world-space pivot point
+        # 3. Position pivotOffsetGrp at the world-space pivot point
         #    This group sits at the exact location where the user placed the pivot
         cmds.xform(offset_grp, ws=True, t=pivot_ws)
 
         # Copy the rotation from null_grp_1 so the offset group is oriented
-        # to match the control's rotation (same as null_grp_1's initial orientation)
+        # to match the control's rotation (same as null_grp_1's initial
+        # orientation).  The rotate order must match for the angles to mean
+        # the same orientation.
+        _copy_rotate_order(null_grp_1, offset_grp)
         null_rot = cmds.xform(null_grp_1, q=True, ws=True, ro=True)
         cmds.xform(offset_grp, ws=True, ro=null_rot)
 
-        # 5. Re-parent null_grp_1 under the offset group
+        # 4. Re-parent null_grp_1 under the offset group
         #    IMPORTANT: After parenting, the DAG path changes.  Re-query by
         #    listing children of offset_grp to get the new valid name.
         cmds.parent(null_grp_1, offset_grp)
-        # Re-resolve null_grp_1's name after reparenting (DAG path changed)
         children = cmds.listRelatives(offset_grp, children=True, type="transform", fullPath=True) or []
         for child in children:
-            short = child.split("|")[-1]
-            if NULL_GRP_1_SUFFIX in short:
+            if child.split("|")[-1] == pivot_short:
                 null_grp_1 = child
                 break
 
-        # 6. Zero out null_grp_1's local transforms and pivots
+        # 5. Zero out null_grp_1's local transforms and pivots
         #    The offset is now stored in pivotOffsetGrp's position
         for attr in ["tx", "ty", "tz", "rx", "ry", "rz"]:
             _safe_set_attr(null_grp_1, attr, 0)
@@ -744,26 +1155,31 @@ def complete_setup(null_grp_1: str) -> Tuple[bool, str, Optional[str]]:
             if cmds.objExists(attr_path) and not cmds.getAttr(attr_path, lock=True):
                 cmds.setAttr(attr_path, keyable=False, channelBox=False)
 
-        # Zero the pivots - this is the key freeze operation
+        # Zero the pivots - this is the key freeze operation.  Moving the
+        # pivot with D can also write rotatePivotTranslate /
+        # scalePivotTranslate; left behind, they shift the centre of rotation
+        # away from the point the animator picked.
         cmds.xform(null_grp_1, objectSpace=True, pivots=[0, 0, 0])
+        for attr in ("rotatePivotTranslate", "scalePivotTranslate"):
+            for axis in ("X", "Y", "Z"):
+                _safe_set_attr(null_grp_1, f"{attr}{axis}", 0)
 
         # =====================================================================
         # Create parentConstraint: null_group_1 → control (maintainOffset=ON)
         # =====================================================================
-        constraint_name = f"{prefix}{CONSTRAINT_SUFFIX}"
-        if cmds.objExists(constraint_name):
-            cmds.delete(constraint_name)
-
         constraint = cmds.parentConstraint(
             null_grp_1, control,
             maintainOffset=True,
-            name=constraint_name
+            name=f"{prefix}{CONSTRAINT_SUFFIX}",
+            **_constraint_kwargs(control)
         )[0]
+        created.append(constraint)
 
         # =====================================================================
         # Create settings node
         # =====================================================================
         settings_node = cmds.createNode("transform", name=f"{prefix}{SETTINGS_SUFFIX}")
+        created.append(settings_node)
         cmds.setAttr(f"{settings_node}.visibility", 0)
 
         # Store references — use SHORT names (no pipe prefix) so they remain
@@ -775,12 +1191,16 @@ def complete_setup(null_grp_1: str) -> Tuple[bool, str, Optional[str]]:
         _add_string_attr(settings_node, "nullGrp2", "")  # Created on first toggle OFF
         _add_string_attr(settings_node, "pivotOffsetGrp", offset_grp_short)
         _add_string_attr(settings_node, "constraintName", constraint)
+        _add_string_attr(settings_node, "rigPrefix", prefix)
         _add_bool_attr(settings_node, "isActive", True)
 
         # Parent settings under offset_grp for organization
         cmds.parent(settings_node, offset_grp)
         # Re-resolve settings_node after reparenting (DAG path changed)
         settings_node = _resolve_stored_name(settings_node.split("|")[-1])
+
+        _link_to_settings(null_grp_1, settings_node, prefix)
+        _link_to_settings(offset_grp, settings_node, prefix)
 
         # Mark null_grp_1 setup as complete
         cmds.setAttr(f"{null_grp_1}.setupComplete", True)
@@ -807,9 +1227,45 @@ def complete_setup(null_grp_1: str) -> Tuple[bool, str, Optional[str]]:
             )
         )
 
-        return True, f"Setup complete! Rotate pivot null to orbit '{control}' around custom pivot. Auto-key enabled.", settings_node
+        message = f"Setup complete! Rotate pivot null to orbit '{control}' around custom pivot. Auto-key enabled."
+        skipped = get_channel_report(control)["problems"]
+        if skipped:
+            message += " Not driven: " + "; ".join(skipped) + "."
+        return True, message, settings_node
+    except Exception as exc:
+        _rollback_setup(pivot_short, original_parent, original_matrix,
+                        original_pivot_ws, created)
+        if report:
+            return False, _report_exception(title, exc), None
+        raise
     finally:
         cmds.undoInfo(closeChunk=True)
+
+
+def _rollback_setup(pivot_short: str, original_parent: List[str],
+                    original_matrix: List[float], original_pivot_ws: List[float],
+                    created: List[str]) -> None:
+    """Undo a half-finished Complete Setup so the user can try again."""
+    pivot = _resolve_stored_name(pivot_short)
+    try:
+        if pivot:
+            current_parent = cmds.listRelatives(pivot, parent=True, fullPath=True) or []
+            if current_parent != original_parent:
+                if original_parent and cmds.objExists(original_parent[0]):
+                    cmds.parent(pivot, original_parent[0])
+                else:
+                    cmds.parent(pivot, world=True)
+                pivot = _resolve_stored_name(pivot_short)
+            cmds.xform(pivot, ws=True, m=original_matrix)
+            cmds.xform(pivot, ws=True, pivots=original_pivot_ws)
+    except Exception:
+        pass
+    for node in reversed(created):
+        try:
+            if node and cmds.objExists(node):
+                cmds.delete(node)
+        except Exception:
+            pass
 
 
 # =============================================================================
@@ -852,6 +1308,10 @@ def toggle_on(settings_node: str) -> Tuple[bool, str]:
     if not null_grp_2 or not cmds.objExists(null_grp_2):
         return False, "Anchor null (null_group_2) not found. Cannot toggle ON."
 
+    problems = diagnose_control(control, check_existing_rig=False)
+    if problems:
+        return False, "Cannot toggle ON: " + " ".join(problems)
+
     cmds.undoInfo(openChunk=True, chunkName="TMP_ToggleOn")
     try:
         # =====================================================================
@@ -889,6 +1349,9 @@ def toggle_on(settings_node: str) -> Tuple[bool, str]:
             # its world POSITION (translate and rotate are independent), so
             # the pivot point stays in the correct place.
             # ---------------------------------------------------------------
+            # Rigs made before 1.1.33 have an xyz offset group; the angles
+            # below are in the control's rotate order, so match it first.
+            _copy_rotate_order(control, offset_grp)
             ctrl_world_rot = cmds.xform(control, q=True, ws=True, ro=True)
             cmds.xform(offset_grp, ws=True, ro=ctrl_world_rot)
 
@@ -909,16 +1372,19 @@ def toggle_on(settings_node: str) -> Tuple[bool, str]:
         # =====================================================================
         # Recreate parentConstraint: null_group_1 → control
         # =====================================================================
-        prefix = _sanitize_name(control)
-        constraint_name = f"{prefix}{CONSTRAINT_SUFFIX}"
+        # Only this rig's own old constraint is removed.  (Deleting by name
+        # used to remove another character's constraint when both rigs had
+        # the same name.)
+        old_constraint = nodes.get("constraint")
+        if old_constraint and cmds.objExists(old_constraint):
+            cmds.delete(old_constraint)
 
-        if cmds.objExists(constraint_name):
-            cmds.delete(constraint_name)
-
+        prefix = _rig_prefix(settings_node, SETTINGS_SUFFIX)
         constraint = cmds.parentConstraint(
             null_grp_1, control,
             maintainOffset=True,
-            name=constraint_name
+            name=f"{prefix}{CONSTRAINT_SUFFIX}",
+            **_constraint_kwargs(control)
         )[0]
 
         # Update settings
@@ -1007,7 +1473,7 @@ def toggle_off(settings_node: str) -> Tuple[bool, str]:
             if CONSTRAINT_SUFFIX in c or TOOL_PREFIX in c:
                 cmds.delete(c)
 
-        prefix = _sanitize_name(control)
+        prefix = _rig_prefix(settings_node, SETTINGS_SUFFIX)
 
         # =====================================================================
         # Create null_group_2 if it doesn't exist (first toggle OFF)
@@ -1019,7 +1485,8 @@ def toggle_off(settings_node: str) -> Tuple[bool, str]:
                 size=1.2  # Slightly larger to distinguish
             )
             # Store reference in settings
-            cmds.setAttr(f"{settings_node}.nullGrp2", null_grp_2, type="string")
+            cmds.setAttr(f"{settings_node}.nullGrp2", null_grp_2.split("|")[-1], type="string")
+            _link_to_settings(null_grp_2, settings_node, prefix)
 
         # =====================================================================
         # Align null_group_2 to control's current world position/rotation
@@ -1146,6 +1613,15 @@ def _create_auto_key_callback(settings_node: str):
     return auto_key_callback
 
 
+def _job_key(settings_node: str) -> str:
+    """One dictionary key per rig, whether given a short name or a DAG path.
+
+    Jobs were stored under whichever spelling was passed in, so a later
+    clean-up with the other spelling left the old jobs running.
+    """
+    return settings_node.split("|")[-1]
+
+
 def setup_auto_key(settings_node: str) -> None:
     """Set up scriptJobs to auto-key the control when null_group_1 is transformed."""
     global _auto_key_jobs
@@ -1176,18 +1652,19 @@ def setup_auto_key(settings_node: str) -> None:
             )
             job_ids.append(job_id)
 
-    _auto_key_jobs[settings_node] = job_ids
+    _auto_key_jobs[_job_key(settings_node)] = job_ids
 
 
 def cleanup_auto_key(settings_node: str) -> None:
     """Remove auto-key scriptJobs for a rig."""
     global _auto_key_jobs
 
-    if settings_node in _auto_key_jobs:
-        for job_id in _auto_key_jobs[settings_node]:
+    key = _job_key(settings_node)
+    if key in _auto_key_jobs:
+        for job_id in _auto_key_jobs[key]:
             if cmds.scriptJob(exists=job_id):
                 cmds.scriptJob(kill=job_id, force=True)
-        del _auto_key_jobs[settings_node]
+        del _auto_key_jobs[key]
 
 
 # =============================================================================
@@ -1259,6 +1736,116 @@ def delete_pending_pivot(null_grp_1: str) -> Tuple[bool, str]:
         cmds.undoInfo(closeChunk=True)
 
 
+def find_rig_context(nodes: List[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Map selected nodes to ("rig", settings) / ("pending", pivot) / (None, None).
+
+    Any node of a rig (pivot, anchor, offset, settings) or the control it
+    drives selects that rig.
+    """
+    for item in nodes:
+        suffix = _rig_suffix_of(item)
+        if suffix == NULL_GRP_1_SUFFIX and cmds.attributeQuery("setupComplete", node=item, exists=True):
+            if not cmds.getAttr(f"{item}.setupComplete"):
+                return ("pending", item)
+        if suffix is not None:
+            settings = get_settings_for_rig_node(item)
+            if settings and cmds.objExists(settings):
+                return ("rig", settings)
+            continue
+
+        rig = get_rig_for_control(item)
+        if rig:
+            return ("rig", rig)
+        pending = get_pending_pivot_for_control(item)
+        if pending:
+            return ("pending", pending)
+
+    return (None, None)
+
+
+def _resolve_selection() -> List[str]:
+    """Get the current selection resolved to transforms (components included)."""
+    raw_sel = cmds.ls(selection=True, long=True) or []
+    resolved = []
+    for item in raw_sel:
+        resolved_node = _resolve_transform(item)
+        if cmds.objExists(resolved_node) and _is_transform(resolved_node):
+            if resolved_node not in resolved:
+                resolved.append(resolved_node)
+    return resolved
+
+
+def _explain_selection() -> List[str]:
+    """Explain why nothing usable is selected, for the failure report."""
+    raw_sel = cmds.ls(selection=True, long=True) or []
+    if not raw_sel:
+        return ["Nothing is selected. Select a rig control in the viewport or Outliner first."]
+    reasons = []
+    for item in raw_sel[:5]:
+        node = _resolve_transform(item)
+        short = item.split("|")[-1]
+        if not cmds.objExists(node):
+            reasons.append(f"'{short}' could not be found.")
+        elif not _is_transform(node):
+            reasons.append(
+                f"'{short}' is a {cmds.nodeType(node)} node, not a transform."
+            )
+        elif _is_rig_node(node):
+            reasons.append(f"'{short}' is part of a Temp Pivot rig, not a rig control.")
+    if len(raw_sel) > 5:
+        reasons.append(f"(+{len(raw_sel) - 5} more selected)")
+    reasons.append("Select a rig control (a transform or joint) and try again.")
+    return reasons
+
+
+def _parse_list_entry(raw: str) -> Tuple[str, str]:
+    """Split a rig list row " [ON]  pivot  →  control" into (pivot, control)."""
+    body = raw.split("]", 1)[1] if "]" in raw else raw
+    parts = body.split("\u2192")
+    pivot = parts[0].strip()
+    control = parts[1].strip() if len(parts) >= 2 else ""
+    return pivot, control
+
+
+def _settings_from_list_entry(raw: str) -> Optional[str]:
+    """Find the rig a list row refers to, by its pivot null first.
+
+    Rows used to be matched by control name only, so two characters with
+    the same control names toggled or deleted the wrong rig.
+    """
+    pivot, control = _parse_list_entry(raw)
+    for match in cmds.ls(pivot, recursive=True) or []:
+        settings = get_settings_for_rig_node(match)
+        if settings:
+            return settings
+    return get_rig_for_control(control) if control else None
+
+
+def _run_guarded(title: str, func, *args):
+    """Run a button action; turn any unexpected Maya error into a report."""
+    try:
+        return func(*args)
+    except Exception as exc:
+        _report_exception(title, exc)
+        return None
+
+
+def _rearm_auto_key() -> None:
+    """Re-create auto-key scriptJobs for rigs that are already ON.
+
+    scriptJobs die with the scene, so a rig saved ON and reopened stopped
+    auto-keying until it was toggled off and on again.
+    """
+    for settings in get_all_pivot_rigs():
+        try:
+            jobs = _auto_key_jobs.get(_job_key(settings), [])
+            alive = bool(jobs) and all(cmds.scriptJob(exists=j) for j in jobs)
+            if is_rig_active(settings) and not alive:
+                setup_auto_key(settings)
+        except Exception:
+            pass
+
+
 # =============================================================================
 # UI IMPLEMENTATION (Dockable with workspaceControl)
 # =============================================================================
@@ -1328,7 +1915,7 @@ def _build_ui(parent_layout: str) -> None:
         height=22
     )
     cmds.text(
-        label="  Non-destructive pivot system for animation  |  v7",
+        label="  Non-destructive pivot system for animation  |  v7.1",
         align="left",
         font="smallPlainLabelFont",
         height=16
@@ -1731,16 +2318,11 @@ def _build_ui(parent_layout: str) -> None:
             return
 
         # Save current selection — items use format: "[ON]  pivot  →  control"
-        selected_control = None
+        selected_pivot = None
         if preserve_selection:
             selected_items = cmds.textScrollList(rig_list, query=True, selectItem=True) or []
             if selected_items:
-                raw = selected_items[0]
-                parts = raw.split("\u2192")
-                if len(parts) >= 2:
-                    selected_control = parts[1].strip()
-                else:
-                    selected_control = raw.split("[")[0].strip()
+                selected_pivot = _parse_list_entry(selected_items[0])[0]
 
         cmds.textScrollList(rig_list, edit=True, removeAll=True)
         rigs = get_all_pivot_rigs()
@@ -1756,65 +2338,18 @@ def _build_ui(parent_layout: str) -> None:
             entry = f"{status_tag}  {pivot_short}  \u2192  {control_short}"
             cmds.textScrollList(rig_list, edit=True, append=entry)
 
-        if selected_control:
+        if selected_pivot:
             all_items = cmds.textScrollList(rig_list, query=True, allItems=True) or []
             for item in all_items:
-                if selected_control in item:
+                if _parse_list_entry(item)[0] == selected_pivot:
                     cmds.textScrollList(rig_list, edit=True, selectItem=item)
                     break
 
-    def _resolve_selection() -> List[str]:
-        """Get the current selection resolved to transforms."""
-        raw_sel = cmds.ls(selection=True, long=True) or []
-        resolved = []
-        for item in raw_sel:
-            resolved_node = _resolve_transform(item)
-            if cmds.objExists(resolved_node) and cmds.nodeType(resolved_node) == "transform":
-                resolved.append(resolved_node)
-        return resolved
-
     def update_status() -> None:
         sel = _resolve_selection()
-        selected_settings = None
-        pending_pivot = None
-
-        for item in sel:
-            short_name = item.split("|")[-1]
-
-            if NULL_GRP_1_SUFFIX in short_name:
-                if cmds.attributeQuery("setupComplete", node=item, exists=True):
-                    if cmds.getAttr(f"{item}.setupComplete"):
-                        prefix = short_name.replace(NULL_GRP_1_SUFFIX, "")
-                        possible_settings = f"{prefix}{SETTINGS_SUFFIX}"
-                        if cmds.objExists(possible_settings):
-                            selected_settings = possible_settings
-                    else:
-                        pending_pivot = item
-                break
-            if NULL_GRP_2_SUFFIX in short_name:
-                prefix = short_name.replace(NULL_GRP_2_SUFFIX, "")
-                possible_settings = f"{prefix}{SETTINGS_SUFFIX}"
-                if cmds.objExists(possible_settings):
-                    selected_settings = possible_settings
-                break
-            if OFFSET_GRP_SUFFIX in short_name:
-                prefix = short_name.replace(OFFSET_GRP_SUFFIX, "")
-                possible_settings = f"{prefix}{SETTINGS_SUFFIX}"
-                if cmds.objExists(possible_settings):
-                    selected_settings = possible_settings
-                break
-            rig = get_rig_for_control(item)
-            if rig:
-                selected_settings = rig
-                break
-            short = item.split("|")[-1]
-            rig = get_rig_for_control(short)
-            if rig:
-                selected_settings = rig
-                break
-            pending = get_pending_pivot_for_control(item)
-            if pending:
-                pending_pivot = pending
+        ctx_type, ctx_node = find_rig_context(sel)
+        selected_settings = ctx_node if ctx_type == "rig" else None
+        pending_pivot = ctx_node if ctx_type == "pending" else None
 
         if selected_settings:
             nodes = get_rig_nodes(selected_settings)
@@ -1912,44 +2447,7 @@ def _build_ui(parent_layout: str) -> None:
 
     def get_current_context():
         """Get current rig settings or pending pivot."""
-        sel = _resolve_selection()
-
-        for item in sel:
-            short_name = item.split("|")[-1]
-
-            if NULL_GRP_1_SUFFIX in short_name:
-                if cmds.attributeQuery("setupComplete", node=item, exists=True):
-                    if cmds.getAttr(f"{item}.setupComplete"):
-                        prefix = short_name.replace(NULL_GRP_1_SUFFIX, "")
-                        possible_settings = f"{prefix}{SETTINGS_SUFFIX}"
-                        if cmds.objExists(possible_settings):
-                            return ("rig", possible_settings)
-                    else:
-                        return ("pending", item)
-            if NULL_GRP_2_SUFFIX in short_name:
-                prefix = short_name.replace(NULL_GRP_2_SUFFIX, "")
-                possible_settings = f"{prefix}{SETTINGS_SUFFIX}"
-                if cmds.objExists(possible_settings):
-                    return ("rig", possible_settings)
-            if OFFSET_GRP_SUFFIX in short_name:
-                prefix = short_name.replace(OFFSET_GRP_SUFFIX, "")
-                possible_settings = f"{prefix}{SETTINGS_SUFFIX}"
-                if cmds.objExists(possible_settings):
-                    return ("rig", possible_settings)
-
-            rig = get_rig_for_control(item)
-            if rig:
-                return ("rig", rig)
-            short = item.split("|")[-1]
-            rig = get_rig_for_control(short)
-            if rig:
-                return ("rig", rig)
-
-            pending = get_pending_pivot_for_control(item)
-            if pending:
-                return ("pending", pending)
-
-        return (None, None)
+        return find_rig_context(_resolve_selection())
 
     # ------------------------------------------------------------------
     # Button callbacks
@@ -1958,10 +2456,17 @@ def _build_ui(parent_layout: str) -> None:
     def on_create_pivot(*args):
         cmds.refresh(force=True)
         sel = _resolve_selection()
-        controls = [s for s in sel if TOOL_PREFIX not in s.split("|")[-1]]
+        controls = [s for s in sel if not _is_rig_node(s)]
 
         if not controls:
-            log_message("Select a control first.", "warning")
+            # A pending pivot null selected: nothing to create, say so.
+            ctx_type, ctx_node = find_rig_context(sel)
+            if ctx_type == "pending":
+                log_message("Pivot null already created. Adjust its pivot, then click 'Complete Setup'.", "warning")
+                return
+            reasons = _explain_selection()
+            log_message("Could not create a temp pivot: " + " ".join(reasons), "error")
+            _show_failure_report("Could not create a temp pivot", reasons)
             return
 
         control = controls[0]
@@ -1969,8 +2474,12 @@ def _build_ui(parent_layout: str) -> None:
         if len(cmds.ls(short)) == 1:
             control = short
 
-        success, msg, pivot = create_pivot_locator(control)
-        log_message(msg, "success" if success else "warning")
+        result = _run_guarded("Could not create a temp pivot", create_pivot_locator, control)
+        if result is None:
+            log_message("Could not create a temp pivot (see report).", "error")
+        else:
+            success, msg, pivot = result
+            log_message(msg, "success" if success else "warning")
         cmds.evalDeferred(refresh_rig_list)
         cmds.evalDeferred(update_status)
 
@@ -1987,7 +2496,9 @@ def _build_ui(parent_layout: str) -> None:
         pivot_to_select = None
 
         if ctx_type == "pending":
-            success, msg, settings = complete_setup(ctx_node)
+            success, msg, settings = _run_guarded(
+                "Could not complete the temp pivot setup", complete_setup, ctx_node
+            ) or (False, "Complete Setup failed (see report).", None)
             log_message(msg, "success" if success else "error")
             if success and settings:
                 nodes = get_rig_nodes(settings)
@@ -2003,7 +2514,9 @@ def _build_ui(parent_layout: str) -> None:
                 if not pending:
                     pending = get_pending_pivot_for_control(short)
                 if pending:
-                    success, msg, settings = complete_setup(pending)
+                    success, msg, settings = _run_guarded(
+                        "Could not complete the temp pivot setup", complete_setup, pending
+                    ) or (False, "Complete Setup failed (see report).", None)
                     log_message(msg, "success" if success else "error")
                     if success and settings:
                         nodes = get_rig_nodes(settings)
@@ -2018,11 +2531,20 @@ def _build_ui(parent_layout: str) -> None:
         if pivot_to_select and cmds.objExists(pivot_to_select):
             _deferred_select_pivot(pivot_to_select)
 
+    def _toggle_with_report(settings_node: str) -> None:
+        result = _run_guarded("Could not toggle the temp pivot", toggle_pivot, settings_node)
+        if result is None:
+            log_message("Toggle failed (see report).", "error")
+            return
+        success, msg, is_active = result
+        log_message(msg, "success" if success else "error")
+        if not success:
+            _show_failure_report("Could not toggle the temp pivot", [msg])
+
     def on_toggle(*args):
         ctx_type, ctx_node = get_current_context()
         if ctx_type == "rig":
-            success, msg, is_active = toggle_pivot(ctx_node)
-            log_message(msg, "success" if success else "error")
+            _toggle_with_report(ctx_node)
         elif ctx_type == "pending":
             log_message("Complete setup first before toggling.", "warning")
         else:
@@ -2041,8 +2563,10 @@ def _build_ui(parent_layout: str) -> None:
     def on_delete(*args):
         ctx_type, ctx_node = get_current_context()
         if ctx_type == "rig":
-            success, msg = delete_pivot_rig(ctx_node)
-            log_message(msg, "success" if success else "error")
+            result = _run_guarded("Could not delete the temp pivot rig", delete_pivot_rig, ctx_node)
+            if result:
+                success, msg = result
+                log_message(msg, "success" if success else "error")
         elif ctx_type == "pending":
             success, msg = delete_pending_pivot(ctx_node)
             log_message(msg, "success" if success else "error")
@@ -2087,14 +2611,7 @@ def _build_ui(parent_layout: str) -> None:
         selected_items = cmds.textScrollList(rig_list, query=True, selectItem=True) or []
         if selected_items:
             raw = selected_items[0]
-            # Format: " [ON]  pivot_name  →  control_name"
-            parts = raw.split("\u2192")
-            if len(parts) >= 2:
-                control_name = parts[1].strip()
-            else:
-                # Fallback for unexpected format
-                control_name = raw.split("[")[0].strip() if "[" in raw else raw.strip()
-            settings = get_rig_for_control(control_name)
+            settings = _settings_from_list_entry(raw)
             if settings:
                 nodes = get_rig_nodes(settings)
                 pivot = nodes["null_grp_1"]
@@ -2112,12 +2629,9 @@ def _build_ui(parent_layout: str) -> None:
             log_message("Select a rig from the list first.", "warning")
             return
         raw = selected_items[0]
-        parts = raw.split("\u2192")
-        control_name = parts[1].strip() if len(parts) >= 2 else raw.split("[")[0].strip()
-        settings = get_rig_for_control(control_name)
+        settings = _settings_from_list_entry(raw)
         if settings:
-            success, msg, is_active = toggle_pivot(settings)
-            log_message(msg, "success" if success else "error")
+            _toggle_with_report(settings)
             refresh_rig_list()
             update_status()
 
@@ -2127,12 +2641,12 @@ def _build_ui(parent_layout: str) -> None:
             log_message("Select a rig from the list to delete.", "warning")
             return
         raw = selected_items[0]
-        parts = raw.split("\u2192")
-        control_name = parts[1].strip() if len(parts) >= 2 else raw.split("[")[0].strip()
-        settings = get_rig_for_control(control_name)
+        settings = _settings_from_list_entry(raw)
         if settings:
-            success, msg = delete_pivot_rig(settings)
-            log_message(msg, "success" if success else "error")
+            result = _run_guarded("Could not delete the temp pivot rig", delete_pivot_rig, settings)
+            if result:
+                success, msg = result
+                log_message(msg, "success" if success else "error")
             refresh_rig_list(preserve_selection=False)
             update_status()
 
@@ -2181,6 +2695,7 @@ def _build_ui(parent_layout: str) -> None:
     )
 
     # Initialize
+    _rearm_auto_key()
     refresh_rig_list()
     update_status()
 
