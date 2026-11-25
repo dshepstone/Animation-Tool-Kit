@@ -17,6 +17,7 @@ TOOL = ROOT / "animation tool kit scripts" / "selection_set_2_0_4" / "SmartSelec
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     from PySide6 import QtCore, QtGui, QtWidgets
+    from PySide6.QtTest import QTest
     import shiboken6
 except ImportError:  # pragma: no cover
     QtWidgets = None
@@ -326,6 +327,45 @@ class WindowTests(SmartSelectSetsTestCase):
         _pump(6)
         self.assertFalse(shiboken6.isValid(win) and win.isVisible())
         self.assertFalse(jobs & self.cmds.jobs)
+
+    def _popout(self):
+        self.win.manager.create_group("x", "Body", ["a"])
+        self.win.refresh_ui()
+        self.win.open_category_popout("Body")
+        _pump()
+        return self.win.popout_windows["Body"]
+
+    def test_popout_x_button_closes_it(self):
+        popup = self._popout()
+        QTest.mouseClick(popup.close_button, QtCore.Qt.LeftButton)
+        _pump(6)
+        self.assertFalse(shiboken6.isValid(popup) and popup.isVisible())
+        self.assertNotIn("Body", self.win.popout_windows)
+
+    def test_popout_x_closes_on_press_even_if_release_is_lost(self):
+        popup = self._popout()
+        QTest.mousePress(popup.close_button, QtCore.Qt.LeftButton)
+        _pump(6)
+        self.assertFalse(shiboken6.isValid(popup) and popup.isVisible())
+
+    def test_popout_x_press_routed_to_header_still_closes(self):
+        popup = self._popout()
+        centre = popup.close_button.rect().center()
+        glob = popup.close_button.mapToGlobal(centre)
+        local = popup.header.mapFromGlobal(glob)
+        press = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress, QtCore.QPointF(local), QtCore.QPointF(glob),
+                                  QtCore.Qt.LeftButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
+        popup.eventFilter(popup.header, press)
+        _pump(6)
+        self.assertFalse(shiboken6.isValid(popup) and popup.isVisible())
+
+    def test_popout_close_that_qt_refuses_still_hides_it(self):
+        popup = self._popout()
+        popup.closeEvent = lambda event: event.ignore()
+        popup.close_popout()
+        _pump(6)
+        self.assertFalse(shiboken6.isValid(popup) and popup.isVisible())
+        self.assertNotIn("Body", self.win.popout_windows)
 
     def test_escape_closes_window(self):
         win = self.win
